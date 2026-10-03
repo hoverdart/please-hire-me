@@ -13,6 +13,18 @@ def ats(request):
         html=html.replace(b'<button type="submit">',b'<label for="cover_letter">Cover Letter*</label><input id="cover_letter" name="cover_letter" type="file" required><button type="submit">')
     if getattr(request,'param',None)=='otp':
         html=html.replace(b'e.preventDefault();let f=',b'e.preventDefault();if(!document.getElementById("security_code")){let p=document.createElement("p");p.textContent="A verification code was sent to test@candidate.invalid. To submit your application, enter the 8-character code.";let l=document.createElement("label");l.htmlFor="security_code";l.textContent="Security code";let c=document.createElement("input");c.id="security_code";c.required=true;e.target.append(p,l,c);return;}let f=')
+    if getattr(request,'param',None)=='otp-segmented':
+        html=html.replace(b'e.preventDefault();let f=',b'''e.preventDefault();if(!document.getElementById("security_code")){
+          let original=e.target;original.hidden=true;
+          let form=document.createElement('form');form.id='verification';
+          let p=document.createElement('p');p.textContent='A verification code was sent to test@candidate.invalid. To submit your application, enter the 8-character code.';
+          let label=document.createElement('label');label.htmlFor='security_code';label.textContent='Security code';form.append(p,label);
+          let controls=[];let button=document.createElement('button');button.type='submit';button.textContent='Submit application';button.disabled=true;
+          for(let i=0;i<8;i++){let c=document.createElement('input');c.id=i===0?'security_code':'slot-'+i;c.maxLength=1;c.required=true;controls.push(c);form.append(c);
+            c.addEventListener('input',()=>{if(c.value.length===1&&i<7)controls[i+1].focus();button.disabled=!controls.every(x=>x.value.length===1);});}
+          form.append(button);document.body.append(form);
+          form.addEventListener('submit',async event=>{event.preventDefault();if(controls.map(x=>x.value).join('')!=='ABC12345')return;
+            await fetch('/submit',{method:'POST',body:new FormData(original)});document.body.innerHTML='<h1>Thank you for applying. Your application has been received.</h1>';});return;}let f=''' )
     class H(BaseHTTPRequestHandler):
         def log_message(self,*a):pass
         def do_GET(self):
@@ -361,7 +373,7 @@ def test_required_cover_letter_is_generated_uploaded_and_confirmed(store,ats,mon
     assert letter['generated'] and letter['hash'].encode() in ats[1][0]
 
 
-@pytest.mark.parametrize('ats',['otp'],indirect=True)
+@pytest.mark.parametrize('ats',['otp','otp-segmented'],indirect=True)
 @pytest.mark.parametrize('screenshot_failure',[False,True])
 def test_gmail_code_continues_the_same_application_without_model_access(store,ats,monkeypatch,screenshot_failure):
     store.update_settings({'gmail_verification':True})

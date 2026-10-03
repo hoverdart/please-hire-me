@@ -326,16 +326,30 @@ class Browser:
         self._guard(job,allow_verification=True)
         control=self.page.get_by_label('Security code',exact=True)
         if control.count()!=1:raise Blocked('verification_form_changed')
-        control.fill(code)
+        # Segmented Greenhouse widgets advance focus on keystrokes, not bulk fills.
+        control.fill('')
+        control.press_sequentially(code)
+        owner=control.locator('xpath=ancestor::form[1]')
+        verification_scope=owner if owner.count()==1 else self.page
+        verification_submit=verification_scope.get_by_role('button',name=re.compile(r'^submit application$',re.I))
+        if verification_submit.count()!=1:raise Blocked('verification_form_changed')
+        deadline=time.monotonic()+5
+        while not verification_submit.is_enabled() and time.monotonic()<deadline:
+            self.store.checkpoint();self.page.wait_for_timeout(100)
+        self.store.event('verification_widget_ready',self.aid,{'submit_enabled':verification_submit.is_enabled(),
+                         'input_max_length':control.evaluate('(e)=>e.maxLength')})
+        if not verification_submit.is_enabled():
+            self.store.event('verification_held',self.aid,{'reason':'verification_submit_disabled'})
+            return 'awaiting_verification'
         self.store.checkpoint()
         self.store.begin_verification(self.aid)
-        submit.click(timeout=15000)
+        verification_submit.click(timeout=15000)
         text=self._wait_submission_outcome(job,accept_verification=False)
         screenshot=self.store.root/'screenshots'/(self.aid+'-verified.jpg')
         # A rejected code may remain visible. Do not persist it in screenshots/text.
-        screenshot_kwargs={'mask':[control]} if control.count() else {}
+        screenshot_kwargs={'mask':[owner if owner.count()==1 else control.locator('xpath=..')]} if control.count() else {}
         screenshot_name=self._outcome_screenshot(screenshot,**screenshot_kwargs)
-        text=text.replace(code,'[verification code redacted]')
+        text=re.sub(r'\s*'.join(re.escape(c) for c in code),'[verification code redacted]',text)
         confirmed=CONFIRMED.search(text) and not self.page.locator('input[type=email]').count()
         outcome='confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
         self.store.finish(self.aid,outcome,text,screenshot_name)
@@ -605,7 +619,9 @@ class Browser:
                     self.store.db.execute('INSERT OR REPLACE INTO verification_challenges VALUES(?,?,?,?,?,?,?,0)',
                         (self.aid,'greenhouse',self.page.url,job['company'],requested,8,'pending'))
                 self.store.finish(self.aid,outcome,evidence,screenshot_name)
-                if outcome=='awaiting_verification':return self._continue_email_verification(job,submit)
+                if outcome=='awaiting_verification':
+                    stage='email_verification'
+                    return self._continue_email_verification(job,submit)
                 return outcome
             except Exception as e:
                 self.store.event('submission_error',self.aid,{'stage':stage,'type':type(e).__name__})
