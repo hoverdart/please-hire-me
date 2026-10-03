@@ -60,6 +60,13 @@ def test_summer_relocation_and_school_locations(store,job):
     with pytest.raises(Blocked,match='location'):eligible({**job,'title':'Software Engineer Intern Fall 2027','location':'Boston, MA'},store.settings(),store.facts())
 
 
+def test_sf_abbreviation_is_eligible_for_us_summer_relocation(store,job):
+    store.put_facts({'summer_2027_relocate':'Yes'})
+    assert eligible({**job,'location':'SF'},store.settings(),store.facts())[0]>0
+    with pytest.raises(Blocked,match='location'):
+        eligible({**job,'location':'London, UK'},store.settings(),store.facts())
+
+
 def test_month_window_overlaps_summer(store,job):
     store.put_facts({'earliest_start':'2027-06','latest_start':'2027-08'})
     assert eligible(job,store.settings(),store.facts())[0]>0

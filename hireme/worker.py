@@ -40,7 +40,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                 job=json.loads(row['payload'])
                 try:
                     score,evidence=eligible(job,s,store.facts())
-                    store.db.execute('UPDATE jobs SET score=? WHERE id=?',(score,job['id']))
+                    store.db.execute("UPDATE jobs SET score=?,reason='' WHERE id=?",(score,job['id']))
                     ranked.append((score,job))
                 except Blocked as e:
                     store.block(job['id'],e.reason,e.detail);reasons[e.reason]=reasons.get(e.reason,0)+1
@@ -68,8 +68,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 store.db.execute('UPDATE jobs SET status=? WHERE id=? AND id NOT IN (SELECT job_id FROM job_decisions)',(outcome,job['id']))
                                 if outcome=='confirmed' or not live and outcome=='prepared':count+=1
                             except Blocked as e:
-                                if e.reason in ('paused','model_budget_exhausted','provider_rate_limited'):raise
                                 store.event('application_finished',job['id'],{'run_id':rid,'outcome':'blocked','reason':e.reason,'detail':e.detail})
+                                if e.reason in ('paused','model_budget_exhausted','provider_rate_limited'):raise
                                 reasons[e.reason]=reasons.get(e.reason,0)+1
                                 # Unknown outcomes must retain their distinct state.
                                 state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()

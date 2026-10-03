@@ -41,7 +41,7 @@ def test_paused_cycle_still_records_batch_summary(store):
     assert 'paused' in row['body'] and 'Confirmed submissions: 0' in row['body']
 
 
-def test_batch_email_links_include_submitted_browser_blocked_and_screening_blocked(store,job,monkeypatch):
+def test_batch_email_links_include_only_browser_attempts(store,job,monkeypatch):
     from hireme.util import digest
     jobs = []
     for outcome in ('confirmed', 'blocked', 'screened'):
@@ -67,11 +67,12 @@ def test_batch_email_links_include_submitted_browser_blocked_and_screening_block
     monkeypatch.setattr('hireme.worker.eligible',screen)
     cycle(store,Path('.'),discover=False,browser_factory=Browser,job_ids=[j['id'] for j in jobs])
     body = store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
-    for item in jobs:
+    for item in jobs[:2]:
         assert body.count(item['url']) == 1
+    assert jobs[2]['url'] not in body
     assert 'Applied successfully' in body
     assert 'Blocked — review or apply manually' in body
-    assert 'location_mismatch' in body and 'Complete the employer CAPTCHA' in body
+    assert 'location_mismatch' not in body and 'Complete the employer CAPTCHA' in body
     assert 'choose Applied manually' in body
     assert 'check with the employer before applying again' in body
     assert store.db.execute('SELECT count(*) FROM applications').fetchone()[0] == 0

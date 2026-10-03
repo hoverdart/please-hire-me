@@ -15,7 +15,7 @@ def queue_report(store, run_id):
         raise ValueError('Only completed or stopped runs can be reported')
     email = owner_email(store)
     groups = {'Applied successfully': [], 'Blocked — review or apply manually': [], 'Other outcomes — review before retrying': []}
-    for e in store.db.execute("SELECT subject,detail FROM events WHERE kind IN ('application_finished','job_screening_blocked') AND timestamp>=? ORDER BY seq", (run['started'],)):
+    for e in store.db.execute("SELECT subject,detail FROM events WHERE kind='application_finished' AND timestamp>=? ORDER BY seq", (run['started'],)):
         detail = json.loads(e['detail'])
         if detail.get('run_id') != run_id:
             continue

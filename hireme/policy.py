@@ -41,6 +41,9 @@ def eligible(job,s,facts):
     seasonal=facts.get("summer_2027_relocate",{}).get("value")=="Yes"
     locations=(s["summer_2027_locations"] if summer else s["school_locations"]) if seasonal else s["locations"]
     patterns=[LOCATIONS.get(l,re.escape(l)) for l in locations]
+    # SF is a US location even when a posting uses only the city abbreviation.
+    if 'United States' in locations:
+        patterns.append(r'\bsf\b')
     if not location or not any(re.search(p,location,re.I) for p in patterns): raise Blocked("location_mismatch")
     required=job.get("min_years")
     matches=[int(m.group(1)) for m in YEARS.finditer(desc)]
