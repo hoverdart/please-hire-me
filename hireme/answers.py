@@ -323,8 +323,9 @@ def resolve(store, host, field, provider=None, context=None):
         if not key and re.search(r'authorized to work.*country where this job',label,re.I) and re.search(r'United States|\bUS\b|\bUSA\b',context.get('location',''),re.I):key='work_authorized_us'
         binding=store.field_binding(host,label,options)
         if binding and not education_date:
-            key=binding['fact_key'] or key
-            template=next((t for t in store.templates() if t['id']==binding['template_id']),None)
+            # Exact semantic rules supersede older model-selected bindings.
+            key=key or binding['fact_key']
+            if not key:template=next((t for t in store.templates() if t['id']==binding['template_id']),None)
         if key=='country' and not store.facts().get('country'):
             location=store.facts().get('location',{})
             # Current residence is geography, not citizenship. A North American +1 alone is insufficient.
