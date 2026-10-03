@@ -116,7 +116,7 @@ FACTS = {
     "earliest_start": "Earliest start (YYYY-MM)", "latest_start": "Latest start (YYYY-MM)",
     "professional_years": "Years of qualifying professional experience",
     "skills": "Verified skills (comma separated)", "race": "Race / ethnicity answer",
-    "gender": "Gender answer", "veteran": "Veteran status answer", "disability": "Disability answer",
+    "gender": "Gender answer", "pronouns": "Pronouns answer", "veteran": "Veteran status answer", "disability": "Disability answer",
     "salary": "Desired compensation answer", "notice_period": "Notice period",
     "relocate": "Willing to relocate (Yes / No)", "onsite": "Willing to work onsite (Yes / No)",
     "recording": "Consent to interview recording (Yes / No)", "background_check": "Consent to background check (Yes / No)",
@@ -124,11 +124,12 @@ FACTS = {
     "worked_outside_resume": "Worked for employers not on resume (Yes / No)",
     "contacts_outside_resume": "Know people at employers not on resume (Yes / No)",
     "summer_2027_relocate": "Willing to relocate for summer 2027 (Yes / No)",
+    "summer_2027_available": "Available for a Summer 2027 internship starting May/June (Yes / No)",
 }
 REQUIRED = {"full_name", "first_name", "last_name", "email", "phone", "location", "graduation",
             "work_authorized_us", "needs_sponsorship", "us_person", "professional_years", "skills"}
 BOOLEANS = {"work_authorized_us", "needs_sponsorship", "us_person", "unrestricted_authorization",
-            "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate"}
+            "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available"}
 
 
 def validate_fact(key: str, value: str) -> str:

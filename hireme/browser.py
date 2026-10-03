@@ -73,6 +73,7 @@ SNAPSHOT=r"""selector => {
   }else if(type==='select'){options=Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.textContent.trim())}
   else if(type==='checkbox'){options=['Yes','No'];value=el.checked?'Yes':'No'}
   out.push({index,indices,ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),type,options,
+   ...(el.closest('.education--form') && /date (month|year)/i.test(question) ? {section:'education'} : {}),
    required:required||/\*/.test(question),
    maxlength:el.maxLength||-1,value,multiple:!!el.multiple});
  });return out;

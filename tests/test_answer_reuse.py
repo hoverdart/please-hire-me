@@ -8,6 +8,38 @@ def field(label,kind='text',options=None):
     return {'label':label,'type':kind,'required':True,'options':options or [],'maxlength':-1}
 
 
+def test_greenhouse_education_dates_use_components_and_section_over_old_binding(store,job):
+    store.put_facts({'college_start':'2025-08','graduation':'2028-05'})
+    host=job['host']
+    start={**field('Start date year','number'),'section':'education'}
+    store.bind_field(host,start['label'],[],fact_key='graduation')
+    assert resolve(store,host,start)['value']=='2025'
+    end={**field('End date year','number'),'section':'education'}
+    assert resolve(store,host,end)['value']=='2028'
+    month={**field('Start date month*','combobox',['July','August','September']),'section':'education'}
+    assert resolve(store,host,month)['value']=='August'
+    # An employment date cannot be assumed to be a college date.
+    with pytest.raises(Blocked):resolve(store,host,field('End date year','number'))
+
+
+def test_confirmed_values_match_actual_greenhouse_options(store,job):
+    store.put_facts({'state':'CA','pronouns':'he/him','worked_outside_resume':'No','summer_2027_available':'Yes'})
+    host=job['host']+'|acme'
+    state=field('Which U.S. State or Canadian Province do you reside in?*','combobox',['California','Ontario'])
+    assert resolve(store,host,state)['value']=='California'
+    assert resolve(store,host,field('Pronouns *','combobox',['He/him/his','She/her/hers']))['value']=='He/him/his'
+    employment=field('Have you previously been employed at Acme for any length of time?*','combobox',['I have not previously been employed at Acme','I have been employed at Acme as an intern'])
+    assert resolve(store,host,employment)['value']=='I have not previously been employed at Acme'
+    assert resolve(store,host,field('I confirm my availability for a Summer 2027 (May/June starts) internship*','checkbox',['Yes','No']))['value']=='Yes'
+
+
+def test_phone_country_uses_confirmed_residence_and_not_phone_prefix_alone(store,job):
+    question=field('Country*','combobox',['United States +1','Canada +1'])
+    assert resolve(store,job['host'],question)['value']=='United States +1'
+    store.put_facts({'location':'Toronto, Ontario','phone':'+19258560000'})
+    with pytest.raises(Blocked):resolve(store,job['host'],question)
+
+
 def test_profile_question_variations_and_presentation_options(store,job):
     store.put_facts({'school':'University of California, Berkeley','degree':'B.S.','onsite':'Yes','country':'United States'})
     assert resolve(store,job['host'],field('Which college or university do you currently attend?*'))['value']=='University of California, Berkeley'

@@ -40,6 +40,9 @@ def field_key(label):
     for pattern,key in RULES:
         if re.fullmatch(pattern,label): return key
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
+    if re.fullmatch(r'(?:what are your )?pronouns',label):return 'pronouns'
+    if re.search(r'(?:which|what).*(?:state|province).*(?:reside|live)',label):return 'state'
+    if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
     if re.search(r"(?:which|what).*(?:college|university|school).*(?:attend|enroll)|name of (?:your |the )?(?:college|university|school)",label):return 'school'
     if re.fullmatch(r"(?:current |pursuing |academic )?degree(?: type)?",label):return 'degree'
     if re.search(r'when.*(?:expect|plan).*graduat|(?:expected|anticipated).*graduation|what year.*graduat',label):return 'graduation'
@@ -64,6 +67,8 @@ def _option_value(key, value, options):
         'degree':{'bs':{"bachelor", "bachelors", "bachelorsdegree", "bachelorofscience", "undergraduate"},
                   'ms':{"master", "masters", "mastersdegree", "masterofscience"}},
         'country':{'unitedstates':{"us", "usa", "unitedstatesofamerica","unitedstates1"}},
+        'state':{'ca':{'california'},'california':{'ca'}},
+        'pronouns':{'hehim':{'hehimhis'},'sheher':{'sheherhers'},'theythem':{'theythemtheirs'}},
         'location':{'berkeleyca':{'berkeleycaliforniaunitedstates','berkeleycaunitedstates','berkeleycalifornia'}},
         'citizenship':{'unitedstates':{"us", "usa", "unitedstatesofamerica"}},
         'school':{'universityofcaliforniaberkeley':{"ucberkeley","universitycaliforniaberkeley"},'universitycaliforniaberkeley':{"ucberkeley","universityofcaliforniaberkeley"}},
@@ -76,6 +81,8 @@ def _option_value(key, value, options):
     allowed={normalize(value)}|aliases.get(key,{}).get(normalize(value),set())
     if value in ('Yes','No'):
         matches=[x for x in options if normalize(x)==normalize(value)]
+        if not matches and key=='worked_outside_resume' and value=='No':
+            matches=[x for x in options if re.fullmatch(r'i have not previously been employed(?: at .+)?',x,re.I)]
     else:matches=[x for x in options if normalize(x) in allowed]
     if not matches and key in {'school','major','degree'}:matches=[x for x in options if normalize(x)=='other']
     if len(matches)!=1:raise Blocked('option_mismatch')
@@ -306,6 +313,8 @@ def resolve(store, host, field, provider=None, context=None):
         value=saved['value'];provenance={'answer_id':saved['id'],'revision':saved['revision']}
     else:
         key=field_key(label)
+        education_date=field.get('section')=='education' and bool(re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I))
+        if education_date:key='college_start' if label.lower().startswith('start') else 'graduation'
         employer=host.split('|',1)[1] if '|' in host else None
         prior={store.company(x) for x in store.settings()['prior_employers']}
         if employer and employer not in prior:
@@ -313,9 +322,14 @@ def resolve(store, host, field, provider=None, context=None):
             elif re.search(r'(?:know anyone|family|spouse|partner|relative).{0,70}(?:company|work|employ)|(?:know anyone|personal contacts)',label,re.I):key='contacts_outside_resume'
         if not key and re.search(r'authorized to work.*country where this job',label,re.I) and re.search(r'United States|\bUS\b|\bUSA\b',context.get('location',''),re.I):key='work_authorized_us'
         binding=store.field_binding(host,label,options)
-        if binding:
+        if binding and not education_date:
             key=binding['fact_key'] or key
             template=next((t for t in store.templates() if t['id']==binding['template_id']),None)
+        if key=='country' and not store.facts().get('country'):
+            location=store.facts().get('location',{})
+            # Current residence is geography, not citizenship. A North American +1 alone is insufficient.
+            if re.fullmatch(r'Berkeley,?\s+(?:CA|California)(?:,?\s+United States)?',location.get('value',''),re.I):
+                derived={'value':'United States','provenance':{'residence_location_revision':location['revision']}}
         cat=category(label) if field.get('type') in ('text','textarea') and not options else None
         is_writing=not options and field.get('type') in ('text','textarea') and (cat or re.search(r'example|describe|tell us|why|what.*(?:interests|excites)|share.*(?:work|project)',label,re.I))
         if is_writing and not key and provider and store.settings()['tailored_writing']:
@@ -373,6 +387,12 @@ def resolve(store, host, field, provider=None, context=None):
                 store.resolve_known_question(host,label)
                 return None
             value=fact['value']
+            if key in {'college_start','graduation'} and re.fullmatch(r'\d{4}-\d{2}',value):
+                # The semantic binding selects the date fact; presentation selects its component.
+                if re.search(r'\byear\b',label,re.I):value=value[:4]
+                elif re.search(r'\bmonth\b',label,re.I):
+                    import calendar
+                    value=calendar.month_name[int(value[5:])]
             if key=='gpa' and field.get('type')=='number' and '/' in value:value=value.split('/',1)[0].strip()
             provenance={'fact_key':key,'revision':fact['revision']}
     if field.get('type') in ('radio','select','combobox','checkbox','checkbox-group','yesno') and options:
