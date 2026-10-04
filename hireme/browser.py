@@ -93,6 +93,7 @@ class Browser:
         self.page=None; self.aid=None; self.attempted=False; self.current_host=""; self.host_cache={}; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set()
         self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
         self.workday_grant=None
+        self.submission_requests={}
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
@@ -149,7 +150,9 @@ class Browser:
                 return route.continue_()
             self.denied_write=True
             return route.abort()
-        if self.test_url and url.startswith(self.test_url):return route.continue_()
+        if self.test_url and url.startswith(self.test_url):
+            self._record_submission_request(route.request)
+            return route.continue_()
         host=p.hostname
         if p.scheme!="https" or not host or p.port not in (None,443):return route.abort()
         if host not in self.host_cache:self.host_cache[host]=public_host(host)
@@ -231,10 +234,30 @@ class Browser:
                         self.denied_write=True;self.denied_request=detail
                         self.store.event('request_blocked',None,detail)
                     return route.abort()
+        self._record_submission_request(route.request)
         return route.continue_()
+
+    def _record_submission_request(self,request):
+        if self.aid and self.attempted and request.method not in ('GET','HEAD','OPTIONS') and urlsplit(request.url).hostname==self.current_host:
+            key=self._request_key(request)
+            # Context routing and page response callbacks can wrap the same
+            # request differently. Correlate immutable transport content; drop
+            # ambiguous overlapping duplicates rather than misattribute them.
+            self.submission_requests[key]=self.aid if key not in self.submission_requests else None
+
+    @staticmethod
+    def _request_key(request):
+        return (request.url,request.method,hashlib.sha256(getattr(request,'post_data_buffer',None) or b'').hexdigest())
 
     def _upload_response(self,response):
         request=response.request
+        application_id=self.submission_requests.pop(self._request_key(request),None)
+        if application_id:
+            # Transport success is diagnostic evidence, never a receipt. Do not
+            # persist query strings, headers, submitted answers or response bodies.
+            with contextlib.suppress(Exception):
+                self.store.event('submission_response',application_id,{'stage':'after_submit','host':urlsplit(request.url).hostname,
+                    'path':urlsplit(request.url).path,'method':request.method,'status':response.status})
         if (request.method=='POST' and self.current_host=='jobs.ashbyhq.com'
                 and urlsplit(request.url).hostname=='jobs.ashbyhq.com'
                 and urlsplit(request.url).path=='/api/non-user-graphql' and 200<=response.status<300):
@@ -672,7 +695,8 @@ class Browser:
                 screenshot_name=self._outcome_screenshot(screenshot)
                 confirmed=CONFIRMED.search(text) and not self.page.locator('input[type=email]').count()
                 outcome='not_submitted' if REJECTED.search(text) else 'confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
-                evidence=text if outcome=='awaiting_verification' else text[:4000]
+                # Employer errors/receipts often appear below a long posting.
+                evidence=text if outcome=='awaiting_verification' or len(text)<=4000 else text[:2000]+'\n…\n'+text[-2000:]
                 if outcome=='awaiting_verification':
                     self.store.db.execute('INSERT OR REPLACE INTO verification_challenges VALUES(?,?,?,?,?,?,?,0)',
                         (self.aid,'greenhouse',self.page.url,job['company'],requested,8,'pending'))

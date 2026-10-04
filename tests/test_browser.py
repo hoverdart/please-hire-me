@@ -28,6 +28,9 @@ def ats(request):
     if getattr(request,'param',None)=='spam':
         html=html.replace(b"h.textContent='Thank you for applying. Your application has been received.';",
             b'h.textContent="We couldn\'t submit your application. Your application submission was flagged as possible spam.";')
+    if getattr(request,'param',None)=='processing-error':
+        html=html.replace(b"h.textContent='Thank you for applying. Your application has been received.';",
+            b"h.textContent='Posting details. '.repeat(400)+'There was an error processing your application. Please try again.';")
     class H(BaseHTTPRequestHandler):
         def log_message(self,*a):pass
         def do_GET(self):
@@ -62,6 +65,33 @@ def test_local_exact_answers_upload_confirm_and_no_retry(store,ats):
 def test_prepare_only_never_submits(store,ats):
     with Browser(store,test_url=ats[0]) as b:assert b.apply(local_job(store,ats),live=False)=='prepared'
     assert not ats[1]
+
+
+@pytest.mark.parametrize('ats',['processing-error'],indirect=True)
+def test_post_submit_generic_error_is_uncertain_with_tail_evidence_and_no_replay(store,ats):
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as b:
+        assert b.apply(job)=='unknown'
+        with pytest.raises(Blocked):b.apply(job)
+    app=store.db.execute('SELECT * FROM applications').fetchone()
+    assert app['state']=='unknown' and 'There was an error processing your application' in app['confirmation']
+    assert len(app['confirmation'])<4100 and len(ats[1])==1
+    response=json.loads(store.db.execute("SELECT detail FROM events WHERE kind='submission_response' AND subject=?",(app['id'],)).fetchone()[0])
+    assert response=={'stage':'after_submit','host':'127.0.0.1','path':'/submit','method':'POST','status':200}
+
+
+def test_late_response_metadata_stays_bound_to_original_intent_and_excludes_query(store):
+    class Request:
+        method='POST';url='https://job-boards.greenhouse.io/submit?private=secret'
+    class Response:
+        request=Request();status=503
+    b=Browser(store);b.aid='next-application';b.current_host='jobs.lever.co'
+    b.submission_requests[b._request_key(Response.request)]='original-application'
+    b._upload_response(Response())
+    row=store.db.execute("SELECT subject,detail FROM events WHERE kind='submission_response'").fetchone()
+    assert row['subject']=='original-application'
+    assert json.loads(row['detail'])=={'stage':'after_submit','host':'job-boards.greenhouse.io','path':'/submit','method':'POST','status':503}
+    assert not b.submission_requests
 
 
 def test_unknown_field_blocks_before_click(store,ats):
