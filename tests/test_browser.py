@@ -684,3 +684,25 @@ def test_delayed_degree_choices_are_validated_and_selected_without_raw_fact_sear
         b.page.route(ats[0]+'/**',form)
         assert b.apply(local_job(store,ats))=='confirmed'
     assert b"Bachelor's Degree" in ats[1][0] and b'B.S.' not in ats[1][0]
+
+
+@pytest.mark.parametrize('initial,entered,step,minimum,valid', [
+    ('','2028','', '', True), ('2026','2028','2','',True),
+    ('2026','2027','2','',False), ('0.5','2.5','1','',True),
+    ('0.5','2','1','',False), ('2026','2027','2','2025',True),
+    ('0.5','2','any','',True),
+])
+def test_controlled_number_value_updates_preserve_only_equivalent_constraints(store,ats,initial,entered,step,minimum,valid):
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content(f'<form><label for="year">End date year</label><input id="year" type="number" value="{initial}"'+
+            (f' step="{step}"' if step else '')+(f' min="{minimum}"' if minimum else '')+
+            ' oninput="this.setAttribute(\'value\',this.value)"></form>')
+        before=b._snapshot()
+        b.page.locator('#year').fill(entered)
+        if valid:b._verify([],[],before)
+        else:
+            with pytest.raises(Blocked,match='form_changed'):b._verify([],[],before)
+        # Actual employer constraints still stop advancement after hydration.
+        b.page.locator('#year').evaluate('(e)=>e.max="1"')
+        with pytest.raises(Blocked,match='form_changed'):b._verify([],[],before)
+    assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()

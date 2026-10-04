@@ -418,7 +418,25 @@ class Browser:
 
     @staticmethod
     def _shape(fields):
-        return [{k:v for k,v in f.items() if k not in ('value','index','indices','ref','refs') and not (k=='options' and f['type']=='combobox')} for f in fields]
+        from decimal import Decimal, InvalidOperation
+        shapes=[]
+        for f in fields:
+            shape={k:v for k,v in f.items() if k not in ('value','index','indices','ref','refs') and not (k=='options' and f['type']=='combobox')}
+            if f['type']=='number':
+                # React mirrors the entered value into the value attribute.
+                # Compare the allowed numeric lattice, not its changing origin;
+                # min takes precedence and step=any has no lattice at all.
+                try:
+                    if str(f.get('step')).casefold()=='any':base=None
+                    else:
+                        step=Decimal(f.get('step') or '1')
+                        origin=Decimal(f.get('min') or f.get('step_base') or '0')
+                        if not step.is_finite() or step<=0 or not origin.is_finite():raise InvalidOperation
+                        base=str(((origin%step+step)%step).normalize())
+                    shape['step_base']=base
+                except (InvalidOperation,ValueError,TypeError):pass
+            shapes.append(shape)
+        return shapes
 
     def _menu(self, el):
         for name in ('aria-controls','aria-owns'):
