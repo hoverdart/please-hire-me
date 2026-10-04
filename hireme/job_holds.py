@@ -20,7 +20,7 @@ def category(reason):
     if reason in FACT_REASONS:return 'information'
     if reason in MAPPING_REASONS:return 'mapping'
     if reason in DOCUMENT_REASONS:return 'documents'
-    if reason in ACCOUNT_REASONS:return 'account'
+    if reason in ACCOUNT_REASONS or reason=='account_agreement_review':return 'account'
     if reason=='multi_step_requires_adapter':return 'unsupported'
     if reason in TRANSIENT:return 'transient'
     if reason in WAIT_REASONS:return 'limits'

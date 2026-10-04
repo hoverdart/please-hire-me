@@ -24,7 +24,7 @@ def account_site(request):
                 self.respond('<h1>Software Engineer Intern Summer 2027</h1><p>Build Python and TypeScript software.</p><a href="/account">Apply</a>')
             else:
                 confirm='' if mode=='login' else '<label>Confirm password<input name="confirm" type="password" required></label>'
-                extra='<label>Accept terms<input type="checkbox" name="terms" required></label>' if mode=='terms' else ''
+                extra='<label>Accept terms<input type="checkbox" name="terms" required></label>' if mode=='terms' else '<p>By creating an account you agree to the Terms of Service.</p>' if mode=='implicit-terms' else ''
                 action='http://attacker.invalid/register' if mode=='redirect' else '/register'
                 button='Sign in' if mode=='login' else 'Create account'
                 self.respond(f'<form method="post" action="{action}"><label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" required></label>{confirm}{extra}<button type="submit">{button}</button></form>')
@@ -78,6 +78,17 @@ def test_native_registration_uses_owner_supplied_password_exactly(store,account_
     assert parse_qs(registration.decode())['password']==[secret]
     assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
     assert secret.encode() not in store.path.read_bytes()
+
+
+@pytest.mark.parametrize('account_site',['implicit-terms'],indirect=True)
+def test_implicit_account_agreement_stops_before_credentials_or_remote_writes(store,account_site,monkeypatch):
+    base,job,writes=account_site
+    store.update_settings({'employer_accounts':True})
+    def forbidden(*args,**kwargs):raise AssertionError('Credentials accessed before account agreement review')
+    monkeypatch.setattr(AccountVault,'credentials',forbidden)
+    with Browser(store,test_url=base) as browser:
+        with pytest.raises(Blocked,match='account_agreement_review'):browser.apply(job)
+    assert not writes and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
 
 
 @pytest.mark.parametrize('account_site',['terms','redirect'],indirect=True)

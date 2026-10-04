@@ -174,6 +174,10 @@ def complete_native_account(browser, job):
     if forms.count()!=1:
         raise Blocked('unsupported_account_form')
     form=forms.first
+    # Agreements can be accepted implicitly by the create/sign-in button,
+    # without a checkbox. Inspect them before obtaining or entering passwords.
+    if re.search(r'\b(?:by\s+(?:clicking|creating|registering|signing|submitting|continuing)|(?:you|i)\s+(?:agree|accept)|terms\s+of\s+(?:use|service)|user\s+agreement)\b',form.inner_text(),re.I):
+        raise Blocked('account_agreement_review','Review the employer account agreement in the dedicated browser before proceeding')
     info=form.evaluate("""f=>({action:f.action,method:f.method,enctype:f.enctype,
        inputs:Array.from(f.elements).map(e=>({name:e.name,type:e.type,value:e.value,
          disabled:e.disabled,label:Array.from(e.labels||[]).map(l=>l.textContent.trim()).join(' ')}))})""")
