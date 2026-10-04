@@ -267,7 +267,10 @@ def test_find_opportunities_and_stop_without_enabling_submissions(tmp_path):
             assert store.db.execute('SELECT COUNT(*) FROM applications').fetchone()[0] == 0
             (root / 'finish-search').touch()
             page.locator('#discover').click()
-            page.evaluate('refresh()')
+            # Starting the request is not proof that the worker thread finished.
+            # Poll the actual completion instead of racing a single snapshot
+            # against the dashboard's fifteen-second background refresh.
+            page.wait_for_function('async()=>{await refresh();return !state.worker_running}', timeout=20000)
             expect(page.locator('#discover')).to_be_enabled()
             expect(page.locator('#runs')).to_contain_text('Opportunity search')
             expect(page.locator('#runs')).to_contain_text('No submissions')
@@ -2355,8 +2358,10 @@ def test_source_page_load_queues_followup_saves_and_preserves_other_section_focu
             draft=page.locator('#facts-form [name=first_name]');draft.fill('Independent unsaved name')
             if failed_page:pending.pop().fulfill(status=503,json={'error':'Synthetic interrupted source page'})
             else:pending.pop().fulfill(json=stale)
+            # Wait for both queued refreshes, including the follow-up server read.
+            # Keep a bounded failure if a deferred save becomes stuck.
+            page.wait_for_function('()=>refreshesFinished===2', timeout=20000)
             expect(page.locator('#settings-form')).not_to_have_attribute('data-saving','true')
-            page.wait_for_function('()=>refreshesFinished===2')
             expect(draft).to_have_value('Independent unsaved name');expect(draft).to_be_focused()
             expect(page.locator('#material-list article')).to_have_count(20 if failed_page else 5)
             assert page.evaluate('state.settings.min_fit_score')==57 and len(reads)==(1 if failed_page else 2)
