@@ -359,6 +359,9 @@ def resolve(store, host, field, provider=None, context=None):
     context['max_sentences']=_sentence_cap(field,context)
     context['single_line']=field.get('type')=='text'
     context['field_context']=field_context(host,field,context)
+    if field.get('type')=='combobox' and not options:
+        if field.get('required') or field.get('value'):raise Blocked('unsupported_widget',label+' — dropdown options were not available for validation')
+        return None
     pending_binding=None
     from .materials import writing_context,writing_context_hash
     context.update(writing_context(store))

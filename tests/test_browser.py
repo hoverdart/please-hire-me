@@ -661,3 +661,26 @@ def test_initial_navigation_retries_only_known_transient_failures(store,ats,monk
         monkeypatch.setattr(browser.page,'goto',failed)
         with pytest.raises(Blocked,match=reason):browser.apply(local_job(store,ats))
     assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+def test_delayed_degree_choices_are_validated_and_selected_without_raw_fact_search(store,ats):
+    store.put_facts({'degree':'B.S.'})
+    original=(Path(__file__).parent/'fixtures/application.html').read_text()
+    html=original.replace('</form>', '''<label for="degree-picker">Degree*</label><div class="select__control">
+    <span class="select__single-value"></span><input id="degree-picker" role="combobox" aria-controls="degree-menu" required>
+    <input type="hidden" name="education_degree"></div><div id="degree-menu" role="listbox" hidden></div></form>''').replace('</body>', '''<script>
+    const picker=document.querySelector('#degree-picker'),menu=document.querySelector('#degree-menu');
+    const labels=["Bachelor's Degree","Master's Degree"];
+    function options(){menu.innerHTML='';for(const label of labels){const o=document.createElement('div');o.role='option';o.textContent=label;o.setAttribute('aria-selected',document.querySelector('[name=education_degree]').value===label?'true':'false');
+      o.onclick=()=>{document.querySelector('[name=education_degree]').value=label;picker.required=false;picker.value='';document.querySelector('.select__single-value').textContent=label;menu.hidden=true};menu.append(o)}menu.hidden=false}
+    picker.onclick=()=>setTimeout(options,800);
+    picker.oninput=()=>{menu.querySelectorAll('[role=option]').forEach(o=>o.hidden=!o.textContent.toLowerCase().includes(picker.value.toLowerCase()))};
+    picker.onkeydown=e=>{if(e.key==='Escape')menu.hidden=true};
+    </script></body>''')
+    with Browser(store,test_url=ats[0]) as b:
+        def form(route):
+            if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
+            else:route.fallback()
+        b.page.route(ats[0]+'/**',form)
+        assert b.apply(local_job(store,ats))=='confirmed'
+    assert b"Bachelor's Degree" in ats[1][0] and b'B.S.' not in ats[1][0]

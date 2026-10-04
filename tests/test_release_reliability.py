@@ -154,3 +154,13 @@ def test_second_education_entry_does_not_reuse_first_graduation(store,job):
     assert resolve(store,job['host'],field,context=job)['value']=='2026'
     other={**field,'section_entry':2}
     with pytest.raises(Blocked,match='repeated_entry_review'):resolve(store,job['host'],other,context=job)
+
+
+def test_required_combobox_without_options_never_uses_raw_fact_or_model(store,job):
+    store.put_facts({'degree':'B.S.'})
+    class Model:
+        def match_field(self,*args):raise AssertionError('An unvalidated dropdown must stop before inference')
+    f={'label':'Degree*','type':'combobox','options':[],'required':True,'maxlength':-1}
+    with pytest.raises(Blocked,match='unsupported_widget'):resolve(store,job['host'],f,Model(),context=job)
+    assert store.db.execute('SELECT count(*) FROM field_bindings_v2').fetchone()[0]==0
+    assert resolve(store,job['host'],{**f,'required':False},Model(),context=job) is None

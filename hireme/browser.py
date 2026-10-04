@@ -377,6 +377,10 @@ class Browser:
                 try:
                     el.click(); self.page.wait_for_timeout(200)
                     menu=self._menu(el)
+                    if field_key(f['label']) not in ('school','location'):
+                        # ATS dropdowns may hydrate after opening. An empty early
+                        # read must not turn a choice into a free-text fact.
+                        with contextlib.suppress(Exception):menu.get_by_role('option').first.wait_for(state='visible',timeout=5000)
                     f['options']=[x.strip() for x in menu.get_by_role('option').all_text_contents() if x.strip()]
                     selected=[x.strip() for x in menu.get_by_role('option',selected=True).all_text_contents() if x.strip()]
                     if len(selected)==1:f['value']=selected[0]
@@ -460,9 +464,8 @@ class Browser:
             for i,option in enumerate(f['options']):self._control(f,i).set_checked(option==value)
         elif f['type']=='checkbox':el.set_checked(value=='Yes')
         elif f['type']=='combobox':
-            el.click()
-            if el.evaluate('(e)=>e.tagName==="INPUT"'):el.fill(value.split(',')[0] if field_key(f['label'])=='location' else value)
-            self._menu(el).get_by_role('option',name=value,exact=True).click()
+            from .ats_widgets import select_combobox_exact
+            select_combobox_exact(self,el,f,value)
         else:
             if f['type']!='textarea' and '\n' in value:raise Blocked('invalid_single_line_answer',f['label'])
             el.fill(value)

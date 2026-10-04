@@ -369,7 +369,7 @@ class Store:
             for candidate in self.db.execute('SELECT a.*,q.context FROM answers a JOIN question_contexts q ON q.id=a.id WHERE a.host=? AND a.question=?',(host,label)):
                 try:previous=json.loads(candidate['context'])
                 except (ValueError,TypeError):continue
-                if isinstance(previous,dict) and previous.get('version') in (3,4) and digest({k:v for k,v in previous.items() if k!='version'})==comparison:
+                if isinstance(previous,dict) and previous.get('version') in (3,4,5) and digest({k:v for k,v in previous.items() if k!='version'})==comparison:
                     # Rule updates invalidate model bindings, not an unchanged
                     # explicit user approval. Resolve still validates its value.
                     result=dict(candidate);result.pop('context');return result
