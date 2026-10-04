@@ -211,19 +211,26 @@ def complete_native_account(browser, job):
         raise Blocked('account_creation_held')
     if not creating and not row:
         raise Blocked('account_credentials_unavailable')
-    credentials=vault.credentials(origin,company,create=creating)
-    controls=form.locator('input').all()
-    for f in fields:
-        matches=[el for el in controls if el.get_attribute('name')==f['name']]
-        if len(matches)!=1:
+    # Browser errors can include typed values in their call logs. Keep every
+    # credential-bearing operation behind a sanitized pre-write boundary.
+    try:
+        credentials=vault.credentials(origin,company,create=creating)
+        controls=form.locator('input').all()
+        for f in fields:
+            matches=[el for el in controls if el.get_attribute('name')==f['name']]
+            if len(matches)!=1:
+                raise Blocked('unsupported_account_form')
+            matches[0].fill(credentials['password'] if f['type']=='password' else credentials['email'])
+        if not form.evaluate('(f)=>f.checkValidity()'):
+            raise Blocked('account_password_policy')
+        pairs=form.evaluate('(f)=>Array.from(new FormData(f).entries())')
+        # Submit-button values are intentionally unsupported; no extra hidden writes.
+        if buttons.first.get_attribute('name'):
             raise Blocked('unsupported_account_form')
-        matches[0].fill(credentials['password'] if f['type']=='password' else credentials['email'])
-    if not form.evaluate('(f)=>f.checkValidity()'):
-        raise Blocked('account_password_policy')
-    pairs=form.evaluate('(f)=>Array.from(new FormData(f).entries())')
-    # Submit-button values are intentionally unsupported; no extra hidden writes.
-    if buttons.first.get_attribute('name'):
-        raise Blocked('unsupported_account_form')
+    except Blocked:
+        raise
+    except Exception:
+        raise Blocked('account_fields_unavailable','Account fields could not be filled or validated; inspect the dedicated browser before retrying') from None
     store.checkpoint()
     if not store.settings()['employer_accounts'] or not store.settings()['live_enabled']:
         raise Blocked('account_automation_disabled')

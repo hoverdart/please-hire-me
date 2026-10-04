@@ -155,3 +155,29 @@ def test_pause_after_intent_stops_account_post(store,account_site,monkeypatch):
         with pytest.raises(Blocked,match='paused'):browser.apply(job)
     assert not writes
     assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='uncertain'
+
+
+@pytest.mark.parametrize('failure_stage',['fill','validation','serialization'])
+def test_secret_field_errors_are_sanitized_before_account_intent(store,account_site,monkeypatch,failure_stage):
+    from playwright.sync_api import Locator
+    base,job,writes=account_site
+    secret='Synthetic-error-password-only42!'
+    store.update_settings({'live_enabled':False})
+    AccountVault(store).save_supplied('https://fixture.invalid',job['company'],store.facts()['email']['value'],secret,secret)
+    store.update_settings({'employer_accounts':True,'live_enabled':True})
+    original_fill=Locator.fill;original_evaluate=Locator.evaluate
+    def fill(locator,value,*args,**kwargs):
+        if failure_stage=='fill' and value==secret:raise RuntimeError('Call log: fill '+secret)
+        return original_fill(locator,value,*args,**kwargs)
+    def evaluate(locator,expression,*args,**kwargs):
+        target='checkValidity' if failure_stage=='validation' else 'new FormData'
+        if failure_stage!='fill' and target in expression:raise RuntimeError('Call log: '+secret)
+        return original_evaluate(locator,expression,*args,**kwargs)
+    monkeypatch.setattr(Locator,'fill',fill);monkeypatch.setattr(Locator,'evaluate',evaluate)
+    with Browser(store,test_url=base) as browser:
+        with pytest.raises(Blocked,match='account_fields_unavailable') as error:browser.apply(job)
+        assert browser.auth_write is None
+    assert secret not in str(error.value)
+    assert not writes and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert secret.encode() not in store.path.read_bytes()
