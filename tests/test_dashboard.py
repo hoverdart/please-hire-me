@@ -9,6 +9,20 @@ from hireme.server import serve
 from pathlib import Path
 
 
+def pause_first_request(page,pattern,pending):
+    """Suspend one request while forwarding later reads through a stable route."""
+    intercepted=False
+    def handle(route):
+        nonlocal intercepted
+        if intercepted:route.continue_()
+        else:
+            intercepted=True
+            pending.append(route)
+    # Do not remove browser interception as the suspended request completes:
+    # its continuation can immediately trigger a queued refresh request.
+    page.route(pattern,handle)
+
+
 def launch(root,repo,port):
     from hireme import scheduler
     scheduler.status=lambda *args, **kwargs: {'installed':False}
@@ -2349,7 +2363,7 @@ def test_source_page_load_queues_followup_saves_and_preserves_other_section_focu
             page.goto(base+'/#token=fixture-capability');page.locator('[data-view=materials]').click()
             expect(page.locator('#material-list article')).to_have_count(20)
             stale=page.request.get(base+'/api/state?material_offset=20',headers={'X-Hireme-Token':'fixture-capability'}).json()
-            page.route('**/api/state?material_offset=20',lambda route:pending.append(route),times=1)
+            pause_first_request(page,'**/api/state?material_offset=20',pending)
             with page.expect_request('**/api/state?material_offset=20'):page.get_by_role('button',name='Older sources',exact=True).click()
             page.wait_for_function('()=>materialPagingBusy')
             page.evaluate('()=>{window.refreshesFinished=0;refresh().then(()=>refreshesFinished++);refresh().then(()=>refreshesFinished++)}')
@@ -2396,7 +2410,7 @@ def test_saved_view_requests_release_queued_preference_refresh_on_success_or_fai
             page.wait_for_function('()=>!refreshing && ledgerState!==null')
             page.locator('#saved-views-panel summary').click()
             pattern='**/api/saved-view' if operation=='save' else '**/api/jobs?*'
-            page.route(pattern,lambda route:pending.append(route),times=1)
+            pause_first_request(page,pattern,pending)
             if operation=='save':
                 page.locator('#saved-view-form input').fill('Another synthetic view')
                 with page.expect_request(pattern):page.locator('#saved-view-form button').click()
@@ -2410,7 +2424,11 @@ def test_saved_view_requests_release_queued_preference_refresh_on_success_or_fai
             else:pending.pop().continue_()
             # The failed view must release its barrier and finish the queued
             # server read before the save guard can release its controls.
-            page.wait_for_function('()=>!savedViewBusy && deferredRefresh===null && !refreshing', timeout=20000)
+            try:
+                page.wait_for_function('()=>!savedViewBusy && deferredRefresh===null && !refreshing', timeout=20000)
+            except Exception:
+                print('Synthetic saved-view queue diagnostic',page.evaluate('()=>({savedViewBusy,deferred:deferredRefresh!==null,refreshing:refreshing!==null,materialPagingBusy,score:state.settings.min_fit_score,saving:document.querySelector("#settings-form").dataset.saving})'), 'pending',len(pending),'errors',errors)
+                raise
             expect(page.locator('#settings-form')).not_to_have_attribute('data-saving','true')
             expect(score).to_have_value('59');expect(score).to_be_enabled()
             assert page.evaluate('state.settings.min_fit_score')==59 and store.settings()['min_fit_score']==59
@@ -2533,7 +2551,7 @@ def test_pending_note_save_and_closed_dialog_keep_other_opportunity_drafts_separ
             page.get_by_role('button',name=f"View details for {job['company']} · {job['title']}",exact=True).click()
             page.locator('#opportunity-notes summary').click()
             field=page.locator('#opportunity-note-body');expect(field).to_be_enabled();field.fill('First opportunity saved note')
-            page.route('**/api/job-note',lambda route:pending.append(route),times=1)
+            pause_first_request(page,'**/api/job-note',pending)
             with page.expect_request('**/api/job-note'):page.get_by_role('button',name='Save note',exact=True).click()
             expect(field).to_be_disabled()
             page.locator('#close-job-dialog').click()
