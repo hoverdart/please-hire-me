@@ -372,7 +372,7 @@ main {
   text-align: left;
   color: var(--ink);
   font-weight: 400;
-  box-shadow: 0 3px 10px #1c2b4003;
+  box-shadow: 0 3px 10px #00000003;
 }
 .metric-top {
   display: flex;
@@ -409,7 +409,7 @@ main {
 .metric-attention:hover {
   background: #fcfaf6;
   border-color: #dfc79e;
-  box-shadow: 0 3px 12px #1c2b4008;
+  box-shadow: 0 3px 12px #00000008;
 }
 .metric-link,
 .metric-foot {
@@ -989,7 +989,7 @@ pre {
   border-radius: 5px;
   box-shadow:
     -12px 12px 0 #d5e1f7,
-    0 18px 28px #4263a317;
+    0 18px 28px #00000017;
 }
 .art-sheet > span {
   font-size: 8px;
@@ -1546,7 +1546,7 @@ pre {
   border-radius: 18px;
   color: var(--ink);
   background: white;
-  box-shadow: 0 24px 80px #18283930;
+  box-shadow: 0 24px 80px #00000030;
 }
 .job-dialog::backdrop {
   background: #18283970;
@@ -1880,7 +1880,7 @@ pre {
   border: 1px solid var(--rule);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 6px 24px #1c2b401a;
+  box-shadow: 0 6px 24px #0000001a;
 }
 .preferences-savebar button {
   margin: 0;

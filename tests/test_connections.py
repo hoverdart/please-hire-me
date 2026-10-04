@@ -32,6 +32,7 @@ def test_model_budget_is_atomic_durable_and_counts_failed_requests(store):
 def test_managed_provider_rejects_output_outside_schema(store):
     p=ManagedProvider(store,10)
     p.backend=SimpleNamespace(request=lambda *a:{'answer_id':'invented'})
+    p.backend_configuration=(store.settings()['provider'],store.settings()['provider_model'],store.settings()['model_effort'])
     with pytest.raises(Blocked,match='provider_invalid_output'):p.choose_answer('Which?', [{'id':'one'}])
     assert store.db.execute('SELECT count(*) FROM model_requests').fetchone()[0]==1
 

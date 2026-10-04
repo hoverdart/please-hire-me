@@ -18,11 +18,14 @@ class ClaudeProvider:
     Local CLI authentication remains available. This is capability restriction, not an OS sandbox.
     Model output proposes facts, selects approved sources, or drafts source-grounded writing when authorized.
     """
-    def __init__(self, timeout=90, checkpoint=None, observer=None):
+    def __init__(self, timeout=90, checkpoint=None, observer=None, model='', effort='medium'):
         self.timeout=timeout
         self.checkpoint=checkpoint
         self.observer=observer
         self._account_checked=False
+        self.model=model
+        self.effort=effort
+        self.last_usage={}
         self.binary=shutil.which("claude")
         if not self.binary: raise Blocked("provider_unavailable","Claude Code is not installed")
 
@@ -55,6 +58,8 @@ class ClaudeProvider:
               "--disable-slash-commands","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
               "--setting-sources","","--no-session-persistence","--permission-mode","dontAsk",
               "--output-format","json","--json-schema",json.dumps(schema),"--system-prompt",instruction]
+        if self.model:args.extend(['--model',self.model])
+        args.extend(['--effort',self.effort])
         # stdin prevents personal facts appearing in process-list arguments.
         env={k:v for k,v in os.environ.items() if k in {"PATH","HOME","USER","LANG","LC_ALL","TMPDIR","TERM","CLAUDE_CONFIG_DIR","XDG_CONFIG_HOME"}}
         if not self._account_checked:
@@ -73,10 +78,20 @@ class ClaudeProvider:
                 r=self._run(args,input=json.dumps(data),cwd=cwd,env=env)
                 if self.observer:self.observer("inference_finished",{"seconds":round(time.monotonic()-started,2),"success":r.returncode==0})
             except subprocess.TimeoutExpired: raise Blocked("provider_timeout")
-        if r.returncode: raise Blocked("provider_error","Claude inference failed; check subscription/login")
+        if r.returncode:
+            if re.search(r'unknown option|unrecognized argument|unsupported (?:option|flag)|invalid.*(?:effort|model)',r.stderr or '',re.I):
+                raise Blocked('provider_cli_incompatible','Update Claude Code to a version supporting the required isolation, model and effort controls; no unsafe fallback is permitted')
+            if re.search(r'rate limit|usage limit|limit reached|quota exceeded',r.stderr or '',re.I):
+                raise Blocked('provider_rate_limited','Claude subscription allowance is unavailable; wait for the vendor reset')
+            raise Blocked("provider_error","Claude inference failed; check subscription/login")
         try:
             result=json.loads(r.stdout)
-            if result.get("is_error"): raise ValueError("error result")
+            usage=result.get('usage',{})
+            self.last_usage={k:v for k,v in usage.items() if k in {'input_tokens','output_tokens','cache_creation_input_tokens','cache_read_input_tokens'} and type(v) is int and v>=0} if isinstance(usage,dict) else {}
+            if result.get("is_error"):
+                if re.search(r'rate limit|usage limit|limit reached|quota exceeded',str(result.get('result','')),re.I):
+                    raise Blocked('provider_rate_limited','Claude subscription allowance is unavailable; wait for the vendor reset')
+                raise ValueError("error result")
             return result.get("structured_output") or json.loads(result["result"])
         except (ValueError,KeyError,TypeError): raise Blocked("provider_invalid_output")
 
@@ -137,6 +152,7 @@ class LazyProvider:
     def draft_answer(self,*args,**kwargs):return self._get().draft_answer(*args,**kwargs)
     def choose_answer(self,*args,**kwargs):return self._get().choose_answer(*args,**kwargs)
     def match_field(self,*args,**kwargs):return self._get().match_field(*args,**kwargs)
+    def reconsider_field(self,*args,**kwargs):return self._get().reconsider_field(*args,**kwargs)
     def choose_sentences(self,*args,**kwargs):return self._get().choose_sentences(*args,**kwargs)
 
 
@@ -215,14 +231,32 @@ class ManagedProvider(ClaudeProvider):
         self.store=store;self.timeout=timeout;self.checkpoint=checkpoint;self.observer=observer;self.backend=None
     def request(self,instruction,data,schema):
         if self.checkpoint:self.checkpoint()
-        self.store.reserve_model_request()
+        request_id=self.store.reserve_model_request()
         s=self.store.settings()
-        if self.backend is None:
-            if s['provider']=='claude-cli':self.backend=ClaudeProvider(self.timeout,self.checkpoint,self.observer)
-            elif s['provider']=='codex-cli':self.backend=CodexProvider(self.timeout,self.checkpoint,self.observer,s['provider_model'])
-            else:self.backend=APIProvider(self.store,self.timeout,self.checkpoint,self.observer)
-        result=self.backend.request(instruction,data,schema)
-        from jsonschema import validate,ValidationError
-        try:validate(result,schema)
-        except ValidationError:raise Blocked('provider_invalid_output') from None
-        return result
+        override=getattr(self,'mapping_override',False)
+        model='opus' if override else s['provider_model']
+        effort='high' if override else s['model_effort']
+        started=time.monotonic();success=False;backend=None
+        try:
+            configuration=(s['provider'],model,effort)
+            if self.backend is None or getattr(self,'backend_configuration',None)!=configuration:
+                if s['provider']=='claude-cli':self.backend=ClaudeProvider(self.timeout,self.checkpoint,self.observer,model,effort)
+                elif s['provider']=='codex-cli':self.backend=CodexProvider(self.timeout,self.checkpoint,self.observer,model)
+                else:self.backend=APIProvider(self.store,self.timeout,self.checkpoint,self.observer)
+                self.backend_configuration=configuration
+            backend=self.backend
+            result=backend.request(instruction,data,schema)
+            from jsonschema import validate,ValidationError
+            try:validate(result,schema)
+            except ValidationError:raise Blocked('provider_invalid_output') from None
+            success=True
+            return result
+        finally:
+            self.store.db.execute('INSERT INTO model_request_metadata VALUES(?,?,?,?,?,?)',(request_id,model,effort if s['provider']=='claude-cli' else '',time.monotonic()-started,int(success),json.dumps(getattr(backend,'last_usage',{}))))
+
+    def reconsider_field(self,field,facts,templates,context=None):
+        settings=self.store.settings()
+        if settings['provider']!='claude-cli' or not settings['model_escalation']:return {}
+        self.mapping_override=True
+        try:return self.match_field(field,facts,templates,context)
+        finally:self.mapping_override=False

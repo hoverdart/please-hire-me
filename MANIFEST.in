@@ -1,0 +1,5 @@
+include README.md LICENSE
+recursive-include hireme/resources *.md *.txt
+recursive-include hireme/static *.html *.css *.js
+recursive-include requirements *.lock
+include setup.sh run.sh

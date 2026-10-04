@@ -6,7 +6,10 @@ from zoneinfo import ZoneInfo
 DEFAULTS = {
     "schema_version": 1,
     "provider": "claude-cli",
-    "provider_model": "",
+    "provider_model": "sonnet",
+    "model_effort": "medium",
+    "model_escalation": False,
+    "remote_drafts": False,
     "deployment": "local",
     "max_attempts_per_cycle": 10,
     "max_model_requests_per_cycle": 40,
@@ -58,6 +61,7 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
     s = copy.deepcopy(DEFAULTS)
     s.update(copy.deepcopy(current or {}))
     s.update(changes)
+    if s['model_effort'] not in ('low','medium','high'):raise ValueError('Invalid model effort')
     if s['provider'] not in ('claude-cli','codex-cli','anthropic-api','openai-api'):raise ValueError('Unsupported provider')
     if s['deployment'] not in ('local','pi'):raise ValueError('Choose local or pi')
     import re
@@ -74,7 +78,7 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
         raise ValueError("Worker or submission limit too high")
     if s["target_per_cycle"] > s["max_per_cycle"] or s["target_per_day"] > s["max_per_day"]:
         raise ValueError("Targets exceed ceilings")
-    for key in ("live_enabled", "onboarding_complete", "headless", "tailored_writing", "contextual_preferences", "cover_letters", "gmail_reports", "gmail_verification", "employer_accounts"):
+    for key in ("live_enabled", "onboarding_complete", "headless", "tailored_writing", "contextual_preferences", "cover_letters", "gmail_reports", "gmail_verification", "employer_accounts", "model_escalation", "remote_drafts"):
         if type(s[key]) is not bool:
             raise ValueError(f"Invalid {key}")
     if s["gmail_code_wait_seconds"]>120:raise ValueError("Gmail verification wait must be at most 120 seconds")
@@ -125,11 +129,14 @@ FACTS = {
     "contacts_outside_resume": "Know people at employers not on resume (Yes / No)",
     "summer_2027_relocate": "Willing to relocate for summer 2027 (Yes / No)",
     "summer_2027_available": "Available for a Summer 2027 internship starting May/June (Yes / No)",
+    "outside_business_activity": "Currently provide services to another business or organization (Yes / No)",
+    "business_activity_details": "Approved current business/contract activity and potential overlap disclosure",
+    "recruitment_data_consent": "Consent to storing/processing data for employment application consideration (Yes / No)",
 }
 REQUIRED = {"full_name", "first_name", "last_name", "email", "phone", "location", "graduation",
             "work_authorized_us", "needs_sponsorship", "us_person", "professional_years", "skills"}
 BOOLEANS = {"work_authorized_us", "needs_sponsorship", "us_person", "unrestricted_authorization",
-            "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available"}
+            "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent"}
 
 
 def validate_fact(key: str, value: str) -> str:

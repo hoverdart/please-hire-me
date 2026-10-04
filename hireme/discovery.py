@@ -31,11 +31,12 @@ def posting(url,company,title,location,source,description="",**extra):
 
 
 def board_sources(repo,ats=None,limit=None,store=None):
+    from .resources import discovery_text
     slugs=set()
-    for line in (repo / "data/boards.md").read_text().splitlines():
+    for line in discovery_text(repo,'boards.md').splitlines():
         if line.startswith("|"):
             slugs.update(re.findall(r"`([A-Za-z0-9._-]+)`",line))
-    for line in (repo / "data/slug-candidates.txt").read_text().splitlines():
+    for line in discovery_text(repo,'slug-candidates.txt').splitlines():
         if re.fullmatch(r"[A-Za-z0-9._-]{1,100}",line.strip()): slugs.add(line.strip())
     if store:
         for row in store.db.execute("SELECT url FROM jobs"):

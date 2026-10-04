@@ -315,3 +315,10 @@ See the [documentation map](docs/README.md) for the source layout, current refer
 On each eligible job row, **Applied manually** records your own application and **Don’t apply** excludes only that posting. Both survive discovery and stop automatic retries; **Undo** returns the posting to the queue. Manual applications count toward company limits and cooldowns but remain separate from worker-confirmed submissions. Pending questions are hidden while a posting is excluded. Jobs with confirmed or uncertain submission records use their existing outcome/reconciliation flow.
 
 Batch emails include direct links only for jobs the browser attempted, grouped into confirmed submissions, blocked attempts, and other outcomes. Screening exclusions are omitted. Open a blocked job link on your phone to review or apply, then choose **Applied manually** on its Pi dashboard row when you return. Check uncertain submissions with the employer before applying again and use the existing reconciliation flow for those records.
+
+
+### v0.5.0 release candidate
+
+Public-release work is tracked in [the candidate gate report](docs/public-release.md). This is a candidate, not a claim of verified Workday submission support. Claude subscription mode now accepts explicit model/effort controls; optional Opus mapping reconsideration uses the same approved-source validators. Request counters measure worker requests, not vendor credits or remaining subscription allowance.
+
+`hireme model-probe` sends one synthetic structured inference request under the restricted worker environment and consumes request allowance. Workday remote draft saves have a separate default-off permission: an authorized preparation may save a draft at the employer, but never submits. Manual account setup and unknown agreements require your review.

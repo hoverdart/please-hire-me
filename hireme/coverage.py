@@ -39,8 +39,7 @@ def coverage(store):
         return groups[key]
     from .discovery import board_sources
     repo=Path(__file__).resolve().parents[1]
-    if (repo/'data/boards.md').exists():
-        for kind,slug in board_sources(repo,store=store):group({'gh':'Greenhouse','ash':'Ashby','lv':'Lever'}.get(kind,kind),kind+':'+slug)['configured']=True
+    for kind,slug in board_sources(repo,store=store):group({'gh':'Greenhouse','ash':'Ashby','lv':'Lever'}.get(kind,kind),kind+':'+slug)['configured']=True
     from .portals import WORKDAY
     for label,tenant,wd,site,host in WORKDAY:
         configured=group('Workday','portal:'+label)
@@ -62,6 +61,10 @@ def coverage(store):
         row=health.get(g['source'])
         if g['ats']=='Workday' and 'portals' in health:
             g['aggregate_health']=health['portals']['status'];g['aggregate_checked_at']=health['portals']['checked']
+        if g['ats']=='Workday':
+            from .workday import VERSION
+            verified=[dict(r) for r in store.db.execute('SELECT signature,version,verified FROM adapter_verifications WHERE tenant=? AND version=?',(g.get('host',''),VERSION))]
+            g.update(adapter_version=VERSION,verified_flows=verified,verification_status='verified' if verified else 'pending',remote_draft_permission=store.settings()['remote_drafts'])
         if row:
             g['health']=row['status'];g['checked_at']=row['checked']
     return {'checked_at':now(),'groups':sorted(groups.values(),key=lambda g:(g['ats'],g['source'])),

@@ -29,6 +29,7 @@ def main(argv=None):
     p=sub.add_parser('export-ledger',help='Save job metadata as a CSV spreadsheet');p.add_argument('path',type=Path)
     p=sub.add_parser('dashboard');p.add_argument('--port',type=dashboard_port,default=8766);p.add_argument('--open',action='store_true',help='Open the workspace in your default browser')
     p=sub.add_parser('doctor',help='Check local setup without sending applications');p.add_argument('--verify-login',action='store_true');p.add_argument('--json',action='store_true')
+    sub.add_parser('model-probe',help='Make one synthetic structured inference request; consumes model allowance')
     p=sub.add_parser('import-material');p.add_argument('path',type=Path);p.add_argument('--kind',choices=['writing_sample','cover_letter','context'],required=True)
     p=sub.add_parser('import-resume');p.add_argument('path',type=Path);p.add_argument('--transcript',action='store_true')
     p=sub.add_parser('gmail');p.add_argument('action',choices=['import-client','connect','status','disconnect']);p.add_argument('path',type=Path,nargs='?')
@@ -64,6 +65,12 @@ def main(argv=None):
         except ValueError as e:print(str(e),file=sys.stderr);return 2
     store=Store(args.data_dir.expanduser().absolute())
     try:
+        if args.command=='model-probe':
+            from .provider import ManagedProvider
+            schema={'type':'object','additionalProperties':False,'required':['ok'],'properties':{'ok':{'type':'boolean','const':True}}}
+            ManagedProvider(store,store.settings()['model_timeout_seconds']).request('Return exactly the synthetic schema response with ok true. Do not use any tools or personal information.',{'synthetic':True},schema)
+            print(json.dumps({'structured_inference':True,'provider':store.settings()['provider'],'model':store.settings()['provider_model'],'effort':store.settings()['model_effort']}))
+            return 0
         if args.command=='dashboard':
             from .server import serve
             store.close()

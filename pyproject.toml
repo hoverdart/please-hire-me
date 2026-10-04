@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "please-hire-me"
-version = "0.4.0"
+version = "0.5.0rc1"
 description = "Automatic applications with verified facts and durable submission tracking"
 requires-python = ">=3.11"
 dependencies = ["playwright>=1.55,<2", "pypdf>=6,<7", "reportlab>=4.4,<5", "jsonschema>=4.25,<5", "cryptography>=50,<51"]
@@ -20,7 +20,7 @@ hireme = "hireme.cli:main"
 include = ["hireme*"]
 
 [tool.setuptools.package-data]
-hireme = ["static/*"]
+hireme = ["static/*", "resources/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

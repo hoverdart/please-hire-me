@@ -72,8 +72,12 @@ SNAPSHOT=r"""selector => {
    value=group.filter(x=>x.checked).map(x=>Array.from(x.labels||[]).map(l=>l.innerText).join(' ').trim()||x.value).join('; ');
   }else if(type==='select'){options=Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.textContent.trim())}
   else if(type==='checkbox'){options=['Yes','No'];value=el.checked?'Yes':'No'}
+  const entrySelector='.education--form,.employment--form,.experience--form,[data-automation-id="educationSection"],[data-automation-id="education"],[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]';
+  const entry=el.closest(entrySelector);
+  const entryPeers=entry ? Array.from(document.querySelectorAll(entrySelector)).filter(x=>x.getClientRects().length&&x.tagName===entry.tagName&&(entry.getAttribute('data-automation-id') ? x.getAttribute('data-automation-id')===entry.getAttribute('data-automation-id') : x.className===entry.className)) : [];
   out.push({index,indices,...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),type,options,
-   ...(el.closest('.education--form') ? {section:'education'} : el.closest('.employment--form,.experience--form') ? {section:'employment'} : {}),
+   ...(el.closest('.education--form,[data-automation-id="educationSection"],[data-automation-id="education"]') ? {section:'education'} : el.closest('.employment--form,.experience--form,[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]') ? {section:'employment'} : {}),
+   ...(entryPeers.length>1 ? {section_entry:entryPeers.indexOf(entry)} : {}),
    required:required||/\*/.test(question),
    maxlength:el.maxLength||-1,min:el.getAttribute('min'),max:el.getAttribute('max'),step:el.getAttribute('step'),step_base:type==='number'?el.getAttribute('value'):null,pattern:el.getAttribute('pattern'),value,multiple:!!el.multiple});
  });return out;
@@ -88,6 +92,7 @@ class Browser:
         self.store=store; self.test_url=test_url; self.context=None; self.playwright=None
         self.page=None; self.aid=None; self.attempted=False; self.current_host=""; self.host_cache={}; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set()
         self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
+        self.workday_grant=None
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
@@ -124,6 +129,13 @@ class Browser:
             try:self.store.checkpoint()
             except Blocked:return route.abort()
         url=route.request.url; p=urlsplit(url)
+        if self.workday_grant and route.request.method not in ('GET','HEAD','OPTIONS') and p.hostname==self.current_host:
+            try:approved=self.workday_grant.consume(url,route.request.method,route.request.post_data_buffer or b'')
+            except Blocked:approved=False
+            if approved:return route.continue_()
+            self.denied_write=True
+            self.denied_request={'host':p.hostname,'path':p.path,'method':route.request.method}
+            return route.abort()
         if self.auth_write and route.request.method not in ('GET','HEAD','OPTIONS'):
             grant=self.auth_write
             settings=self.store.settings()
@@ -497,12 +509,16 @@ class Browser:
         }))'''):raise Blocked('invalid_fields')
 
     def apply(self,job,live=True):
+        self.workday_grant=None
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
         self.store.check_job_decision(job['id'])
         self.current_host=job['host']
         if self.test_url:self.current_host=urlsplit(self.test_url).hostname
         elif job['host'] not in ATS_HOSTS|PORTAL_HOSTS:raise Blocked('unapproved_destination')
-        try:self.page.goto(job['url'],wait_until='domcontentloaded',timeout=45000)
+        from .ats_adapters import adapter_for
+        adapter=adapter_for(job)
+        navigation,verified_posting=adapter.navigation(job) if not self.test_url else (job['url'],None)
+        try:self.page.goto(navigation,wait_until='domcontentloaded',timeout=45000)
         except Exception as error:
             # Only the initial read navigation is classified for delayed retry.
             from playwright.sync_api import TimeoutError as NavigationTimeout, Error as NavigationError
@@ -516,12 +532,16 @@ class Browser:
             raise
         self._wait_ready()
         text=self._guard(job)
+        # Screening must inspect the posting, not questions in its application.
+        # For example HP IQ asks about graduating before September; that is a
+        # question to answer, not evidence of a mandatory eligibility cutoff.
+        posting_text=adapter.posting_text(text,verified_posting)
         # Portal host registration is not proof of a session; inspect the current page too.
         if job['host'] in PORTAL_HOSTS and job['host'] not in self.store.settings()['signed_in_portals'] and not self.store.settings()['employer_accounts'] and job['host'] not in {'www.deshaw.com','explore.jobs.netflix.net','career.mlp.com','jobs.uber.com','www.rentec.com'}:
             raise Blocked('account_blocked','Sign in through the dedicated browser and register this portal')
         # Read the actual posting again before policy checks: list feeds are not eligibility proof.
         from .policy import eligible
-        job={**job,'description':text,'answer_scope':job['host']+'|'+self.store.company(job['company'])}
+        job={**job,'description':posting_text,'answer_scope':job['host']+'|'+self.store.company(job['company'])}
         eligible(job,self.store.settings(),self.store.facts())
         self.store.upsert_job(job)
         all_answers=[]; all_docs=[]; steps=[]

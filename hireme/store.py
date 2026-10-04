@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS employer_accounts (id TEXT PRIMARY KEY, origin TEXT N
 CREATE TABLE IF NOT EXISTS model_requests (id INTEGER PRIMARY KEY, timestamp TEXT NOT NULL, run_id TEXT NOT NULL, provider TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS model_requests_time ON model_requests(timestamp);
 CREATE INDEX IF NOT EXISTS model_requests_run ON model_requests(run_id);
+CREATE TABLE IF NOT EXISTS model_request_metadata (request_id INTEGER PRIMARY KEY REFERENCES model_requests(id), model TEXT NOT NULL, effort TEXT NOT NULL, duration REAL NOT NULL, success INTEGER NOT NULL, usage TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS model_limit_override (id INTEGER PRIMARY KEY CHECK(id=1), expires REAL NOT NULL, previous TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS remote_draft_steps (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, tenant TEXT NOT NULL, step TEXT NOT NULL, request_hash TEXT NOT NULL, sources_hash TEXT NOT NULL, state TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL, acknowledgement TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS remote_draft_job ON remote_draft_steps(job_id,created);
+CREATE TABLE IF NOT EXISTS adapter_verifications (tenant TEXT NOT NULL, signature TEXT NOT NULL, version INTEGER NOT NULL, application_id TEXT NOT NULL, verified TEXT NOT NULL, PRIMARY KEY(tenant,signature,version));
 CREATE TABLE IF NOT EXISTS worker_control (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL);
 INSERT OR IGNORE INTO worker_control VALUES(1,0);
 CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
@@ -120,7 +125,32 @@ class Store:
             raise
 
     def settings(self):
+        override=self.db.execute('SELECT expires,previous FROM model_limit_override WHERE id=1').fetchone()
+        if override and time.time()>=override['expires']:
+            with self.transaction():
+                override=self.db.execute('SELECT expires,previous FROM model_limit_override WHERE id=1').fetchone()
+                if override and time.time()>=override['expires']:
+                    saved=json.loads(self.db.execute('SELECT value FROM config').fetchone()[0])
+                    saved.update(json.loads(override['previous']))
+                    self.db.execute('UPDATE config SET value=? WHERE id=1',(json.dumps(saved),))
+                    self.db.execute('DELETE FROM model_limit_override WHERE id=1')
+                    self.event('model_limits_restored','config',json.loads(override['previous']))
         return validate_settings(json.loads(self.db.execute("SELECT value FROM config").fetchone()[0]))
+
+    def temporary_model_limits(self,daily=500,cycle=200,seconds=21600):
+        if type(seconds) is not int or not 1<=seconds<=86400:raise ValueError('Temporary limits require an expiry within 24 hours')
+        with self.transaction():
+            saved=self.settings()
+            if self.db.execute('SELECT 1 FROM model_limit_override').fetchone():raise ValueError('Restore the active temporary limit first')
+            previous={k:saved[k] for k in ('max_model_requests_per_day','max_model_requests_per_cycle')}
+            updated=validate_settings({'max_model_requests_per_day':daily,'max_model_requests_per_cycle':cycle},saved)
+            self.db.execute('INSERT INTO model_limit_override VALUES(1,?,?)',(time.time()+seconds,json.dumps(previous)))
+            self.db.execute('UPDATE config SET value=? WHERE id=1',(json.dumps(updated),))
+            self.event('model_limits_temporarily_raised','config',{'daily':daily,'cycle':cycle,'expires_in':seconds})
+
+    def restore_model_limits(self):
+        self.db.execute('UPDATE model_limit_override SET expires=0 WHERE id=1')
+        return self.settings()
 
     def control_generation(self):
         return self.db.execute('SELECT generation FROM worker_control WHERE id=1').fetchone()[0]
@@ -149,6 +179,7 @@ class Store:
             cycle=self.db.execute('SELECT count(*) FROM model_requests WHERE run_id=?',(rid,)).fetchone()[0]
             if daily>=s['max_model_requests_per_day'] or cycle>=s['max_model_requests_per_cycle']:raise Blocked('model_budget_exhausted','Wait for the next batch/day or change your request limits')
             self.db.execute('INSERT INTO model_requests(timestamp,run_id,provider) VALUES(?,?,?)',(now(),rid,s['provider']))
+            return self.db.execute('SELECT last_insert_rowid()').fetchone()[0]
 
     def event(self, kind, subject, detail):
         self.db.execute("INSERT INTO events(timestamp,kind,subject,detail) VALUES(?,?,?,?)",
@@ -333,6 +364,15 @@ class Store:
             scoped=digest(['approved_answer',field_context(host,field,context)])
             r=self.db.execute('SELECT * FROM answers WHERE id=?',(scoped,)).fetchone()
             if r:return dict(r)
+            current=field_context(host,field,context)
+            comparison=digest({k:v for k,v in current.items() if k!='version'})
+            for candidate in self.db.execute('SELECT a.*,q.context FROM answers a JOIN question_contexts q ON q.id=a.id WHERE a.host=? AND a.question=?',(host,label)):
+                try:previous=json.loads(candidate['context'])
+                except (ValueError,TypeError):continue
+                if isinstance(previous,dict) and previous.get('version') in (3,4) and digest({k:v for k,v in previous.items() if k!='version'})==comparison:
+                    # Rule updates invalidate model bindings, not an unchanged
+                    # explicit user approval. Resolve still validates its value.
+                    result=dict(candidate);result.pop('context');return result
         qid = self.question_key(host,label,options)
         r = self.db.execute("SELECT * FROM answers WHERE id=?",(qid,)).fetchone()
         if not r and '|' in host:

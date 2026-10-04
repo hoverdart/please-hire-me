@@ -58,11 +58,8 @@ def eligible(job,s,facts):
         if facts.get("us_person",{}).get("value")!="Yes": raise Blocked("citizenship_mismatch")
         if re.search(r"citizen|clearance",desc,re.I): raise Blocked("citizenship_or_clearance_review")
     grad=facts.get("graduation",{}).get("value","")
-    windows=list(GRAD.finditer(desc))
-    for m in windows:
-        if not grad or not int(m.group(1))<=int(grad[:4])<=int(m.group(2)): raise Blocked("graduation_mismatch")
-    if re.search(r"(?:must|required|eligible).{0,40}graduat|graduat.{0,30}(?:must|between|before|after)",desc,re.I) and not windows:
-        raise Blocked("graduation_window_review","An unparsed graduation requirement needs review")
+    from .graduation import required
+    required(desc,grad)
     start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",title,re.I)
     if start:
         span={"winter":(1,3),"spring":(3,5),"summer":(5,8),"fall":(8,11),"autumn":(8,11)}[start.group(1).lower()]

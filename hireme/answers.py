@@ -35,6 +35,10 @@ REFUSE = re.compile(r"do not use (?:ai|artificial intelligence)|don.t use ai|wit
 
 
 def field_key(label):
+    if re.search(r'currently own,? operate,? or provide services.*business or organization',label,re.I):return 'outside_business_activity'
+    if re.search(r'describe the nature of the activity.*your role.*overlap',label,re.I):return 'business_activity_details'
+    if (re.search(r'(?:store|process).*data.*(?:considering|consideration|eligibility).*application.*employment',label,re.I)
+            and not re.search(r'marketing|advertis|sell|sale|third.part',label,re.I)):return 'recruitment_data_consent'
     label=" ".join(label.strip().casefold().split()).rstrip(" *?:")
     if re.search(r'\bhigh school\b',label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
@@ -245,6 +249,9 @@ def _compatible_binding(key, label):
         'background_check':r'background.*check|screening',
         'recording':r'record|video',
         'sms':r'sms|text message',
+        'outside_business_activity':r'currently own,? operate,? or provide services.*business or organization',
+        'business_activity_details':r'describe the nature of the activity.*your role.*overlap',
+        'recruitment_data_consent':r'(?:store|process).*data.*(?:considering|consideration|eligibility).*application.*employment',
     }
     if key=='degree' and re.search(r'highest|completed|earned',label,re.I):return False
     return key in terms and bool(re.search(terms[key],label,re.I))
@@ -252,6 +259,7 @@ def _compatible_binding(key, label):
 
 def _compatible_field(key, field, context=None):
     label=field['label']
+    if key=='recruitment_data_consent' and re.search(r'marketing|advertis|sell|sale|third.part',label,re.I):return False
     if key in {'summer_2027_available','summer_2027_relocate'} and not re.search(r'summer\s*2027',label+' '+(context or {}).get('title',''),re.I):return False
     if key in {'work_authorized_us','unrestricted_authorization'}:
         foreign=r'\b(?:canada|united kingdom|australia|germany|france|india|singapore|japan|china|brazil|mexico|ireland|netherlands)\b'
@@ -370,6 +378,9 @@ def resolve(store, host, field, provider=None, context=None):
             store.resolve_known_question(host,label,options,field=field,context=context)
             return {'field':field,**writing}
     saved=store.saved_answer(host,label,options,field=field,context=context)
+    if field.get('section_entry',0)>0 and field.get('section') in {'education','employment'} and not saved:
+        if field.get('required') or field.get('value'):raise Blocked('repeated_entry_review','Confirm the answer for this specific '+field['section']+' entry')
+        return None
     key=None;template=None;derived=None
     if saved:
         exact=field_key(label)
@@ -434,13 +445,26 @@ def resolve(store, host, field, provider=None, context=None):
             choices=[t for t in store.templates() if t['category']==cat]
             selected=choices[0]['id'] if len(choices)==1 else provider.choose_answer(label,choices) if choices and provider else None
             template=next((t for t in choices if t['id']==selected),None)
-        if not key:derived=_context_preference(store,label,options,context)
+        if options and re.search(r'will you.*graduat|(?:do you|are you).*graduat',label,re.I):
+            from .graduation import window, matches
+            bounds=window(label); graduation=store.facts().get('graduation')
+            if bounds and graduation:
+                key=None
+                derived={'value':'Yes' if matches(graduation['value'],bounds) else 'No','provenance':{'graduation_window_revision':graduation['revision']}}
+        if not key and not derived:derived=_context_preference(store,label,options,context)
         if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context)
         if not key and not template and not derived and provider and field.get('required'):
             from .config import FACTS
             facts={k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items() if k not in {'worked_outside_resume','contacts_outside_resume'}}
             if not re.search(r'summer\s*2027',context.get('title',''),re.I):facts.pop('summer_2027_relocate',None)
             matched=provider.match_field(field,facts,store.templates(),context)
+            candidate_keys={k for k in facts if _compatible_field(k,field,context)}
+            proposed=matched.get('fact_key')
+            rejected=not proposed or proposed not in candidate_keys or bool(matched.get('template_id'))
+            if (rejected and candidate_keys and not is_writing and store.settings()['model_escalation']
+                    and not re.search(r'consent|agree|acknowledge|certify|assessment|work sample',label,re.I)
+                    and hasattr(provider,'reconsider_field')):
+                matched=provider.reconsider_field(field,{k:v for k,v in facts.items() if k in candidate_keys},[],context)
             proposed_key=matched.get('fact_key');tid=matched.get('template_id')
             if bool(proposed_key) != bool(tid):
                 if proposed_key in facts:

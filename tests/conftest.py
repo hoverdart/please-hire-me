@@ -32,3 +32,20 @@ def package(store,job):
     f={'index':0,'indices':[0],'label':'Email','type':'email','required':True,'options':[],'maxlength':-1,'value':''}
     doc=dict(store.db.execute('SELECT * FROM documents').fetchone());doc['field']={'index':1,'label':'Resume','type':'file','required':True}
     return {'job_id':job['id'],'url':job['url'],'answers':[resolve(store,job['host'],f)],'documents':[doc],'facts_hash':digest(store.facts()),'steps':[{'fields':[f,doc['field']]}]}
+
+
+@pytest.fixture(autouse=True)
+def no_unmocked_model_processes(monkeypatch):
+    """Live inference belongs to the explicit model probe, never the unit suite."""
+    import subprocess
+    from pathlib import Path
+    real_run,real_popen=subprocess.run,subprocess.Popen
+    def check(args):
+        if isinstance(args,(list,tuple)) and args and Path(str(args[0])).name in {'claude','codex'}:
+            raise AssertionError('An unmocked model CLI process is forbidden in automated tests')
+    def run(args,*a,**kw):
+        check(args);return real_run(args,*a,**kw)
+    def popen(args,*a,**kw):
+        check(args);return real_popen(args,*a,**kw)
+    monkeypatch.setattr(subprocess,'run',run)
+    monkeypatch.setattr(subprocess,'Popen',popen)

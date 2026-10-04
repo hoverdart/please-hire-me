@@ -69,3 +69,7 @@ tmp/
 
 # OAuth client credentials downloaded from provider consoles
 client_secret*.json
+
+# Versioned release artifacts are uploaded, not tracked
+dist/
+build/

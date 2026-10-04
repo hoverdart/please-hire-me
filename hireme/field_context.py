@@ -6,7 +6,7 @@ import re
 from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 
-MAPPING_VERSION = 3
+MAPPING_VERSION = 4
 ADAPTER_VERSION = 2
 
 def field_context(host, field, context=None):
@@ -20,6 +20,7 @@ def field_context(host, field, context=None):
     return {'version': MAPPING_VERSION, 'ats': ats(host), 'scope': host,
             'employer': context.get('company', ''),
             'role': context.get('title',''), 'job_location': context.get('location',''), 'section': field.get('section', ''),
+            **({'section_entry':field['section_entry']} if 'section_entry' in field else {}),
             'label': ' '.join(field['label'].casefold().split()).rstrip(' *?:'),
             'widget': field.get('type', ''), 'maxlength': field.get('maxlength', -1),
             'constraints': constraints,

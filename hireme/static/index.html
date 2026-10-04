@@ -1381,6 +1381,7 @@
             </div>
             <fieldset class="section">
               <legend>Context and writing</legend>
+              <label class="confirmation"><input name="remote_drafts" type="checkbox" /> Allow supported Workday steps to save validated answers and documents at the employer before final submission. Preparation may save remote drafts; it never submits. Unknown agreements still require approval.</label>
               <label class="confirmation"
                 ><input name="employer_accounts" type="checkbox" /> Create and
                 reuse employer accounts with my confirmed email when a supported
@@ -1532,6 +1533,9 @@
                 id="provider-model-help"
                 class="help"
               ></span></label
+            ><label
+              >Claude effort<select name="model_effort"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label
+            ><label class="confirmation"><input name="model_escalation" type="checkbox" /> Allow one Opus/high reconsideration of rejected mappings supported by confirmed facts. Uses additional subscription allowance.</label
             ><label
               >Run on<select name="deployment">
                 <option value="local">This computer</option>

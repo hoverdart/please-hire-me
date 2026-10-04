@@ -1712,7 +1712,7 @@ function renderQuestionList() {
   for (const x of questionState.questions) {
     const box = el("article", undefined, "question");
     box.append(el("h3", x.label));
-    if (x.field_context?.section) box.append(el("p", `Form section: ${x.field_context.section}`, "help"));
+    if (x.field_context?.section) box.append(el("p", `Form section: ${x.field_context.section}${Number.isInteger(x.field_context.section_entry) ? ` · entry ${x.field_context.section_entry + 1}` : ""}`, "help"));
     if (x.company)
       box.append(
         state.demo
@@ -4258,7 +4258,8 @@ function renderSetup() {
   if (!editing("#provider-form"))
     for (const input of f.elements) {
       if (input.name && input.name !== "key")
-        input.value = state.settings[input.name];
+        if (input.type === "checkbox") input.checked = state.settings[input.name];
+        else input.value = state.settings[input.name];
     }
   updateProviderFields();
   $("#provider-state").textContent = checks.provider.message;
@@ -4335,6 +4336,8 @@ $("#provider-form").onsubmit = async (event) => {
     await api("/api/settings", {
       provider,
       provider_model: model,
+      model_effort: form.elements.model_effort.value,
+      model_escalation: form.elements.model_escalation.checked,
       deployment: form.elements.deployment.value,
     });
     saved(form);
