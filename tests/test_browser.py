@@ -3,7 +3,7 @@ import threading
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 import pytest
-from hireme.browser import Browser
+from hireme.browser import Browser,submission_receipt
 from hireme.util import Blocked,digest
 
 @pytest.fixture
@@ -13,7 +13,7 @@ def ats(request):
         html=html.replace(b'<button type="submit">',b'<label for="cover_letter">Cover Letter*</label><input id="cover_letter" name="cover_letter" type="file" required><button type="submit">')
     if getattr(request,'param',None)=='otp':
         html=html.replace(b'e.preventDefault();let f=',b'e.preventDefault();if(!document.getElementById("security_code")){let p=document.createElement("p");p.textContent="A verification code was sent to test@candidate.invalid. To submit your application, enter the 8-character code.";let l=document.createElement("label");l.htmlFor="security_code";l.textContent="Security code";let c=document.createElement("input");c.id="security_code";c.required=true;e.target.append(p,l,c);return;}let f=')
-    if getattr(request,'param',None)=='otp-segmented':
+    if getattr(request,'param',None) in ('otp-segmented','otp-custom-receipt'):
         html=html.replace(b'e.preventDefault();let f=',b'''e.preventDefault();if(!document.getElementById("security_code")){
           let original=e.target;original.hidden=true;
           let form=document.createElement('form');form.id='verification';
@@ -25,6 +25,9 @@ def ats(request):
           form.append(button);document.body.append(form);
           form.addEventListener('submit',async event=>{event.preventDefault();if(controls.map(x=>x.value).join('')!=='ABC12345')return;
             await fetch('/submit',{method:'POST',body:new FormData(original)});document.body.innerHTML='<h1>Thank you for applying. Your application has been received.</h1>';});return;}let f=''' )
+    if getattr(request,'param',None)=='otp-custom-receipt':
+        html=html.replace(b'Thank you for applying. Your application has been received.',
+            b'Our Talent team will carefully review your qualifications and experience. Thanks again for applying!')
     if getattr(request,'param',None)=='spam':
         html=html.replace(b"h.textContent='Thank you for applying. Your application has been received.';",
             b'h.textContent="We couldn\'t submit your application. Your application submission was flagged as possible spam.";')
@@ -47,6 +50,16 @@ def ats(request):
 def local_job(store,ats):
     url=ats[0]+'/application';j={'id':digest(url),'url':url,'host':'127.0.0.1','company':'Synthetic ATS','title':'Software Engineer Intern Summer 2027','location':'San Francisco, United States','description':'Build Python and TypeScript software','source':'fixture'}
     store.upsert_job(j);return j
+
+
+@pytest.mark.parametrize('text',[
+    'Thanks again for applying!',
+    'Our Talent team will carefully review your qualifications and experience.',
+    'Thank you for taking the time to apply. Please complete the application.',
+    'There was an error processing your application. Please try again.',
+])
+def test_custom_receipt_requires_both_completed_acknowledgement_and_review(text):
+    assert not submission_receipt(text)
 
 
 def test_local_exact_answers_upload_confirm_and_no_retry(store,ats):
@@ -406,7 +419,7 @@ def test_required_cover_letter_is_generated_uploaded_and_confirmed(store,ats,mon
     assert letter['generated'] and letter['hash'].encode() in ats[1][0]
 
 
-@pytest.mark.parametrize('ats',['otp','otp-segmented'],indirect=True)
+@pytest.mark.parametrize('ats',['otp','otp-segmented','otp-custom-receipt'],indirect=True)
 @pytest.mark.parametrize('screenshot_failure',[False,True])
 def test_gmail_code_continues_the_same_application_without_model_access(store,ats,monkeypatch,screenshot_failure):
     store.update_settings({'gmail_verification':True})

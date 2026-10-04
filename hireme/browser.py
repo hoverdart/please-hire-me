@@ -83,6 +83,14 @@ SNAPSHOT=r"""selector => {
  });return out;
 }"""
 CONFIRMED=re.compile(r"thank you for (?:your interest|applying|submitting)|application (?:has been |was )?(?:successfully )?(?:submitted|received)|we (?:have |have successfully )?received your application",re.I)
+
+def submission_receipt(text):
+    # Some Greenhouse employers replace the default receipt. Require both the
+    # completed-application acknowledgement and the promised applicant review;
+    # a generic thank-you or invitation to apply is not enough.
+    return bool(CONFIRMED.search(text) or (
+        re.search(r"thanks again for applying[!.]",text,re.I) and
+        re.search(r"our talent team will carefully review your qualifications and experience",text,re.I)))
 REJECTED=re.compile(r"we couldn.t submit your application[\s\S]*your application submission was flagged as possible spam",re.I)
 LOGIN=re.compile(r"sign in to (?:apply|continue)|log in to (?:apply|continue)|create (?:an |your )account|verify your (?:email|identity)|enter (?:the |your )?(?:verification|one.time|security) code",re.I)
 
@@ -311,7 +319,7 @@ class Browser:
         while True:
             text=self._guard(job,allow_verification=True)
             if REJECTED.search(text):return text
-            if CONFIRMED.search(text) and not self.page.locator('input[type=email]').count():return text
+            if submission_receipt(text) and not self.page.locator('input[type=email]').count():return text
             if accept_verification and self._email_verification(text):return text
             if self.page.locator('[aria-invalid=true]').count():return text
             if time.monotonic()>=deadline:return text
@@ -385,7 +393,7 @@ class Browser:
         screenshot_kwargs={'mask':[owner if owner.count()==1 else control.locator('xpath=..')]} if control.count() else {}
         screenshot_name=self._outcome_screenshot(screenshot,**screenshot_kwargs)
         text=re.sub(r'\s*'.join(re.escape(c) for c in code),'[verification code redacted]',text)
-        confirmed=CONFIRMED.search(text) and not self.page.locator('input[type=email]').count()
+        confirmed=submission_receipt(text) and not self.page.locator('input[type=email]').count()
         outcome='confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
         self.store.finish(self.aid,outcome,text,screenshot_name)
         return outcome
@@ -693,7 +701,7 @@ class Browser:
                 stage='outcome_evidence'
                 screenshot=self.store.root/'screenshots'/(self.aid+'-after.jpg')
                 screenshot_name=self._outcome_screenshot(screenshot)
-                confirmed=CONFIRMED.search(text) and not self.page.locator('input[type=email]').count()
+                confirmed=submission_receipt(text) and not self.page.locator('input[type=email]').count()
                 outcome='not_submitted' if REJECTED.search(text) else 'confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
                 # Employer errors/receipts often appear below a long posting.
                 evidence=text if outcome=='awaiting_verification' or len(text)<=4000 else text[:2000]+'\n…\n'+text[-2000:]
