@@ -258,6 +258,10 @@ def _context_preference(store, label, options, context):
                 try:value=_option_value('country','United States',options)
                 except Blocked:return None
                 evidence={'residence_location_revision':location['revision']}
+    elif (re.fullmatch(r'are you looking for a summer internship[? *]*',low)
+          and 'summer-internship' in store.settings()['seniority']
+          and re.search(r'\bsummer\b',context.get('title',''),re.I)):
+        value='Yes';evidence={'seniority':sorted(store.settings()['seniority']),'job_title':context['title']}
     elif re.search(r'preferred (?:programming|coding) language',low) and re.search(r'interviews?',low):
         # The opt-in permits routine preferences supported by confirmed skills.
         # Choose the first listed skill available as an exact language option.

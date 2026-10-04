@@ -245,3 +245,19 @@ def test_current_school_retires_legacy_dynamic_choices_but_preserves_other_jobs_
     assert store.db.execute('SELECT resolved FROM questions WHERE id=?',(legacy,)).fetchone()[0]==1
     assert all(store.db.execute('SELECT resolved FROM questions WHERE id=?',(qid,)).fetchone()[0]==0 for qid in (other,date))
     assert store.db.execute('SELECT count(*) FROM answers').fetchone()[0]==0
+
+
+def test_summer_search_question_uses_explicit_filters_without_model_or_availability_promise(store,job):
+    from hireme.answers import resolve
+    store.update_settings({'contextual_preferences':True,'seniority':['summer-internship']})
+    context={**job,'title':'Software Engineering Intern, Summer 2027'}
+    field={'label':'Are you looking for a summer internship?*','type':'radio','required':True,'options':['Yes','No'],'maxlength':-1}
+    answer=resolve(store,job['host'],field,context=context)
+    assert answer['value']=='Yes' and answer['provenance']['contextual_preference']['seniority']==['summer-internship']
+    for label in ('Are you available for the entire summer internship?', 'Are you looking for a summer internship and willing to relocate?'):
+        with pytest.raises(Blocked):resolve(store,job['host'],{**field,'label':label},context=context)
+    with pytest.raises(Blocked):resolve(store,job['host'],field,context={**context,'title':'Software Intern, Fall 2027'})
+    store.update_settings({'seniority':['part-time']})
+    with pytest.raises(Blocked):resolve(store,job['host'],field,context=context)
+    store.update_settings({'seniority':['summer-internship'],'contextual_preferences':False})
+    with pytest.raises(Blocked):resolve(store,job['host'],field,context=context)
