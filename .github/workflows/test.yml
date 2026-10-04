@@ -28,5 +28,15 @@ jobs:
       - run: for file in run.sh setup.sh scripts/*.sh; do bash -n "$file"; done
       - run: python -m pip install build
       - run: python -m build
+      - name: Build versioned source archive
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          git archive --format=tar.gz --prefix="please-hire-me-$version/" -o "dist/please-hire-me-$version-source.tar.gz" HEAD
       - run: python scripts/check_install_artifact.py dist/*.whl
       - run: python scripts/check_release_artifacts.py dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-distributions-${{ matrix.os }}-python-${{ matrix.python }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
