@@ -254,3 +254,94 @@ def test_related_legal_status_never_substitutes_for_requested_status(store,job,l
         def match_field(self,*args):return {'fact_key':key,'template_id':None}
     with pytest.raises(Blocked):resolve(store,job['host'],field(label,options=['Yes','No']),Wrong(),context=job)
     assert store.db.execute('SELECT COUNT(*) FROM field_bindings_v2').fetchone()[0]==0
+
+@pytest.mark.parametrize('label,key,value',[
+ ('This role is based out of our San Jose, CA office. Are you willing and able to accommodate this work environment?*','onsite','Yes'),
+ ('Are you eligible to work in the country where this vacancy is posted?*','work_authorized_us','Yes'),
+ ('Please enter the ZIP code of your primary residence in the United States.','postal_code','94704'),
+ ('To be eligible for this position, your primary residence must be located in the United States. Please indicate the state in which you currently reside.*','state','CA'),
+ ('Have you previously worked for Veeam (including as a contractor or intern)? Current Veeam employees are required to apply through the Internal Job Board.*','worked_outside_resume','No')])
+def test_real_veeam_wording_uses_confirmed_fact_without_model(store,job,label,key,value):
+    store.put_facts({key:value})
+    context={**job,'company':'Veeam Software','location':'San Jose, CA'}
+    answer=resolve(store,job['host']+'|veeamsoftware',field(label),context=context)
+    assert answer['value']==value and answer['provenance']['fact_key']==key
+
+@pytest.mark.parametrize('location',['San Jose, Costa Rica','Toronto, Canada','San Jose','Berlin, Germany'])
+def test_scoped_work_eligibility_needs_unambiguous_us_posting(store,job,location):
+    store.put_facts({'work_authorized_us':'Yes'})
+    with pytest.raises(Blocked):resolve(store,job['host'],field('Are you eligible to work in the country where this vacancy is posted?'),context={**job,'location':location})
+
+@pytest.mark.parametrize('prior',['Veeam','Veeam Software'])
+def test_short_employer_name_does_not_override_prior_work_history(store,job,prior):
+    store.put_facts({'worked_outside_resume':'No'});store.update_settings({'prior_employers':[prior]})
+    with pytest.raises(Blocked):resolve(store,job['host']+'|veeamsoftware',field('Have you previously worked for Veeam?'),context={**job,'company':'Veeam Software'})
+
+def test_model_allowance_hold_waits_for_reset_or_approved_answer(store,job):
+    import time
+    store.update_settings({'max_model_requests_per_day':1,'max_model_requests_per_cycle':1})
+    store.reserve_model_request()
+    f=field('An unanswered required fact')
+    q=store.ask(job['id'],job['host'],f['label'],[],field=f,context=job)
+    hold(store,job,'model_budget_exhausted',f['label'])
+    assert not ready(store,job)
+    assert ready(store,job,at=time.time()+86400)
+    store.answer_question(q,'Owner approved value')
+    assert ready(store,job)
+    assert store.db.execute('SELECT count(*) FROM model_requests').fetchone()[0]==1
+
+def test_quota_block_records_hold_and_preserves_funnel_without_repeated_attempt(store,job):
+    from hireme.worker import cycle
+    from pathlib import Path
+    store.update_settings({'max_model_requests_per_day':1,'max_model_requests_per_cycle':1});store.reserve_model_request()
+    calls=[]
+    class Browser:
+        def __init__(self,*args):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def apply(self,*args,**kwargs):calls.append(job['id']);raise Blocked('model_budget_exhausted','An unanswered required fact')
+    with pytest.raises(Blocked,match='model_budget_exhausted'):cycle(store,Path('.'),discover=False,limit=1,browser_factory=Browser)
+    run=store.db.execute('SELECT detail FROM runs ORDER BY started DESC LIMIT 1').fetchone()
+    detail=json.loads(run[0]);assert detail['eligible']==1 and detail['discovered']==0
+    assert not ready(store,job)
+    result=cycle(store,Path('.'),discover=False,limit=1,browser_factory=Browser)
+    assert result['attempts']==0 and calls==[job['id']]
+
+@pytest.mark.parametrize('key,label',[('worked_outside_resume','Have you previously worked for Veeam?'),('contacts_outside_resume','Do you know anyone at Veeam?')])
+def test_positive_general_history_does_not_prove_specific_employer_history(store,job,key,label):
+    store.put_facts({key:'Yes'})
+    with pytest.raises(Blocked):resolve(store,job['host']+'|veeamsoftware',field(label),context={**job,'company':'Veeam Software'})
+
+def test_fact_linked_negative_history_revalidates_prior_employer_changes(store,job):
+    host=job['host']+'|veeamsoftware';context={**job,'company':'Veeam Software'};f=field('Have you previously worked for Veeam?')
+    store.put_facts({'worked_outside_resume':'No'})
+    q=store.ask(job['id'],host,f['label'],[],field=f,context=context);store.answer_question(q,'No','worked_outside_resume')
+    assert resolve(store,host,f,context=context)['value']=='No'
+    store.update_settings({'prior_employers':['Veeam']})
+    with pytest.raises(Blocked,match='stale_answer'):resolve(store,host,f,context=context)
+
+@pytest.mark.parametrize('constraints',[{'min':'3'},{'max':'2'},{'step':'1'},{'min':'NaN'}])
+def test_numeric_constraints_reject_answer_before_binding_persistence(store,job,constraints):
+    store.put_facts({'professional_years':'2.5'})
+    class Model:
+        def match_field(self,*args):return {'fact_key':'professional_years','template_id':None}
+    with pytest.raises(Blocked):resolve(store,job['host'],field('Provide your years of professional experience',type='number',**constraints),Model(),context=job)
+    assert store.db.execute('SELECT count(*) FROM field_bindings_v2').fetchone()[0]==0
+
+def test_native_step_base_and_decimal_precision_are_respected(store,job):
+    store.put_facts({'professional_years':'2.5'})
+    class Model:
+        def match_field(self,*args):return {'fact_key':'professional_years','template_id':None}
+    answer=resolve(store,job['host'],field('Provide your years of professional experience',type='number',step='1',step_base='0.5'),Model(),context=job)
+    assert answer['value']=='2.5'
+
+@pytest.mark.parametrize('widget,options,expected',[('number',[],'8'),('select',['Jan','Aug'],'Aug'),('select',['01','08'],'08')])
+def test_education_month_components_match_numeric_and_abbreviated_widgets(store,job,widget,options,expected):
+    store.put_facts({'college_start':'2025-08'})
+    f=field('Start date month',type=widget,options=options,section='education')
+    assert resolve(store,job['host'],f,context=job)['value']==expected
+
+def test_text_prefill_value_does_not_change_binding_meaning(store,job):
+    store.put_facts({'school':'Confirmed University'})
+    f=field();resolve(store,job['host'],f,Model(),context=job)
+    assert resolve(store,job['host'],{**f,'step_base':'Unrelated prefill'},context=job)['value']=='Confirmed University'

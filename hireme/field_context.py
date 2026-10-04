@@ -3,9 +3,10 @@ from __future__ import annotations
 import calendar
 import json
 import re
+from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 
-MAPPING_VERSION = 2
+MAPPING_VERSION = 3
 ADAPTER_VERSION = 2
 
 def field_context(host, field, context=None):
@@ -14,12 +15,14 @@ def field_context(host, field, context=None):
     values = field.get('option_values', options)
     if len(values) != len(options):
         raise Blocked('invalid_option_metadata', field['label'])
+    constraints={key:field.get(key) for key in ('required','min','max','step','pattern','multiple')}
+    if field.get('type')=='number':constraints['step_base']=field.get('step_base')
     return {'version': MAPPING_VERSION, 'ats': ats(host), 'scope': host,
             'employer': context.get('company', ''),
             'role': context.get('title',''), 'job_location': context.get('location',''), 'section': field.get('section', ''),
             'label': ' '.join(field['label'].casefold().split()).rstrip(' *?:'),
             'widget': field.get('type', ''), 'maxlength': field.get('maxlength', -1),
-            'constraints': {key: field.get(key) for key in ('required','min','max','step','pattern','multiple')},
+            'constraints': constraints,
             'options': sorted(zip(options, values))}
 
 def ats(host):
@@ -55,7 +58,7 @@ def present(key, value, field):
         year, month = value.split('-')
         if not 1 <= int(month) <= 12: raise Blocked('invalid_date_answer', field['label'])
         if re.search(r'\byear\b', label): return year
-        if re.search(r'\bmonth\b', label): return calendar.month_name[int(month)]
+        if re.search(r'\bmonth\b', label): return str(int(month)) if field.get('type')=='number' else calendar.month_name[int(month)]
     if key == 'gpa' and field.get('type') == 'number': return value.split('/', 1)[0].strip()
     if key == 'phone' and re.search(r'(?:country|dial|calling).*(?:code)|country.*phone', label):
         # +1 is a calling code shared by multiple countries, never a country answer.
@@ -66,3 +69,21 @@ def present(key, value, field):
         if len(digits) == 11 and digits.startswith('1'): return digits[1:]
         raise Blocked('phone_country_review', field['label'])
     return value
+
+
+def validate_numeric(value,field):
+    if field.get('type')!='number':return
+    if not re.fullmatch(r'-?\d+(?:\.\d+)?',value):raise Blocked('numeric_answer_needed',field['label'])
+    try:
+        number=Decimal(value)
+        lower=Decimal(field['min']) if field.get('min') else None
+        upper=Decimal(field['max']) if field.get('max') else None
+        if any(v is not None and not v.is_finite() for v in (lower,upper)):raise InvalidOperation
+        if lower is not None and number<lower or upper is not None and number>upper:raise Blocked('numeric_answer_out_of_range',field['label'])
+        if field.get('step') and str(field['step']).casefold()!='any':
+            step=Decimal(field['step'])
+            if not step.is_finite() or step<=0:raise InvalidOperation
+            base=lower if lower is not None else Decimal(field.get('step_base') or '0')
+            if not base.is_finite():raise InvalidOperation
+            if (number-base)%step:raise Blocked('numeric_answer_out_of_range',field['label'])
+    except (InvalidOperation,ValueError,TypeError):raise Blocked('mapping_review',field['label']) from None

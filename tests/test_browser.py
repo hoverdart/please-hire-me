@@ -414,17 +414,23 @@ def test_without_gmail_connection_verification_is_held_and_not_retried(store,ats
 @pytest.mark.parametrize('reason',['model_budget_exhausted','provider_rate_limited','cycle_timeout'])
 def test_model_budget_and_rate_limit_stop_before_employer_write(store,ats,monkeypatch,reason):
     class Model:
+        calls=0
         def __init__(self,*args):pass
-        def match_field(self,*args,**kwargs):raise Blocked(reason)
+        def match_field(self,*args,**kwargs):Model.calls+=1;raise Blocked(reason)
     monkeypatch.setattr('hireme.provider.ManagedProvider',Model)
     with Browser(store,test_url=ats[0]) as browser:
         original=browser._snapshot
         def injected():
-            fields=original();fields.append({'index':99,'indices':[99],'label':'Unknown personal fact','type':'text','required':True,'options':[],'maxlength':-1,'value':''});return fields
+            fields=original();fields.append({'index':99,'indices':[99],'label':'Unknown personal fact','type':'text','required':True,'options':[],'maxlength':-1,'value':''})
+            if reason=='model_budget_exhausted':fields.append({**fields[-1],'label':'Another unanswered fact','index':100,'indices':[100]})
+            return fields
         browser._snapshot=injected
         with pytest.raises(Blocked,match=reason):browser.apply(local_job(store,ats))
     assert not ats[1]
-    assert not store.db.execute('SELECT 1 FROM questions').fetchone()
+    if reason=='model_budget_exhausted':
+        assert store.db.execute('SELECT count(*) FROM questions WHERE resolved=0').fetchone()[0]==2
+        assert Model.calls==1
+    else:assert not store.db.execute('SELECT 1 FROM questions').fetchone()
 
 
 def test_ashby_autosave_is_suppressed_without_blocking_local_form(store,monkeypatch):
@@ -646,3 +652,12 @@ def test_outcome_screenshot_failure_does_not_lose_confirmation(store,ats,monkeyp
         assert b.apply(local_job(store,ats))=='confirmed'
     app=store.db.execute('SELECT state,screenshot FROM applications').fetchone()
     assert app['state']=='confirmed' and app['screenshot']==''
+
+@pytest.mark.parametrize('error,reason', [('net::ERR_CONNECTION_RESET','navigation_failed'),('net::ERR_HTTP_RESPONSE_CODE_FAILURE','posting_navigation_review'),('net::ERR_CERT_DATE_INVALID','posting_navigation_review')])
+def test_initial_navigation_retries_only_known_transient_failures(store,ats,monkeypatch,error,reason):
+    from playwright.sync_api import Error
+    with Browser(store,test_url=ats[0]) as browser:
+        def failed(*args,**kwargs):raise Error(error)
+        monkeypatch.setattr(browser.page,'goto',failed)
+        with pytest.raises(Blocked,match=reason):browser.apply(local_job(store,ats))
+    assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()

@@ -4,7 +4,7 @@ import json
 import re
 
 from .util import Blocked, digest
-from .field_context import binding as contextual_binding, save_binding, present, field_context
+from .field_context import binding as contextual_binding, save_binding, present, field_context,validate_numeric
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
 RULES = [
@@ -46,16 +46,18 @@ def field_key(label):
     if re.fullmatch(r'what is your gender(?: identity)?',label):return 'gender'
     if re.fullmatch(r'what is your (?:race or ethnicity|race|ethnicity)',label):return 'race'
     if re.fullmatch(r'what is your disability status',label):return 'disability'
-    if re.search(r'(?:which|what).*(?:state|province).*(?:reside|live)',label):return 'state'
+    if re.search(r'(?:which|what|indicate|select|enter).*(?:\bstate\b|province).*(?:resid|live)',label):return 'state'
+    if re.search(r'(?:zip|postal) code.*(?:primary residence|home|address)',label):return 'postal_code'
     if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
     if re.search(r"(?:which|what).*(?:college|university|school).*(?:attend|enroll)|name of (?:your |the )?(?:college|university|school)",label):return 'school'
     if re.fullmatch(r"(?:current |pursuing |academic )?degree(?: type)?",label):return 'degree'
     if re.search(r'when.*(?:expect|plan).*graduat|(?:expected|anticipated).*graduation|what year.*graduat',label):return 'graduation'
     if 'highest' in label and re.search(r'education|degree',label):return 'highest_completed_degree'
     if re.search(r'(?:will|do).*(?:require|need).*sponsor|(?:require|need).*employment visa',label):return 'needs_sponsorship'
-    if re.search(r'(?:authorized|eligible|authorization).*(?:united states|u\.s\.|\bus\b)',label):return 'work_authorized_us'
+    if re.search(r'(?:authorized|eligible|authorization).*(?:work|employment).*(?:united states|u\.s\.|\bus\b)',label):return 'work_authorized_us'
     if re.search(r'currently located.*(?:office|on.site|in.person)',label):return None
     if re.search(r'(?:open|willing|comfortable).*(?:in.person|on.site|in office)|^i understand that this position requires me to work on.site|(?:can|able to).*work (?:from|at|in).*(?:office|headquarters|\bhq\b)',label):return 'onsite'
+    if 'office' in label and re.search(r'willing and able to accommodate this work environment',label):return 'onsite'
     return None
 
 
@@ -68,6 +70,15 @@ def category(label):
 
 def _option_value(key, value, options):
     normalize=lambda v:re.sub(r"[^a-z0-9]", "", v.casefold())
+    if key in {'college_start','graduation'}:
+        import calendar
+        months={normalize(name):i for i,name in enumerate(calendar.month_name) if i}
+        month=months.get(normalize(value))
+        if month:
+            choices={normalize(value),normalize(calendar.month_abbr[month]),str(month),f'{month:02d}'}
+            matches=[x for x in options if normalize(x) in choices]
+            if len(matches)!=1:raise Blocked('option_mismatch')
+            return matches[0]
     aliases={
         'degree':{'bs':{"bachelor", "bachelors", "bachelorsdegree", "bachelorofscience", "bachelorofsciencebs", "bachelorsdegreebaorbs", "undergraduate"},
                   'ms':{"master", "masters", "mastersdegree", "masterofscience"}},
@@ -248,10 +259,26 @@ def _compatible_field(key, field, context=None):
         explicit_us=bool(re.search(r'United States|\bU\.?S\.?\b|\bUSA\b',label,re.I))
         generic_country=bool(re.search(r'country where|this country|that country|country (?:of|in which)',label,re.I))
         if re.search(r'work(?:ing)?\s+in\b',label,re.I) and not explicit_us and not generic_country:return False
-        if re.search(r'country where|this country|that country',label,re.I) and not re.search(r'United States|\bUS\b|\bUSA\b', (context or {}).get('location',''),re.I):return False
+        if generic_country and not _us_location((context or {}).get('location','')):return False
     if key in {'college_start','graduation'} and re.fullmatch(r'(?:start|end) date (?:month|year)\s*\*?',label,re.I):
         return field.get('section')=='education'
     return _compatible_binding(key,label)
+
+
+def _us_location(location):
+    if re.search(r'\b(?:Canada|Costa Rica|Spain|United Kingdom|Australia|Germany|France|India|Singapore|Japan|China|Brazil|Mexico|Ireland|Netherlands)\b',location,re.I):return False
+    return bool(re.search(r'\bUnited States\b|\bUSA?\b|,\s*(?:AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b|,\s*(?:California|Washington|New York)\b',location,re.I))
+
+
+def _employer_scope(store,host,label,context):
+    employer=host.split('|',1)[1] if '|' in host else store.company(context['company']) if context.get('company') else None
+    prior={store.company(x) for x in store.settings()['prior_employers']}
+    pattern=r'[^a-z0-9]*'.join(re.escape(char) for char in employer or '')
+    named=bool(employer and (re.search(r'\b(?:this|your|the) company\b',label,re.I) or re.search(r'(?<![a-z0-9])'+pattern+r'(?![a-z0-9])',label.casefold())))
+    words=re.findall(r'[a-z0-9]+',context.get('company','').casefold())
+    short=words[0] if words and len(words[0])>=4 and words[0] not in {'software','university','research','group','technologies','capital'} else None
+    if short and re.search(r'(?<![a-z0-9])'+re.escape(short)+r'(?![a-z0-9])',label.casefold()):named=True
+    return named,employer in prior or bool(short and any(p.startswith(short) for p in prior))
 
 
 def _foreign_targets(store, template, context):
@@ -362,6 +389,9 @@ def resolve(store, host, field, provider=None, context=None):
         if saved['fact_key']:
             fact=store.facts().get(saved['fact_key'])
             if not fact or fact['value']!=saved['value']:raise Blocked('stale_answer',label)
+            if saved['fact_key'] in {'worked_outside_resume','contacts_outside_resume'}:
+                named,prior_match=_employer_scope(store,host,label,context)
+                if fact['value']!='No' or not named or prior_match:raise Blocked('stale_answer',label)
         key=saved['fact_key']
         value=present(key,saved['value'],field) if key else saved['value'];provenance={'answer_id':saved['id'],'revision':saved['revision']}
     else:
@@ -369,14 +399,13 @@ def resolve(store, host, field, provider=None, context=None):
         if key and not _compatible_field(key,field,context):raise Blocked('mapping_review',label)
         education_date=field.get('section')=='education' and bool(re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I))
         if education_date:key='college_start' if label.lower().startswith('start') else 'graduation'
-        employer=host.split('|',1)[1] if '|' in host else None
-        prior={store.company(x) for x in store.settings()['prior_employers']}
-        employer_pattern=r'[^a-z0-9]*'.join(re.escape(char) for char in employer or '')
-        employer_named=bool(employer and (re.search(r'\b(?:this|your|the) company\b',label,re.I) or re.search(r'(?<![a-z0-9])'+employer_pattern+r'(?![a-z0-9])',label.casefold())))
-        if employer_named and employer not in prior:
-            if re.search(r'(?:previously|ever|before).{0,20}(?:work|employ)|(?:work|employ).{0,30}(?:previously|before)',label,re.I):key='worked_outside_resume'
-            elif re.search(r'(?:know anyone|family|spouse|partner|relative).{0,70}(?:company|work|employ)|(?:know anyone|personal contacts)',label,re.I):key='contacts_outside_resume'
-        if not key and re.search(r'authorized to work.*country where this job',label,re.I) and re.search(r'United States|\bUS\b|\bUSA\b',context.get('location',''),re.I):key='work_authorized_us'
+        # A posting's distinctive first company word can establish a short-form
+        # employer mention. Abstain if that same word appears in prior employers.
+        employer_named,prior_match=_employer_scope(store,host,label,context)
+        if employer_named and not prior_match:
+            if re.search(r'(?:previously|ever|before).{0,20}(?:work|employ)|(?:work|employ).{0,30}(?:previously|before)',label,re.I) and store.facts().get('worked_outside_resume',{}).get('value')=='No':key='worked_outside_resume'
+            elif re.search(r'(?:know anyone|family|spouse|partner|relative).{0,70}(?:company|work|employ)|(?:know anyone|personal contacts)',label,re.I) and store.facts().get('contacts_outside_resume',{}).get('value')=='No':key='contacts_outside_resume'
+        if not key and re.search(r'(?:authorized|eligible) to work.*country (?:where|in which)',label,re.I) and _us_location(context.get('location','')):key='work_authorized_us'
         binding=contextual_binding(store,host,field,context)
         if binding and not education_date:
             # Exact semantic rules supersede older model-selected bindings.
@@ -451,7 +480,7 @@ def resolve(store, host, field, provider=None, context=None):
         try:value=_option_value(key,value,options)
         except Blocked:raise Blocked('option_mismatch',label)
     if field.get('maxlength',-1)>0 and len(value)>field['maxlength']:raise Blocked('answer_too_long',label)
-    if field.get('type')=='number' and not re.fullmatch(r'-?\d+(?:\.\d+)?',value):raise Blocked('numeric_answer_needed',label)
+    validate_numeric(value,field)
     if pending_binding:save_binding(store,host,field,context,**pending_binding)
     store.resolve_known_question(host,label,options,field=field,context=context)
     return {'field':field,'value':value,'provenance':provenance}

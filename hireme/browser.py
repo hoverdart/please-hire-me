@@ -75,7 +75,7 @@ SNAPSHOT=r"""selector => {
   out.push({index,indices,...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),type,options,
    ...(el.closest('.education--form') ? {section:'education'} : el.closest('.employment--form,.experience--form') ? {section:'employment'} : {}),
    required:required||/\*/.test(question),
-   maxlength:el.maxLength||-1,min:el.getAttribute('min'),max:el.getAttribute('max'),step:el.getAttribute('step'),pattern:el.getAttribute('pattern'),value,multiple:!!el.multiple});
+   maxlength:el.maxLength||-1,min:el.getAttribute('min'),max:el.getAttribute('max'),step:el.getAttribute('step'),step_base:type==='number'?el.getAttribute('value'):null,pattern:el.getAttribute('pattern'),value,multiple:!!el.multiple});
  });return out;
 }"""
 CONFIRMED=re.compile(r"thank you for (?:your interest|applying|submitting)|application (?:has been |was )?(?:successfully )?(?:submitted|received)|we (?:have |have successfully )?received your application",re.I)
@@ -506,8 +506,13 @@ class Browser:
         except Exception as error:
             # Only the initial read navigation is classified for delayed retry.
             from playwright.sync_api import TimeoutError as NavigationTimeout, Error as NavigationError
-            if isinstance(error,NavigationTimeout) or isinstance(error,NavigationError) and 'net::ERR_' in str(error):
+            self.store.checkpoint()
+            code=re.search(r'net::(ERR_[A-Z_]+)',str(error))
+            transient={'ERR_NAME_NOT_RESOLVED','ERR_CONNECTION_RESET','ERR_CONNECTION_CLOSED','ERR_TIMED_OUT','ERR_NETWORK_CHANGED','ERR_EMPTY_RESPONSE','ERR_ADDRESS_UNREACHABLE'}
+            if isinstance(error,NavigationTimeout) or isinstance(error,NavigationError) and code and code[1] in transient:
                 raise Blocked('navigation_failed','Initial posting navigation failed before filling or submission') from error
+            if isinstance(error,NavigationError):
+                raise Blocked('posting_navigation_review','Initial posting read failed ('+(code[1] if code else 'browser navigation error')+'); review the job link before retrying') from error
             raise
         self._wait_ready()
         text=self._guard(job)
@@ -534,7 +539,7 @@ class Browser:
                 if apply.count()!=1:apply=self.page.get_by_role('link',name=re.compile(r'^(?:apply(?: now| for this job)?|application)$',re.I))
                 if apply.count()!=1 or apply.evaluate('(e)=>!!e.closest("form")'):raise Blocked('unsupported_form','No unambiguous navigation-only application entry')
                 apply.click();self._wait_ready();continue
-            answers=[]; documents=[]; pending=[]
+            answers=[]; documents=[]; pending=[]; budget_error=None
             for f in fields:
                 self.store.checkpoint()
                 if not f['label']:
@@ -558,20 +563,24 @@ class Browser:
                     documents.append({**dict(doc),'field':f});continue
                 try:
                     from .provider import LazyProvider
-                    provider=LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail))
+                    provider=None if budget_error else LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail))
                     a=resolve(self.store,job['answer_scope'],f,provider,context={**job,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]})
                     if a:
                         answers.append(a)
                         self.store.event('field_answered',job['id'],{'label':f['label'],'value':a['value'],'provenance':a['provenance']})
                     elif f['value']:raise Blocked('unknown_prefilled_value',f['label'])
                 except Blocked as e:
-                    if e.reason in ('human_work_sample','paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'):raise
+                    if e.reason in ('human_work_sample','paused','cycle_timeout','provider_rate_limited'):raise
+                    if e.reason=='model_budget_exhausted':budget_error=e
                     self.store.event('field_blocked',job['id'],{'label':f['label'],'options':f['options'],'required':f['required'],'reason':e.reason})
                     if not f['required'] and not f['value']:
                         self.store.resolve_known_question(job['answer_scope'],f['label'],f['options'],field=f,context=job);continue
                     self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],e.reason,field=f,context=job)
                     pending.append((f,e.reason))
-            if pending:raise Blocked('missing_answers','; '.join(f['label'] for f,_ in pending))
+            if pending:
+                labels='; '.join(f['label'] for f,_ in pending)
+                if budget_error:raise Blocked('model_budget_exhausted',labels+' — '+budget_error.detail)
+                raise Blocked('missing_answers',labels)
             for d in documents:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')

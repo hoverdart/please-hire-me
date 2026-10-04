@@ -2,12 +2,14 @@
 from __future__ import annotations
 import json
 import time
+from datetime import datetime,timezone,timedelta
+from zoneinfo import ZoneInfo
 from .field_context import MAPPING_VERSION, ADAPTER_VERSION
 from .presentation import NOT_MATCH_REASONS, WAIT_REASONS
 from .util import digest, now, Blocked
 
-FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stale_answer','answer_too_long','numeric_answer_needed','phone_country_review'}
-MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer'}
+FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stale_answer','answer_too_long','numeric_answer_needed','phone_country_review','model_budget_exhausted'}
+MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer','invalid_fields','invalid_single_line_answer','numeric_answer_out_of_range'}
 DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed'}
 ACCOUNT_REASONS = {'captcha_blocked','account_or_verification_blocked','account_automation_disabled','account_result_uncertain','account_creation_held','account_credentials_unavailable','company_verification_pending','account_blocked','account_required','company_uncertain','email_verification_required','captcha','email_verification_failed'}
 TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed'}
@@ -50,10 +52,19 @@ def ready(store, job, at=None):
     if not safe_state(store,job['id']):return False
     row=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
     if not row:return True
+    if row['reason']=='model_budget_exhausted' and model_available(store,at):return True
     if row['category']=='limits':return True # Existing policy checks the current day/company limits.
     if row['category']=='transient':return row['retry_at'] is not None and (at or time.time())>=row['retry_at']
     if row['category']=='review':return False
     return row['dependency']!=dependency(store,job,row['category'])
+
+def model_available(store,at=None):
+    settings=store.settings();moment=datetime.fromtimestamp(time.time() if at is None else at,timezone.utc)
+    today=moment.astimezone(ZoneInfo(settings['timezone'])).date()
+    daily=sum(datetime.fromisoformat(r[0]).astimezone(ZoneInfo(settings['timezone'])).date()==today for r in store.db.execute('SELECT timestamp FROM model_requests WHERE timestamp>=?',((moment-timedelta(days=2)).isoformat(),)))
+    run=getattr(store,'active_run_id',None)
+    used=store.db.execute('SELECT count(*) FROM model_requests WHERE run_id=?',(run,)).fetchone()[0] if run else 0
+    return daily<settings['max_model_requests_per_day'] and used<settings['max_model_requests_per_cycle']
 
 def hold(store, job, reason, detail='', stage='application', at=None):
     if not safe_state(store,job['id']):return
@@ -75,6 +86,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
         'transient':'Wait for the scheduled retry; exhausted retries require review.',
         'limits':'Wait for existing company or daily limits to clear.',
         'review':'Review this failure before allowing another attempt.'}
+    if reason=='model_budget_exhausted':guidance[kind]='Approve the unanswered fields, or wait for the next model allowance. Request limits remain unchanged.'
     # References and field labels only: no answer values, passwords, or OTPs.
     evidence={'stage':stage,'category':kind,'field':str(detail)[:300] if reason in FACT_REASONS|MAPPING_REASONS else '',
         'fields':[{**f,'options':json.loads(f['options'])} for f in fields],
