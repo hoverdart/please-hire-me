@@ -90,3 +90,24 @@ def test_excluded_job_questions_are_hidden_until_undo(store,job):
     assert not store.snapshot()['questions']
     store.decide_job(job['id'],'undo')
     assert store.snapshot()['questions']
+
+
+def test_manual_decisions_integrate_with_complete_queues_filters_and_saved_views(store, job):
+    from hireme.ledger import summary, search_jobs
+    from hireme.question_ledger import search_questions
+    from hireme.saved_views import change_view
+    store.ask(job['id'],job['host'],'A missing personal answer',[])
+    assert search_questions(store)['total']==1 and summary(store)['attention_count']==1
+    store.decide_job(job['id'],'manually_applied')
+    assert search_questions(store)['total']==0 and summary(store)['question_count']==0
+    assert summary(store)['attention_count']==0
+    result=search_jobs(store,status='manually_applied')
+    assert result['total']==1 and result['jobs'][0]['status_label']=='Applied manually'
+    view=change_view(store,{'action':'save','name':'Handled elsewhere','status':'manually_applied'})['views'][0]
+    assert view['status']=='manually_applied'
+    store.decide_job(job['id'],'undo')
+    assert search_questions(store)['total']==1 and summary(store)['attention_count']==1
+    store.decide_job(job['id'],'skipped')
+    result=search_jobs(store,status='skipped')
+    assert result['total']==1 and result['jobs'][0]['status_label']=='Don’t apply'
+    assert summary(store)['attention_count']==0

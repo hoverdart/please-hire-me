@@ -31,7 +31,7 @@ def status(store,verify=False):
     if provider.endswith('-api'):
         try:api_key(store,provider);result['ready']=bool(s['provider_model'])
         except Blocked:pass
-        result['message']='Key saved; select an exact model ID. Credentials are checked on first request.' if result['ready'] else 'Save an API key and model ID.'
+        result['message']='API key and model selected. Credentials are checked on the first request.' if result['ready'] else 'Save an API key and model ID.'
         return result
     binary=shutil.which('claude' if provider=='claude-cli' else 'codex')
     result['installed']=bool(binary);result['ready']=bool(binary)

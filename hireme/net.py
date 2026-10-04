@@ -35,6 +35,7 @@ class Network:
              headers={"User-Agent":"please-hire-me/0.3 (+job discovery)",**({"Content-Type":"application/json"} if data is not None else {}),**(headers or {})})
         for attempt in range(2):
             if self.checkpoint:self.checkpoint()
+            if time.monotonic()>self.deadline: raise Blocked("discovery_deadline")
             try:
                 with (opener or self.opener).open(req,timeout=min(25,max(1,self.deadline-time.monotonic()))) as response:
                     content=response.read(MAX_BYTES+1)

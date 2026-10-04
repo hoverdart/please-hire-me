@@ -72,10 +72,10 @@ SNAPSHOT=r"""selector => {
    value=group.filter(x=>x.checked).map(x=>Array.from(x.labels||[]).map(l=>l.innerText).join(' ').trim()||x.value).join('; ');
   }else if(type==='select'){options=Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.textContent.trim())}
   else if(type==='checkbox'){options=['Yes','No'];value=el.checked?'Yes':'No'}
-  out.push({index,indices,ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),type,options,
-   ...(el.closest('.education--form') && /date (month|year)/i.test(question) ? {section:'education'} : {}),
+  out.push({index,indices,...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),type,options,
+   ...(el.closest('.education--form') ? {section:'education'} : el.closest('.employment--form,.experience--form') ? {section:'employment'} : {}),
    required:required||/\*/.test(question),
-   maxlength:el.maxLength||-1,value,multiple:!!el.multiple});
+   maxlength:el.maxLength||-1,min:el.getAttribute('min'),max:el.getAttribute('max'),step:el.getAttribute('step'),pattern:el.getAttribute('pattern'),value,multiple:!!el.multiple});
  });return out;
 }"""
 CONFIRMED=re.compile(r"thank you for (?:your interest|applying|submitting)|application (?:has been |was )?(?:successfully )?(?:submitted|received)|we (?:have |have successfully )?received your application",re.I)
@@ -439,7 +439,9 @@ class Browser:
     def _fill(self,answer):
         f=answer['field']; value=answer['value']; controls=self.page.locator(CONTROLS)
         el=self._control(f)
-        if f['type']=='select':el.select_option(label=value)
+        if f['type']=='select':
+            from .ats_widgets import select_exact
+            select_exact(el,f,value)
         elif f['type']=='yesno':self._control(f,f['options'].index(value)).click()
         elif f['type']=='radio':self._control(f,f['options'].index(value)).check()
         elif f['type']=='checkbox-group':
@@ -500,7 +502,13 @@ class Browser:
         self.current_host=job['host']
         if self.test_url:self.current_host=urlsplit(self.test_url).hostname
         elif job['host'] not in ATS_HOSTS|PORTAL_HOSTS:raise Blocked('unapproved_destination')
-        self.page.goto(job['url'],wait_until='domcontentloaded',timeout=45000)
+        try:self.page.goto(job['url'],wait_until='domcontentloaded',timeout=45000)
+        except Exception as error:
+            # Only the initial read navigation is classified for delayed retry.
+            from playwright.sync_api import TimeoutError as NavigationTimeout, Error as NavigationError
+            if isinstance(error,NavigationTimeout) or isinstance(error,NavigationError) and 'net::ERR_' in str(error):
+                raise Blocked('navigation_failed','Initial posting navigation failed before filling or submission') from error
+            raise
         self._wait_ready()
         text=self._guard(job)
         # Portal host registration is not proof of a session; inspect the current page too.
@@ -541,7 +549,7 @@ class Browser:
                             from .provider import LazyProvider
                             doc=generate_cover_letter(self.store,job,LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail)))
                         except Blocked as e:
-                            if e.reason in ('paused','model_budget_exhausted','provider_rate_limited'):raise
+                            if e.reason in ('paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'):raise
                             self.store.event('document_blocked',job['id'],{'label':f['label'],'reason':e.reason,'detail':e.detail})
                             pending.append((f,e.reason));continue
                     if not doc:
@@ -557,11 +565,11 @@ class Browser:
                         self.store.event('field_answered',job['id'],{'label':f['label'],'value':a['value'],'provenance':a['provenance']})
                     elif f['value']:raise Blocked('unknown_prefilled_value',f['label'])
                 except Blocked as e:
-                    if e.reason in ('human_work_sample','paused','model_budget_exhausted','provider_rate_limited'):raise
+                    if e.reason in ('human_work_sample','paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'):raise
                     self.store.event('field_blocked',job['id'],{'label':f['label'],'options':f['options'],'required':f['required'],'reason':e.reason})
                     if not f['required'] and not f['value']:
-                        self.store.resolve_known_question(job['answer_scope'],f['label']);continue
-                    self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],e.reason)
+                        self.store.resolve_known_question(job['answer_scope'],f['label'],f['options'],field=f,context=job);continue
+                    self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],e.reason,field=f,context=job)
                     pending.append((f,e.reason))
             if pending:raise Blocked('missing_answers','; '.join(f['label'] for f,_ in pending))
             for d in documents:

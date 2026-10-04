@@ -4,6 +4,7 @@ import json
 import re
 
 from .util import Blocked, digest
+from .field_context import binding as contextual_binding, save_binding, present, field_context
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
 RULES = [
@@ -39,8 +40,12 @@ def field_key(label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
         if re.fullmatch(pattern,label): return key
+    if re.fullmatch(r'(?:phone )?(?:country|dial|calling) code',label):return 'phone'
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
     if re.fullmatch(r'(?:what are your )?pronouns',label):return 'pronouns'
+    if re.fullmatch(r'what is your gender(?: identity)?',label):return 'gender'
+    if re.fullmatch(r'what is your (?:race or ethnicity|race|ethnicity)',label):return 'race'
+    if re.fullmatch(r'what is your disability status',label):return 'disability'
     if re.search(r'(?:which|what).*(?:state|province).*(?:reside|live)',label):return 'state'
     if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
     if re.search(r"(?:which|what).*(?:college|university|school).*(?:attend|enroll)|name of (?:your |the )?(?:college|university|school)",label):return 'school'
@@ -64,7 +69,7 @@ def category(label):
 def _option_value(key, value, options):
     normalize=lambda v:re.sub(r"[^a-z0-9]", "", v.casefold())
     aliases={
-        'degree':{'bs':{"bachelor", "bachelors", "bachelorsdegree", "bachelorofscience", "undergraduate"},
+        'degree':{'bs':{"bachelor", "bachelors", "bachelorsdegree", "bachelorofscience", "bachelorofsciencebs", "bachelorsdegreebaorbs", "undergraduate"},
                   'ms':{"master", "masters", "mastersdegree", "masterofscience"}},
         'country':{'unitedstates':{"us", "usa", "unitedstatesofamerica","unitedstates1"}},
         'state':{'ca':{'california'},'california':{'ca'}},
@@ -93,13 +98,11 @@ def _resume_internship(store, label):
     if not re.search(r'(?:prior|previous|past).*(?:internship|co.op).*(?:experience)|(?:have|completed).*(?:internship|co.op)',label,re.I):return None
     doc=store.db.execute("SELECT * FROM documents WHERE kind='resume'").fetchone()
     if not doc:return None
-    from .util import safe_document
-    import hashlib
-    from pypdf import PdfReader
-    path=safe_document(store.root/'documents'/doc['filename'],store.root/'documents')
-    if hashlib.sha256(path.read_bytes()).hexdigest()!=doc['hash']:raise Blocked('document_tampered')
-    try:text='\n'.join(p.extract_text() or '' for p in PdfReader(path).pages)
+    from .onboarding import selected_resume_text
+    try:source=selected_resume_text(store)
+    except ValueError as error:raise Blocked('document_tampered',str(error)) from None
     except Exception:return None
+    text=source['text']
     section=re.split(r'\b(?:WORK )?EXPERIENCE\b',text,flags=re.I)
     if len(section)<2:return None
     work=re.split(r'(?m)^(?:PROJECTS|EDUCATION|SKILLS|PUBLICATIONS)\s*$',section[1],maxsplit=1)[0]
@@ -110,7 +113,7 @@ def _resume_internship(store, label):
         if re.search(r'\b(?:intern|internship)\b',line,re.I):
             dates=re.findall(r'\b(0[1-9]|1[0-2])/(20\d{2})\b',' '.join(lines[max(0,i-1):i+3]))
             if dates and min(y+'-'+m for m,y in dates)<=month:
-                return {'value':'Yes','provenance':{'resume_hash':doc['hash'],'resume_quote':line.strip()}}
+                return {'value':'Yes','provenance':{'resume_hash':source['hash'],'resume_quote':line.strip()}}
     return None
 
 
@@ -204,10 +207,27 @@ def _fits_writing_limits(value, field, context=None):
 
 def _compatible_binding(key, label):
     terms={
+        'full_name':r'\bname\b', 'first_name':r'\bfirst.*name\b', 'last_name':r'\blast.*name\b',
+        'preferred_name':r'preferred.*name|nickname|(?:should|may|can) we call you', 'native_name':r'native.*name|name.*native',
+        'email':r'\be.?mail\b', 'phone':r'phone|mobile|dial|calling code',
+        'location':r'location|located|based|resid|\bcity\b', 'street':r'street|address',
+        'city':r'\bcity\b', 'state':r'\bstate\b|province', 'postal_code':r'postal|\bzip\b',
+        'country':r'country|residen', 'linkedin':r'linkedin', 'github':r'github', 'website':r'website|portfolio',
+        'high_school':r'high school', 'school':r'school|university|college|studying|institution',
+        'degree':r'degree|education|qualification', 'highest_completed_degree':r'(?:highest|completed|earned).*(?:degree|education|qualification)',
+        'major':r'major|field of study|discipline', 'gpa':r'\bgpa\b|grade point',
+        'college_start':r'(?:college|university|education|school).*start|start.*(?:college|university|education|school)',
+        'graduation':r'graduat', 'earliest_start':r'(?:earliest|available|availability).*start|start.*(?:earliest|available|availability)',
+        'latest_start':r'latest.*start|start.*latest', 'skills':r'skills|technolog|languages',
+        'race':r'race|ethnic', 'gender':r'gender', 'pronouns':r'pronoun',
+        'veteran':r'veteran|military', 'disability':r'disabil', 'salary':r'salary|compensation|pay expect',
+        'notice_period':r'notice', 'relocate':r'relocat',
+        'summer_2027_relocate':r'relocat', 'summer_2027_available':r'availab|commit',
+        'worked_outside_resume':r'work|employ', 'contacts_outside_resume':r'contact|know anyone|family|relative|spouse|partner',
         'needs_sponsorship':r'sponsor|visa|immigration|h.?1b',
         'work_authorized_us':r'authoriz|work permit|legally.*work|right.*work',
         'unrestricted_authorization':r'authoriz|work permit|legally.*work|right.*work',
-        'us_person':r'u\.?s\.? person|citizen|export|itar',
+        'us_person':r'(?:u\.?s\.?|united states) person|itar|export.*person',
         'citizenship':r'citizen|nationality',
         'professional_years':r'years?.*(?:experience|professional|work)|experience.*years?',
         'onsite':r'on.?site|in.person|office|hybrid|headquarters|\bhq\b',
@@ -215,7 +235,23 @@ def _compatible_binding(key, label):
         'recording':r'record|video',
         'sms':r'sms|text message',
     }
-    return key not in terms or bool(re.search(terms[key],label,re.I))
+    if key=='degree' and re.search(r'highest|completed|earned',label,re.I):return False
+    return key in terms and bool(re.search(terms[key],label,re.I))
+
+
+def _compatible_field(key, field, context=None):
+    label=field['label']
+    if key in {'summer_2027_available','summer_2027_relocate'} and not re.search(r'summer\s*2027',label+' '+(context or {}).get('title',''),re.I):return False
+    if key in {'work_authorized_us','unrestricted_authorization'}:
+        foreign=r'\b(?:canada|united kingdom|australia|germany|france|india|singapore|japan|china|brazil|mexico|ireland|netherlands)\b'
+        if re.search(foreign,label,re.I):return False
+        explicit_us=bool(re.search(r'United States|\bU\.?S\.?\b|\bUSA\b',label,re.I))
+        generic_country=bool(re.search(r'country where|this country|that country|country (?:of|in which)',label,re.I))
+        if re.search(r'work(?:ing)?\s+in\b',label,re.I) and not explicit_us and not generic_country:return False
+        if re.search(r'country where|this country|that country',label,re.I) and not re.search(r'United States|\bUS\b|\bUSA\b', (context or {}).get('location',''),re.I):return False
+    if key in {'college_start','graduation'} and re.fullmatch(r'(?:start|end) date (?:month|year)\s*\*?',label,re.I):
+        return field.get('section')=='education'
+    return _compatible_binding(key,label)
 
 
 def _foreign_targets(store, template, context):
@@ -287,6 +323,8 @@ def resolve(store, host, field, provider=None, context=None):
     label=field['label'];options=field.get('options',[]);context=dict(context or {})
     context['max_sentences']=_sentence_cap(field,context)
     context['single_line']=field.get('type')=='text'
+    context['field_context']=field_context(host,field,context)
+    pending_binding=None
     from .materials import writing_context,writing_context_hash
     context.update(writing_context(store))
     if REFUSE.search(label):raise Blocked('human_work_sample',label)
@@ -302,29 +340,47 @@ def resolve(store, host, field, provider=None, context=None):
             if not provider:raise
             store.db.execute('DELETE FROM writing_answers WHERE id=?',(store.question_key(host,label,options),))
         else:
-            store.resolve_known_question(host,label)
+            store.resolve_known_question(host,label,options,field=field,context=context)
             return {'field':field,**writing}
-    saved=store.saved_answer(host,label,options)
+    saved=store.saved_answer(host,label,options,field=field,context=context)
     key=None;template=None;derived=None
     if saved:
+        exact=field_key(label)
+        if field.get('section')=='education' and re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I):
+            exact='college_start' if label.lower().startswith('start') else 'graduation'
+        legacy_literal=not saved['fact_key'] and not store.db.execute('SELECT 1 FROM question_contexts WHERE id=?',(saved['id'],)).fetchone()
+        if legacy_literal and (field.get('section') or context.get('company')):
+            fact=store.facts().get(exact)
+            if not fact or not _compatible_field(exact,field,context):raise Blocked('stale_answer',label)
+            expected=present(exact,fact['value'],field)
+            if options:
+                try:expected=_option_value(exact,expected,options)
+                except Blocked:raise Blocked('stale_answer',label)
+            if saved['value']!=expected:raise Blocked('stale_answer',label)
+        if saved['fact_key'] and (not _compatible_field(saved['fact_key'],field,context) or exact and exact!=saved['fact_key']):
+            raise Blocked('stale_answer',label)
         if saved['fact_key']:
             fact=store.facts().get(saved['fact_key'])
             if not fact or fact['value']!=saved['value']:raise Blocked('stale_answer',label)
-        value=saved['value'];provenance={'answer_id':saved['id'],'revision':saved['revision']}
+        key=saved['fact_key']
+        value=present(key,saved['value'],field) if key else saved['value'];provenance={'answer_id':saved['id'],'revision':saved['revision']}
     else:
         key=field_key(label)
+        if key and not _compatible_field(key,field,context):raise Blocked('mapping_review',label)
         education_date=field.get('section')=='education' and bool(re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I))
         if education_date:key='college_start' if label.lower().startswith('start') else 'graduation'
         employer=host.split('|',1)[1] if '|' in host else None
         prior={store.company(x) for x in store.settings()['prior_employers']}
-        if employer and employer not in prior:
+        employer_pattern=r'[^a-z0-9]*'.join(re.escape(char) for char in employer or '')
+        employer_named=bool(employer and (re.search(r'\b(?:this|your|the) company\b',label,re.I) or re.search(r'(?<![a-z0-9])'+employer_pattern+r'(?![a-z0-9])',label.casefold())))
+        if employer_named and employer not in prior:
             if re.search(r'(?:previously|ever|before).{0,20}(?:work|employ)|(?:work|employ).{0,30}(?:previously|before)',label,re.I):key='worked_outside_resume'
             elif re.search(r'(?:know anyone|family|spouse|partner|relative).{0,70}(?:company|work|employ)|(?:know anyone|personal contacts)',label,re.I):key='contacts_outside_resume'
         if not key and re.search(r'authorized to work.*country where this job',label,re.I) and re.search(r'United States|\bUS\b|\bUSA\b',context.get('location',''),re.I):key='work_authorized_us'
-        binding=store.field_binding(host,label,options)
+        binding=contextual_binding(store,host,field,context)
         if binding and not education_date:
             # Exact semantic rules supersede older model-selected bindings.
-            key=key or binding['fact_key']
+            key=key or (binding['fact_key'] if _compatible_field(binding['fact_key'],field,context) else None)
             if not key:template=next((t for t in store.templates() if t['id']==binding['template_id']),None)
         if key=='country' and not store.facts().get('country'):
             location=store.facts().get('location',{})
@@ -343,7 +399,7 @@ def resolve(store, host, field, provider=None, context=None):
                 writing={'value':draft['answer'],'provenance':{'tailored':True,'sample_parts':parts,'text_hash':digest(draft['answer']),'context_hash':writing_context_hash(store,context)}}
                 _validate_writing(store,writing)
                 if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
-                store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label)
+                store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)
                 return {'field':field,**writing}
         if not template and cat:
             choices=[t for t in store.templates() if t['category']==cat]
@@ -360,11 +416,12 @@ def resolve(store, host, field, provider=None, context=None):
             if bool(proposed_key) != bool(tid):
                 if proposed_key in facts:
                     # These two concepts cannot be conflated even by semantic matching.
-                    if _compatible_binding(proposed_key,label) and not ('highest' in label.casefold() and proposed_key=='degree'):
-                        key=proposed_key;store.bind_field(host,label,options,fact_key=key)
+                    if _compatible_field(proposed_key,field,context) and not ('highest' in label.casefold() and proposed_key=='degree'):
+                        key=proposed_key;pending_binding={'key':key}
                 elif tid:
                     template=next((t for t in store.templates() if t['id']==tid),None)
-                    if template:store.bind_field(host,label,options,template_id=tid)
+                    if template and (not is_writing or category(label) not in (None, template['category'])):template=None
+                    if template:pending_binding={'template_id':tid}
         if template and (_foreign_targets(store,template,context) or not _fits_writing_limits(template['body'],field,context)):template=None
         if not template and not key and not derived and provider and is_writing:
             choices=_approved_sentences(store,context)
@@ -375,7 +432,7 @@ def resolve(store, host, field, provider=None, context=None):
                 writing={'value':' '.join(p['text'] for p in parts),'provenance':{'sample_parts':parts}}
                 _validate_writing(store,writing)
                 if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
-                store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label)
+                store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)
                 return {'field':field,**writing}
         if template:
             value=re.sub(r'[\r\n]+',' ',template['body']).strip() if field.get('type')=='text' else template['body'];provenance={'template_id':template['id'],'revision':template['revision']}
@@ -385,23 +442,18 @@ def resolve(store, host, field, provider=None, context=None):
             fact=store.facts().get(key)
             if not fact:
                 if field.get('required'):raise Blocked('missing_fact',label)
-                store.resolve_known_question(host,label)
+                store.resolve_known_question(host,label,options,field=field,context=context)
                 return None
             value=fact['value']
-            if key in {'college_start','graduation'} and re.fullmatch(r'\d{4}-\d{2}',value):
-                # The semantic binding selects the date fact; presentation selects its component.
-                if re.search(r'\byear\b',label,re.I):value=value[:4]
-                elif re.search(r'\bmonth\b',label,re.I):
-                    import calendar
-                    value=calendar.month_name[int(value[5:])]
-            if key=='gpa' and field.get('type')=='number' and '/' in value:value=value.split('/',1)[0].strip()
+            value=present(key,value,field)
             provenance={'fact_key':key,'revision':fact['revision']}
     if field.get('type') in ('radio','select','combobox','checkbox','checkbox-group','yesno') and options:
         try:value=_option_value(key,value,options)
         except Blocked:raise Blocked('option_mismatch',label)
     if field.get('maxlength',-1)>0 and len(value)>field['maxlength']:raise Blocked('answer_too_long',label)
     if field.get('type')=='number' and not re.fullmatch(r'-?\d+(?:\.\d+)?',value):raise Blocked('numeric_answer_needed',label)
-    store.resolve_known_question(host,label)
+    if pending_binding:save_binding(store,host,field,context,**pending_binding)
+    store.resolve_known_question(host,label,options,field=field,context=context)
     return {'field':field,'value':value,'provenance':provenance}
 
 
@@ -424,7 +476,7 @@ def validate_package(store, job, package):
             continue
         if "template_id" in prov:
             template=next((x for x in store.templates() if x["id"]==prov["template_id"]),None)
-            if not template or _foreign_targets(store,template,job) or (template["category"]!=category(field["label"]) and not ((store.field_binding(job.get("answer_scope",job["host"]),field["label"],field.get("options",[])) or {}).get("template_id")==template["id"])) or template["revision"]!=prov["revision"] or (re.sub(r"[\r\n]+"," ",template["body"]).strip() if field.get("type")=="text" else template["body"])!=answer["value"]:
+            if not template or _foreign_targets(store,template,job) or (template["category"]!=category(field["label"]) and not ((contextual_binding(store,job.get("answer_scope",job["host"]),field,job) or {}).get("template_id")==template["id"])) or template["revision"]!=prov["revision"] or (re.sub(r"[\r\n]+"," ",template["body"]).strip() if field.get("type")=="text" else template["body"])!=answer["value"]:
                 raise Blocked("unsupported_or_stale_template")
             continue
         expected=resolve(store,job.get("answer_scope",job["host"]),field,context=job)

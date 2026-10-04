@@ -59,10 +59,10 @@ def test_semantic_fact_selection_is_cached_revision_checked_and_clears_queue(sto
     store.put_facts({'school':'Confirmed University'})
     host=job['host'];f=field('Where are you studying right now?')
     q=store.ask(job['id'],host,f['label'],[]);model=Model()
-    a=resolve(store,host,f,model)
+    a=resolve(store,host,f,model,context=job)
     assert a['value']=='Confirmed University' and model.calls==1
     assert store.db.execute('SELECT resolved FROM questions WHERE id=?',(q,)).fetchone()[0]==1
-    assert resolve(store,host,f)==a
+    assert resolve(store,host,f,context=job)==a
     package['answers']=[a];package['steps']=[];package['facts_hash']=__import__('hireme.util',fromlist=['digest']).digest(store.facts())
     validate_package(store,job,package)
     store.put_facts({'school':'Another Confirmed University'})

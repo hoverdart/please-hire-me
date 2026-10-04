@@ -3,17 +3,31 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+from itertools import islice
 import os
+import re
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .config import DEFAULTS, REQUIRED, validate_fact, validate_settings
-from .util import Blocked, atomic_json, company_key, digest, now, private_dir
+from .config import DEFAULTS, FACTS, REQUIRED, validate_fact, validate_settings
+from .util import Blocked, atomic_json, company_normalizer, digest, now, private_dir
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS question_contexts (id TEXT PRIMARY KEY,context TEXT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS field_bindings_v2 (id TEXT PRIMARY KEY,context TEXT NOT NULL,
+ fact_key TEXT,template_id TEXT,source_revision INTEGER NOT NULL,rule_version INTEGER NOT NULL,created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS job_holds (job_id TEXT PRIMARY KEY,category TEXT NOT NULL,reason TEXT NOT NULL,
+ dependency TEXT NOT NULL,retry_count INTEGER NOT NULL,retry_at REAL,evidence TEXT NOT NULL,updated TEXT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS job_notes (job_id TEXT PRIMARY KEY,body TEXT NOT NULL,
+ revision INTEGER NOT NULL,updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS saved_views (id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT UNIQUE NOT NULL,
+ search TEXT NOT NULL,status TEXT NOT NULL,sort TEXT NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS employer_accounts (id TEXT PRIMARY KEY, origin TEXT NOT NULL,
  company TEXT NOT NULL, state TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS model_requests (id INTEGER PRIMARY KEY, timestamp TEXT NOT NULL, run_id TEXT NOT NULL, provider TEXT NOT NULL);
@@ -63,7 +77,16 @@ CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, status TEXT NOT NULL, c
  error TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, started TEXT NOT NULL, finished TEXT,
  status TEXT NOT NULL, submitted INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS applications_company_state ON applications(company_key,state);
+CREATE INDEX IF NOT EXISTS applications_state_attempted ON applications(state,attempted);
+CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(first_seen DESC,id);
+CREATE INDEX IF NOT EXISTS jobs_fit ON jobs(score DESC,first_seen DESC,id);
+CREATE INDEX IF NOT EXISTS questions_unresolved_job ON questions(resolved,job_id);
+CREATE INDEX IF NOT EXISTS employer_accounts_state ON employer_accounts(state);
+CREATE INDEX IF NOT EXISTS runs_status_started ON runs(status,started);
 """
+
+APPLICATION_METADATA = 'id,job_id,company_key,state,hash,created,updated,attempted,confirmation,screenshot'
 
 
 class Store:
@@ -85,12 +108,15 @@ class Store:
 
     @contextlib.contextmanager
     def transaction(self):
-        self.db.execute("BEGIN IMMEDIATE")
+        nested=self.db.in_transaction
+        savepoint='hireme_'+uuid.uuid4().hex if nested else None
+        self.db.execute('SAVEPOINT '+savepoint if nested else 'BEGIN IMMEDIATE')
         try:
             yield
-            self.db.execute("COMMIT")
+            self.db.execute('RELEASE SAVEPOINT '+savepoint if nested else 'COMMIT')
         except BaseException:
-            self.db.execute("ROLLBACK")
+            self.db.execute('ROLLBACK TO SAVEPOINT '+savepoint if nested else 'ROLLBACK')
+            if nested:self.db.execute('RELEASE SAVEPOINT '+savepoint)
             raise
 
     def settings(self):
@@ -100,11 +126,21 @@ class Store:
         return self.db.execute('SELECT generation FROM worker_control WHERE id=1').fetchone()[0]
 
     def checkpoint(self):
+        preparation_generation=getattr(self,'preparation_generation',None)
+        if preparation_generation is not None and preparation_generation!=self.control_generation():
+            raise Blocked('paused')
+        discovery_generation=getattr(self,'discovery_generation',None)
+        if discovery_generation is not None and discovery_generation!=self.control_generation():
+            raise Blocked('paused')
         generation=getattr(self,'run_generation',None)
         if generation is not None and (generation!=self.control_generation() or not self.settings()['live_enabled']):
             raise Blocked('paused')
+        deadline=getattr(self,'run_deadline',None)
+        if deadline is not None and time.monotonic()>=deadline:
+            raise Blocked('cycle_timeout','The batch time budget was reached')
 
     def reserve_model_request(self):
+        if self.db.in_transaction:raise Blocked('model_request_transaction','Reserve model requests outside applicant-data transactions')
         with self.transaction():
             self.checkpoint()
             s=self.settings();rid=getattr(self,'active_run_id',None) or 'setup:'+datetime.now(ZoneInfo(s['timezone'])).date().isoformat()
@@ -135,32 +171,71 @@ class Store:
         rows = self.db.execute("SELECT * FROM facts" + (" WHERE confirmed=1" if confirmed else ""))
         return {r["key"]: dict(r) for r in rows}
 
-    def put_facts(self, values, source="user", confirmed=True):
+    def put_facts(self, values, source="user", confirmed=True, clear_keys=None):
         # A dashboard submission is an explicit user confirmation, not model approval.
-        values = {k: validate_fact(k, v) for k, v in values.items() if v is not None and v != ""}
+        if not isinstance(values, dict):
+            raise ValueError("Provide a facts object")
+        clear_keys = [] if clear_keys is None else clear_keys
+        if not isinstance(clear_keys, list) or any(
+                not isinstance(key, str) or key not in FACTS for key in clear_keys):
+            raise ValueError("Choose known facts to clear")
+        cleared = set(clear_keys)
+        values = {key: validate_fact(key, value) for key, value in values.items()
+                  if value is not None and value != ""}
+        if cleared & values.keys():
+            raise ValueError("A fact cannot be saved and cleared at the same time")
         with self.transaction():
             old = self.facts(False)
-            if "email" in old and old["email"]["confirmed"] and "email" in values and values["email"] != old["email"]["value"]:
-                if (self.db.execute("SELECT 1 FROM applications LIMIT 1").fetchone()
-                        or self.db.execute("SELECT 1 FROM employer_accounts LIMIT 1").fetchone()):
+            history = bool(self.db.execute("SELECT 1 FROM applications LIMIT 1").fetchone()
+                           or self.db.execute("SELECT 1 FROM employer_accounts LIMIT 1").fetchone())
+            if old.get("email", {}).get("confirmed") and history:
+                if "email" in cleared:
+                    raise ValueError("Applicant identity cannot be cleared after application or account history exists")
+                if "email" in values and values["email"] != old["email"]["value"]:
                     raise ValueError("Applicant identity cannot change after application or account history exists")
             for key, value in values.items():
                 self.db.execute("""INSERT INTO facts VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET
-                  value=excluded.value, source=excluded.source, confirmed=excluded.confirmed,
-                  revision=facts.revision+1, updated=excluded.updated""", (key,value,source,int(confirmed),1,now()))
+                    value=excluded.value,source=excluded.source,confirmed=excluded.confirmed,
+                    revision=facts.revision+1,updated=excluded.updated""",
+                    (key, value, source, int(confirmed), 1, now()))
+            for key in cleared:
+                # Preserve revisions so revoked facts cannot be mistaken for old confirmations.
+                self.db.execute("""UPDATE facts SET value='',source='revoked',confirmed=0,
+                    revision=revision+1,updated=? WHERE key=?""", (now(), key))
+            if cleared:
+                self.event("facts_revoked", "profile", sorted(cleared))
+                if cleared & REQUIRED and self.settings()['live_enabled']:
+                    settings = self.settings()
+                    settings['live_enabled'] = False
+                    self.db.execute("UPDATE config SET value=? WHERE id=1", (json.dumps(settings),))
+                    self.db.execute("UPDATE worker_control SET generation=generation+1 WHERE id=1")
+                    self.event("pause_requested", "worker", {'reason': 'required_fact_removed'})
             self.event("facts_confirmed" if confirmed else "facts_proposed", "profile", sorted(values))
-            # Prepared packages are invalidated by any profile change.
-            self.db.execute("DELETE FROM applications WHERE state='prepared'")
-        self.export_config()
+            self.discard_prepared()
+        if not self.db.in_transaction:self.export_config()
 
     def export_config(self):
         atomic_json(self.root / "config" / "profile.json", {k:v["value"] for k,v in self.facts().items()})
         atomic_json(self.root / "config" / "settings.json", self.settings())
         atomic_json(self.root / "config" / "answers.json", [dict(x) for x in self.db.execute("SELECT * FROM answers")])
 
+    def discard_prepared(self,job_ids=None):
+        """Caller owns a transaction. Reset only jobs whose unattempted draft is removed."""
+        def group(ids=None):
+            clause="state='prepared'";parameters=[]
+            if ids is not None:
+                clause+=' AND job_id IN ('+','.join('?' for _ in ids)+')';parameters.extend(ids)
+            self.db.execute("UPDATE jobs SET status='discovered',reason='',updated=? WHERE status='prepared' AND id IN (SELECT job_id FROM applications WHERE "+clause+')',(now(),*parameters))
+            return self.db.execute('DELETE FROM applications WHERE '+clause,parameters).rowcount
+        if job_ids is None:return group()
+        identifiers=iter(job_ids);count=0
+        size=min(500,max(1,self.db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)-1))
+        while batch:=list(islice(identifiers,size)):count+=group(batch)
+        return count
+
     def missing_setup(self):
         missing = sorted(REQUIRED - self.facts().keys())
-        if not self.db.execute("SELECT 1 FROM documents WHERE kind='resume'").fetchone():
+        if not self.document_available('resume'):
             missing.append("resume")
         f = self.facts()
         if all(k in f for k in ("earliest_start", "latest_start")) and f["earliest_start"]["value"] > f["latest_start"]["value"]:
@@ -169,12 +244,27 @@ class Store:
             missing.append("legacy history review")
         return missing
 
+    def document_available(self,kind):
+        row=self.db.execute('SELECT hash,filename FROM documents WHERE kind=?',(kind,)).fetchone()
+        if not row or not isinstance(row['hash'],str) or not isinstance(row['filename'],str) or not re.fullmatch(r'[a-f0-9]{64}',row['hash']) or row['filename']!=row['hash']+'.pdf':return False
+        parent=self.root/'documents';path=parent/row['filename']
+        try:
+            if parent.is_symlink() or path.is_symlink() or not path.is_file():return False
+            # Availability only: full document hashing still happens before upload.
+            with path.open('rb') as document:return document.read(5)==b'%PDF-'
+        except OSError:return False
+
     @staticmethod
     def question_key(host, label, options):
         return digest([host.lower(), " ".join(label.casefold().split()), options])
 
-    def ask(self, job_id, host, label, options, reason="missing_fact"):
-        key = self.question_key(host, label, options)
+    def ask(self, job_id, host, label, options, reason="missing_fact", *, field=None, context=None):
+        if field is not None:
+            from .field_context import field_context
+            metadata=field_context(host,field,context)
+            key=digest(['approved_answer',metadata])
+            self.db.execute('INSERT OR REPLACE INTO question_contexts VALUES(?,?)',(key,json.dumps(metadata)))
+        else:key = self.question_key(host, label, options)
         self.db.execute("INSERT INTO questions VALUES(?,?,?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET job_id=excluded.job_id,reason=excluded.reason,resolved=0",
                         (key, job_id, host, label, json.dumps(options), reason))
         return key
@@ -210,10 +300,39 @@ class Store:
         self.event("template_confirmed",tid,{"category":category})
         return tid
 
+    def _user_template(self, tid):
+        if not isinstance(tid, str) or not tid or len(tid) > 100:
+            raise ValueError("Choose an existing approved wording")
+        if tid.startswith('material:'):
+            raise ValueError("Edit or revoke this source in Writing & context")
+        row = self.db.execute('SELECT * FROM templates WHERE id=?', (tid,)).fetchone()
+        if not row:
+            raise ValueError("Approved wording not found")
+        return row
+
+    def edit_template(self, tid, category, body):
+        with self.transaction():
+            self._user_template(tid)
+            self.put_template(category, body, tid)
+            self.discard_prepared()
+        return tid
+
+    def revoke_template(self, tid):
+        with self.transaction():
+            row = self._user_template(tid)
+            self.db.execute('DELETE FROM templates WHERE id=?', (tid,))
+            self.discard_prepared()
+            self.event('template_revoked', tid, {'category': row['category']})
+
     def templates(self):
         return [dict(x) for x in self.db.execute("SELECT * FROM templates")]
 
-    def saved_answer(self, host, label, options):
+    def saved_answer(self, host, label, options, *, field=None, context=None):
+        if field is not None:
+            from .field_context import field_context
+            scoped=digest(['approved_answer',field_context(host,field,context)])
+            r=self.db.execute('SELECT * FROM answers WHERE id=?',(scoped,)).fetchone()
+            if r:return dict(r)
         qid = self.question_key(host,label,options)
         r = self.db.execute("SELECT * FROM answers WHERE id=?",(qid,)).fetchone()
         if not r and '|' in host:
@@ -243,21 +362,41 @@ class Store:
         self.db.execute('INSERT OR REPLACE INTO field_bindings VALUES(?,?,?,?,?,?,?)',
                         (self.question_key(host,label,options),host,label,json.dumps(options),fact_key,template_id,now()))
 
-    def resolve_known_question(self, host, label):
-        self.db.execute('UPDATE questions SET resolved=1 WHERE host=? AND label=? AND reason!=?',
-                        (host,label,'legacy_history_review'))
+    def resolve_known_question(self, host, label, options=None, *, field=None, context=None):
+        if field is not None:
+            from .field_context import field_context
+            identifiers=[digest(['approved_answer',field_context(host,field,context)])]
+            # Unscoped historical dates cannot establish which section was reviewed.
+            if not field.get('section'):identifiers.append(self.question_key(host,label,options or []))
+            self.db.execute('UPDATE questions SET resolved=1 WHERE id IN ('+','.join('?' for _ in identifiers)+') AND reason!=?',(*identifiers,'legacy_history_review'))
+        else:
+            self.db.execute('UPDATE questions SET resolved=1 WHERE host=? AND label=? AND reason!=?',(host,label,'legacy_history_review'))
+
 
     def upsert_job(self, job):
-        key = job["id"]
-        ck = self.company(job["company"])
-        self.db.execute("""INSERT INTO jobs(id,company,company_key,title,url,host,source,payload,first_seen,updated)
-         VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET payload=excluded.payload,updated=excluded.updated""",
-          (key,job["company"],ck,job["title"],job["url"],job["host"],job["source"],json.dumps(job),now(),now()))
+        # A requisition URL owns its durable identity, even if an imported record
+        # supplies another ID. Refresh display metadata alongside its payload;
+        # recorded application keys and outcome states remain evidence.
+        with self.transaction():
+            existing=self.db.execute('SELECT id,payload FROM jobs WHERE url=?',(job['url'],)).fetchone()
+            key=existing['id'] if existing else job['id']
+            payload={**job,'id':key}
+            if job.get('answer_scope') and existing:
+                previous=json.loads(existing['payload'])
+                payload['_listing_hash']=previous.get('_listing_hash') or digest({k:previous.get(k,'') for k in ('url','company','title','location','description')})
+            else:
+                payload['_listing_hash']=digest({k:job.get(k,'') for k in ('url','company','title','location','description')})
+            ck=self.company(job['company'])
+            self.db.execute("""INSERT INTO jobs(id,company,company_key,title,url,host,source,payload,first_seen,updated)
+             VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET
+             company=excluded.company,company_key=excluded.company_key,title=excluded.title,
+             host=excluded.host,source=excluded.source,payload=excluded.payload,updated=excluded.updated""",
+              (key,job['company'],ck,job['title'],job['url'],job['host'],job['source'],json.dumps(payload),now(),now()))
+        return key
 
-    def company(self, name):
-        s=self.settings(); n=company_key(name)
-        aliases={company_key(k):company_key(v) for k,v in s["company_aliases"].items()}
-        return aliases.get(n,n)
+    def company(self, name, settings=None):
+        s=self.settings() if settings is None else settings
+        return company_normalizer(s['company_aliases'])(name)
 
     def decide_job(self, jid, decision):
         if decision not in ('manually_applied','skipped','undo'):
@@ -287,15 +426,37 @@ class Store:
         self.db.execute("UPDATE jobs SET status='blocked',reason=?,updated=? WHERE id=? AND id NOT IN (SELECT job_id FROM job_decisions)",(reason + (": " + detail if detail else ""),now(),jid))
         self.event("blocked",jid,{"reason":reason,"detail":detail})
 
+    def application_history(self, settings=None, states=None):
+        """Narrow history rows with current and originally recorded company identities.
+
+        Alias edits must not hide prior attempts. Stored keys remain evidence; current
+        aliases and the employer name on the original posting supplement those keys.
+        """
+        settings = self.settings() if settings is None else settings
+        normalize = company_normalizer(settings['company_aliases'])
+        where = '' if states is None else ' WHERE a.state IN (' + ','.join('?' for _ in states) + ')'
+        rows = self.db.execute('''SELECT a.id,a.job_id,a.company_key,a.state,a.created,a.attempted,j.company
+            FROM applications a LEFT JOIN jobs j ON j.id=a.job_id''' + where, () if states is None else states)
+        history = []
+        for row in rows:
+            entry = dict(row)
+            keys = {row['company_key'], normalize(row['company_key'])}
+            if row['company']: keys.add(normalize(row['company']))
+            entry['company_keys'] = keys
+            history.append(entry)
+        return history
+
     def _check_budget(self, job, s):
         self.check_job_decision(job["id"])
-        ck=self.company(job["company"])
-        if ck in {self.company(x) for x in s["skip_companies"]+s["interview_companies"]}:
+        ck=self.company(job["company"],s)
+        if ck in {self.company(x,s) for x in s["skip_companies"]+s["interview_companies"]}:
             raise Blocked("company_blocked")
-        active = list(self.db.execute("SELECT * FROM applications WHERE company_key=? AND state IN ('submitting','unknown','confirmed','awaiting_verification')",(ck,)))
-        manual=[{'state':'manually_applied','created':r['created'],'attempted':r['created'],'company_key':self.company(r['company'])}
+        all_active=self.application_history(s,('submitting','unknown','confirmed','awaiting_verification'))
+        manual=[{'state':'manually_applied','created':r['created'],'attempted':r['created'],
+                 'company_keys':{self.company(r['company'],s)}}
                 for r in self.db.execute("SELECT d.created,j.company FROM job_decisions d JOIN jobs j ON j.id=d.job_id WHERE d.decision='manually_applied'")]
-        active.extend(r for r in manual if r['company_key']==ck)
+        all_active.extend(manual)
+        active=[row for row in all_active if ck in row['company_keys']]
         if any(r["state"]=="awaiting_verification" for r in active):
             raise Blocked("company_verification_pending","Complete the earlier application verification first")
         if any(r["state"] in ("submitting","unknown") for r in active):
@@ -303,12 +464,10 @@ class Store:
         if len(active)>=s["max_per_company"]:
             raise Blocked("company_limit")
         local_day=datetime.now(ZoneInfo(s["timezone"])).date()
-        all_active=list(self.db.execute("SELECT * FROM applications WHERE state IN ('submitting','unknown','confirmed','awaiting_verification')"))
-        all_active.extend(manual)
         daily=[r for r in all_active if datetime.fromisoformat(r["attempted"] or r["created"]).astimezone(ZoneInfo(s["timezone"])).date()==local_day]
         if len(daily)>=s["max_per_day"]:
             raise Blocked("daily_limit")
-        if any(r["company_key"]==ck for r in daily):
+        if any(ck in r['company_keys'] for r in daily):
             raise Blocked("company_same_day")
         cutoff=datetime.now(timezone.utc)-timedelta(days=s["company_cooldown_days"])
         if any(datetime.fromisoformat(r["attempted"] or r["created"])>cutoff for r in active):
@@ -415,17 +574,30 @@ class Store:
             self.db.execute("UPDATE jobs SET status='discovered',reason='',updated=? WHERE id=?",(now(),app['job_id']))
             return app['job_id']
 
-    def snapshot(self,material_offset=0):
+    def application_record(self, aid):
+        if not isinstance(aid,str) or not aid or len(aid)>100:
+            raise ValueError('Choose an existing application record')
+        row=self.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone()
+        return dict(row) if row else None
+
+    def snapshot(self,material_offset=0,include_packages=True,question_limit=None,*,material_search='',material_status='all'):
         if type(material_offset) is not int or not 0<=material_offset<=1000000:raise ValueError("Invalid material page")
-        def rows(q): return [dict(x) for x in self.db.execute(q)]
-        return {"settings":self.settings(),"templates":self.templates(),"facts":self.facts(False),"missing_setup":self.missing_setup(),
-                "jobs":rows("SELECT * FROM jobs ORDER BY score DESC,first_seen DESC LIMIT 500"),
-                "applications":rows("SELECT * FROM applications ORDER BY created DESC LIMIT 500"),
-                "questions":rows("SELECT * FROM questions WHERE resolved=0 AND job_id NOT IN (SELECT job_id FROM job_decisions) ORDER BY rowid"),
+        if question_limit is not None and (type(question_limit) is not int or not 1<=question_limit<=100):raise ValueError('Invalid question limit')
+        from .material_ledger import search_materials
+        material_page=search_materials(self,search=material_search,status=material_status,offset=material_offset)
+        def rows(q,parameters=()): return [dict(x) for x in self.db.execute(q,parameters)]
+        from .presentation import attention_sql
+        condition,parameters=attention_sql('j')
+        priority=f"({condition} OR EXISTS(SELECT 1 FROM questions q WHERE q.job_id=j.id AND q.resolved=0))"
+        from .saved_views import list_views
+        return {"saved_views":list_views(self),"settings":self.settings(),"templates":self.templates(),"facts":self.facts(False),"missing_setup":self.missing_setup(),
+                "jobs":rows(f"SELECT j.* FROM jobs j ORDER BY {priority} DESC,j.score DESC,j.first_seen DESC LIMIT 500",parameters),
+                "applications":rows(f"SELECT {'*' if include_packages else APPLICATION_METADATA} FROM applications ORDER BY (state IN ('unknown','awaiting_verification')) DESC,created DESC LIMIT 500"),
+                "questions":rows("SELECT * FROM questions WHERE resolved=0 AND job_id NOT IN (SELECT job_id FROM job_decisions) ORDER BY rowid" + (" LIMIT ?" if question_limit is not None else ''), (question_limit,) if question_limit is not None else ()),
                 "runs":rows("SELECT * FROM runs ORDER BY started DESC LIMIT 30"),
-                "sources":rows("SELECT * FROM sources ORDER BY checked DESC LIMIT 100"),
-                "employer_accounts":rows("SELECT * FROM employer_accounts ORDER BY updated DESC LIMIT 100"),
-                "documents":rows("SELECT * FROM documents"),"materials":[dict(r) for r in self.db.execute("SELECT * FROM materials ORDER BY created DESC,id DESC LIMIT 20 OFFSET ?",(material_offset,))],"material_count":self.db.execute("SELECT count(*) FROM materials").fetchone()[0],"material_offset":material_offset}
+                "sources":rows("SELECT * FROM sources ORDER BY (error!='') DESC,checked DESC,id LIMIT 100"),
+                "employer_accounts":rows("SELECT * FROM employer_accounts ORDER BY (state IN ('uncertain','creating','signing_in')) DESC,updated DESC,id LIMIT 100"),
+                "documents":[{**row,'available':self.document_available(row['kind'])} for row in rows("SELECT * FROM documents")],"materials":material_page["materials"],"material_count":material_page["total"],"material_offset":material_page["offset"],"material_total":material_page["library_total"],"material_search":material_page["search"],"material_status":material_page["status"]}
 
 
 @contextlib.contextmanager

@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .util import digest, now, private_dir,write_private_blob
+from .util import digest, now, private_dir,restore_imported_blob
 
 KINDS = {'writing_sample', 'cover_letter', 'context'}
 ROLES = {'personal', 'style', 'reference'}
@@ -111,17 +111,20 @@ def import_material(store, data: bytes, filename: str, kind: str):
     text = extract_text(data, suffix)
     h = hashlib.sha256(data).hexdigest()
     dest = private_dir(store.root / 'materials') / (h + suffix)
-    write_private_blob(dest,data)
-    # Re-importing the same source/kind is idempotent and does not re-approve edits.
-    previous = store.db.execute('SELECT id FROM materials WHERE hash=? AND kind=?', (h, kind)).fetchone()
-    if previous:
-        return dict(store.db.execute('SELECT * FROM materials WHERE id=?', (previous[0],)).fetchone())
-    mid = uuid.uuid4().hex
     with store.transaction():
+        # The lookup and insert share a transaction, so concurrent imports cannot
+        # create duplicate sources or overwrite a reviewed excerpt.
+        previous = store.db.execute('SELECT id FROM materials WHERE hash=? AND kind=?', (h, kind)).fetchone()
+        missing = not dest.exists()
+        repaired = restore_imported_blob(dest, data) or bool(previous and missing)
+        if repaired: store.event('material_repaired', h, {'kind': kind, 'hash': h})
+        if previous:
+            return {**dict(store.db.execute('SELECT * FROM materials WHERE id=?', (previous[0],)).fetchone()), 'existing': True, 'repaired': repaired}
+        mid = uuid.uuid4().hex
         store.db.execute('INSERT INTO materials VALUES(?,?,?,?,?,?,?,0,?,1,?,?)',
                          (mid, h, dest.name, name, suffix, kind, text, 'reference', now(), now()))
         store.event('material_imported', mid, {'kind': kind, 'hash': h})
-    return dict(store.db.execute('SELECT * FROM materials WHERE id=?', (mid,)).fetchone())
+    return {**dict(store.db.execute('SELECT * FROM materials WHERE id=?', (mid,)).fetchone()), 'existing': False, 'repaired': repaired}
 
 
 def review_material(store, mid: str, text: str, role: str, confirmed: bool):
@@ -129,11 +132,13 @@ def review_material(store, mid: str, text: str, role: str, confirmed: bool):
         raise ValueError('Choose how this source can be used and confirm explicitly')
     if not isinstance(text, str) or not 20 <= len(text.strip()) <= 12000:
         raise ValueError('Review an excerpt of 20–12,000 characters')
-    row = store.db.execute('SELECT * FROM materials WHERE id=?', (mid,)).fetchone()
-    if not row:
-        raise ValueError('Source not found')
     text = text.strip()
     with store.transaction():
+        row = store.db.execute('SELECT * FROM materials WHERE id=?', (mid,)).fetchone()
+        if not row:
+            raise ValueError('Source not found')
+        if (row['text'], row['role'], bool(row['confirmed'])) == (text, role, confirmed):
+            return {'changed': False, 'drafts_removed': 0}
         store.db.execute('UPDATE materials SET text=?,role=?,confirmed=?,revision=revision+1,updated=? WHERE id=?',
                          (text, role, int(confirmed), now(), mid))
         tid = 'material:' + mid
@@ -141,7 +146,11 @@ def review_material(store, mid: str, text: str, role: str, confirmed: bool):
             store.put_template('experience', text, tid)
         else:
             store.db.execute('DELETE FROM templates WHERE id=?', (tid,))
-        store.event('material_reviewed', mid, {'confirmed': confirmed, 'role': role})
+        # Any approved source changes the writing context; all unattempted drafts
+        # must be rebuilt. Unapproved excerpt edits have never informed writing.
+        removed = store.discard_prepared() if row['confirmed'] or confirmed else 0
+        store.event('material_reviewed', mid, {'confirmed': confirmed, 'role': role, 'drafts_removed': removed})
+    return {'changed': True, 'drafts_removed': removed}
 
 
 def writing_context(store):

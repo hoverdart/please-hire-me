@@ -23,9 +23,9 @@ def _quote(value):
 
 def service_units(store, repo, executable=None):
     python = executable or sys.executable
-    command = ' '.join(_quote(x) for x in (python, '-m', 'hireme', '--data-dir', store.root))
+    command = ' '.join(_quote(x) for x in (python, '-m', 'hireme', '--data-dir', store.root.resolve()))
     common = ('[Unit]\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\n'
-              f'WorkingDirectory={_quote(repo)}\nUMask=0077\nNoNewPrivileges=yes\n'
+              f'WorkingDirectory={_quote(repo.resolve())}\nUMask=0077\nNoNewPrivileges=yes\n'
               'TimeoutStopSec=30\nKillMode=control-group\n'
               f'Environment={_quote("PATH="+str(Path.home()/".local/bin")+":"+os.environ.get("PATH","/usr/local/bin:/usr/bin:/bin"))}\n'
               'UnsetEnvironment=ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN\n')
@@ -41,6 +41,9 @@ def service_units(store, repo, executable=None):
 def install(store, repo, directory=None, enable=False):
     if enable and (sys.platform != 'linux' or not shutil.which('systemctl')):
         raise ValueError('Service activation requires Linux with systemd')
+    if enable:
+        from .scheduler import check_owner
+        check_owner(store)
     directory = private_dir(directory or Path.home()/'.config/systemd/user')
     for name, contents in service_units(store, repo).items():
         path = directory/name
@@ -50,7 +53,7 @@ def install(store, repo, directory=None, enable=False):
     if enable:
         # Retire this applicant's previous cron scheduler before enabling the timer.
         from .scheduler import uninstall
-        if shutil.which('crontab'):uninstall(cron_only=True)
+        if shutil.which('crontab'):uninstall(cron_only=True,store=store)
         subprocess.run(['systemctl','--user','daemon-reload'],check=True)
         subprocess.run(['systemctl','--user','enable','--now',DASHBOARD+'.service',WORKER+'.timer'],check=True)
     return {'directory':str(directory),'enabled':enable,'units':list(service_units(store,repo))}

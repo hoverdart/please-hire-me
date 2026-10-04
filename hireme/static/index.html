@@ -1,38 +1,1770 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Application desk</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
-<body>
-<a class="skip" href="#main">Skip to workspace</a>
-<div class="shell"><aside class="rail"><a class="brand" href="/">Application desk</a><p class="rail-note">Your search, in motion.</p><nav aria-label="Workspace"><button data-view="setup">Setup</button><button data-view="providers">Model connection</button><button data-view="today" aria-current="page">Today</button><button data-view="questions">Needs you <span id="question-count"></span></button><button data-view="profile">Your facts</button><button data-view="materials">Writing &amp; context</button><button data-view="settings">Preferences</button><button data-view="connections">Email automation</button></nav><div class="rail-footer"><span id="worker-state">Connecting…</span><p>Scheduled batches.<br>Your personal tabs stay yours.</p></div></aside>
-<main id="main" tabindex="-1"><div id="notice" role="status" aria-live="polite"></div><header class="page-head"><div><h1 id="heading">Today’s applications</h1><p id="subheading">Loading your application ledger…</p></div><div class="actions"><button id="pause" class="secondary">Pause</button><button id="run">Run a cycle</button></div></header>
-<section id="setup" class="view" hidden><p class="intro">Your documents, your voice, your search. Start with a resume; optional sources can be added later. Everything saves on this computer.</p><div id="machine-checks" class="section"></div><div id="setup-steps"></div><button id="begin-setup">Begin setup</button></section>
-<div id="guided-setup" class="section" hidden><p id="guided-label"></p><div class="actions"><button id="setup-back" class="secondary">Back</button><button id="setup-next">Continue</button><button id="setup-exit" class="secondary">Explore on my own</button></div></div>
-<section id="today" class="view"><div class="daily-line"><span id="daily-progress">No confirmed applications yet</span><span id="daily-target">Daily target: 28</span></div><div id="setup-callout" class="callout" hidden><h2>Set up once. Let it work.</h2><p>Import your resume, confirm the extracted facts, and answer the few things a resume cannot tell us. Missing facts stay blank.</p><button id="setup-link">Complete your profile</button></div><div class="section-head"><h2>Application ledger</h2><label>Show <select id="status-filter"><option value="all">All jobs</option><option value="confirmed">Submitted</option><option value="blocked">Blocked</option><option value="manually_applied">Applied manually</option><option value="skipped">Don’t apply</option><option value="unknown">Uncertain</option><option value="awaiting_verification">Email verification pending</option><option value="discovered">Ready to evaluate</option></select></label></div><div id="jobs"></div><details class="section"><summary>Add a specific posting</summary><form id="job-form" class="form-grid"><label>Company<input name="company" required></label><label>Role<input name="title" required></label><label class="wide">Official application URL<input name="url" type="url" required></label><label>Location<input name="location" required></label><label class="wide">Posting text<textarea name="description" rows="4"></textarea></label><button type="submit">Add to discovery queue</button></form></details><div class="section-head"><h2>Recent cycles</h2></div><div id="runs"></div><details class="section"><summary>Discovery source health</summary><div id="sources"></div></details></section>
-<section id="questions" class="view" hidden><p class="intro">Answer a personal question once and it will be reused for the same wording and options. Account and CAPTCHA blocks link straight to the job. The worker continues with other opportunities.</p><div id="question-list"></div><h2 class="section">Blocked jobs</h2><div id="blocked-jobs"></div><h2 class="section">Uncertain submissions</h2><p>Verify the employer’s confirmation or candidate portal before recording an outcome. These jobs will never be retried automatically.</p><div id="uncertain"></div><h2 class="section">Employer accounts</h2><p>Complete held verification in the dedicated browser, then record evidence that the account exists and you can sign in. Passwords are never displayed here.</p><div id="employer-accounts"></div></section>
-<section id="profile" class="view" hidden><div class="section"><h2>Your resume</h2><p id="resume-state">No resume imported.</p><label class="upload">Import a PDF<input id="resume-upload" type="file" accept="application/pdf"></label><p class="help">The original PDF is copied into private storage. Extracted values require your confirmation.</p></div><div class="section"><h2>Your transcript</h2><p id="transcript-state">No transcript imported.</p><label class="upload">Import a transcript PDF<input id="transcript-upload" type="file" accept="application/pdf"></label><p class="help">Stored privately and uploaded automatically to recognized transcript fields. If an employer requires an official transcript sent directly by your school, handle that through the employer.</p></div><form id="facts-form"><div id="fact-fields"></div><div class="form-footer"><label class="confirmation"><input type="checkbox" id="confirm-facts" required> I confirm these values are accurate. Blank fields remain unknown.</label><button type="submit">Save confirmed facts</button></div></form><div class="section"><h2>Approved answer templates</h2><p>Write factual personal text once. The model can adapt your wording when tailored writing is enabled. Personal claims must be supported by your confirmed sources. Add document examples in Writing &amp; context. Keep company-specific wording in the Needs you queue.</p><form id="template-form" class="form-grid"><label>Use for<select name="category"><option value="motivation">Why this role</option><option value="project">A project I built</option><option value="experience">My background</option></select></label><label class="wide">Your confirmed wording<textarea name="body" rows="5" required minlength="20"></textarea></label><button type="submit">Save approved wording</button></form><div id="templates"></div></div><div class="section"><h2>Start automatic applications</h2><p id="setup-status">Checking required facts…</p><button id="complete-setup">Start automatic applications</button><p class="help">Installs your chosen worker schedule and starts a cycle. No individual application approvals. You can pause at any time.</p></div></section>
-<section id="materials" class="view" hidden>
-<p class="intro">Give the model your writing, cover-letter examples and supporting context. Review the extracted text before it is used. Resume and transcript uploads are in Your facts.</p>
-<form id="material-upload-form" class="form-grid">
-<label>Document purpose<select name="kind"><option value="writing_sample">Writing sample</option><option value="cover_letter">Cover-letter example or template</option><option value="context">Additional context or research</option></select></label>
-<label>Source file<input name="file" type="file" accept=".docx,.pdf,.pptx,.txt,.md" required></label>
-<p class="help wide">DOCX, PDF, PPTX or UTF-8 text; up to 20 MiB. For files containing both an example and research notes, review the relevant excerpts separately. Imported files remain private.</p>
-<button type="submit">Upload for review</button>
-</form>
-<form id="context-form" class="section form-grid"><label class="wide">Additional context or writing<textarea name="text" required minlength="20" maxlength="12000" rows="6"></textarea></label><label>Approved use<select name="role"><option value="personal">My own factual work and experience</option><option value="reference">Background reference only</option><option value="style">Writing style only</option></select></label><label class="confirmation wide"><input type="checkbox" required> I reviewed this text and approve the selected use.</label><button>Save approved context</button></form><div id="material-list"></div>
-</section>
-<section id="connections" class="view" hidden>
-<div class="section"><h2>Your Gmail connection</h2><p id="gmail-state">Checking authorization…</p><p class="intro">Connect the same email you use on applications to read verification codes and receive batch reports. Being signed into Gmail in a browser does not grant background access.</p>
-<label class="upload">Google Desktop OAuth client JSON<input id="gmail-client-upload" type="file" accept="application/json,.json"></label>
-<p class="help">Create a Desktop app OAuth client with the Gmail API enabled in your Google Cloud project. The credentials stay in private storage. <a href="https://developers.google.com/workspace/gmail/api/quickstart/python" target="_blank" rel="noopener noreferrer">Google setup instructions</a>.</p>
-<p>Then run this from the project folder in a terminal on the Pi:</p><pre><code>.venv/bin/python -m hireme gmail connect</code></pre><p class="help">Google will open a consent screen. Select your confirmed application email and authorize reading email and sending reports. Testing-mode OAuth tokens generally expire after seven days; finish the personal-use OAuth setup before relying on unattended runs.</p>
-</div>
-<form id="mail-settings-form" class="section"><h2>Email automation</h2><label class="confirmation"><input name="gmail_verification" type="checkbox"> Retrieve matching email codes for supported application verification steps.</label><label class="confirmation"><input name="gmail_reports" type="checkbox"> Email me a report after each batch, including paused and failed batches.</label><button type="submit">Save email preferences</button><p class="help">Codes stay out of Claude prompts and logs. Unsupported verification steps remain held for manual handling.</p></form>
-<div class="section"><h2>Batch report delivery</h2><div id="report-delivery"></div><button id="flush-reports" class="secondary">Send queued reports</button></div>
-</section>
-<section id="settings" class="view" hidden><form id="settings-form"><div class="form-grid"><label>Locations, one per line<textarea name="locations" rows="4"></textarea></label><label>Summer 2027 locations<textarea name="summer_2027_locations" rows="3"></textarea></label><label>Locations during school<textarea name="school_locations" rows="3"></textarea></label><label>Employers on your resume<textarea name="prior_employers" rows="4"></textarea></label><label>Role keywords, one per line<textarea name="roles" rows="4"></textarea></label><label>Seniority keywords, one per line<textarea name="seniority" rows="3" required></textarea></label><label>Never apply to, one company per line<textarea name="skip_companies" rows="4"></textarea></label><label>Interviewing with, one company per line<textarea name="interview_companies" rows="4"></textarea></label><label>Signed-in portal hosts<textarea name="signed_in_portals" rows="3"></textarea></label><label>Company aliases (JSON object)<textarea name="company_aliases" rows="3"></textarea></label><label>Full-time minimum USD/year<input name="min_annual_usd" type="number" min="0"></label><label>Internship minimum USD/hour<input name="min_hourly_usd" type="number" min="0"></label><label>Maximum required professional years<input name="max_years_required" type="number" min="0" step="0.1"></label><label>Minimum fit score<input name="min_fit_score" type="number" min="0" max="100"></label><label>Lifetime applications per company<input name="max_per_company" type="number" min="1"></label><label>Company cooldown, days<input name="company_cooldown_days" type="number" min="1"></label><label>Hours between batches<input name="schedule_hours" type="number" min="1" max="24"></label><label>Timezone<input name="timezone" required></label><label>Attempt ceiling per batch<input name="max_attempts_per_cycle" type="number" min="1" max="50"></label><label>Model requests per batch<input name="max_model_requests_per_cycle" type="number" min="1" max="200"></label><label>Model requests per day<input name="max_model_requests_per_day" type="number" min="1" max="500"></label><label>API output tokens per request<input name="max_output_tokens" type="number" min="1" max="8000"></label><label>Cycle target<input name="target_per_cycle" type="number" min="1"></label><label>Cycle ceiling<input name="max_per_cycle" type="number" min="1" max="50"></label><label>Daily target<input name="target_per_day" type="number" min="1"></label><label>Daily ceiling<input name="max_per_day" type="number" min="1" max="100"></label><label>Browser<select name="browser_channel"><option value="chrome">Google Chrome</option><option value="chromium">Bundled Chromium</option><option value="system-chromium">System Chromium (Pi)</option></select></label></div><fieldset class="section"><legend>Context and writing</legend><label class="confirmation"><input name="employer_accounts" type="checkbox"> Create and reuse employer accounts with my confirmed email when a supported account form is required. Passwords stay on this computer. Agreement checkboxes and unsupported sign-in steps require manual handling.</label><label class="confirmation"><input name="tailored_writing" type="checkbox"> Adapt answers in the style of my approved writing, with a factual support check.</label><label class="confirmation"><input name="contextual_preferences" type="checkbox"> Choose matching roles, engineering tracks and local work options from my confirmed skills and availability.</label><label class="confirmation"><input name="cover_letters" type="checkbox"> Generate a grounded cover letter when an application requires one. Requires tailored writing above.</label><label>Maximum cover-letter words<input name="cover_letter_words" type="number" min="100" max="350"></label><label class="confirmation"><input name="headless" type="checkbox"> Run the application browser in the background.</label></fieldset><p class="help">Targets are goals, not guarantees. Eligibility, company limits and unknown answers always take priority. Use “hireme login URL” in a terminal to sign into a dedicated portal session.</p><button type="submit">Save preferences</button></form></section>
-<section id="providers" class="view" hidden>
-<p class="intro">Choose your connection explicitly. CLI subscriptions and API billing are separate. No inherited API keys are used.</p>
-<form id="provider-form" class="form-grid"><label>Provider<select name="provider"><option value="claude-cli">Claude Code · subscription</option><option value="codex-cli">Codex CLI · ChatGPT subscription</option><option value="anthropic-api">Anthropic API · paid key</option><option value="openai-api">OpenAI API · paid key</option></select></label><label>Model ID<input name="provider_model" placeholder="Required for API; optional for Codex"></label><label>Run on<select name="deployment"><option value="local">This computer</option><option value="pi">Raspberry Pi / Linux systemd</option></select></label><label>API key (API providers only)<input name="key" type="password" autocomplete="new-password"></label><p class="help wide">Keys are stored in a private local file, never returned to this page or included in backups. API mode makes paid requests to the selected vendor. Set a spending limit in that vendor’s account too. CLI request caps do not guarantee remaining subscription credits.</p><button>Save connection</button></form>
-<div class="section"><h2>Install and sign in</h2><p>Install the selected CLI using its official instructions, then sign in in a terminal on the machine that runs the worker.</p><p><a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener noreferrer">Claude Code setup</a> · <a href="https://developers.openai.com/codex/cli" target="_blank" rel="noopener noreferrer">Codex CLI setup</a></p><pre id="provider-instructions">claude auth login</pre><p id="provider-state"></p><button id="check-provider" class="secondary">Check installation and login</button> <button id="remove-provider-key" class="secondary">Remove saved API key</button></div>
-<div class="section"><h2>Ready to work</h2><p>Finish setup with submissions paused, or start automatic batches now. The worker continues with supported applications and holds unknown answers for you.</p><button id="finish-paused" class="secondary">Finish setup · stay paused</button> <button id="finish-start">Start scheduled applications</button><p class="help">For Pi: finish paused on the Pi, run the Pi configuration commands in the README, then start. Changing “Run on” does not transfer data or install an operating system.</p></div>
-</section></main></div></body></html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f4f6f9" />
+    <meta
+      name="description"
+      content="Your private application workspace. Find opportunities, keep track of applications, and move your search forward."
+    />
+    <title>Application desk · Your next chapter</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/notes.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to workspace</a>
+    <div class="shell">
+      <aside class="rail">
+        <a class="brand" href="/" aria-label="Application desk home"
+          ><span class="brand-mark" aria-hidden="true">a<span>↗</span></span
+          ><span
+            >application desk<span class="brand-caption"
+              >YOUR NEXT CHAPTER</span
+            ></span
+          ></a
+        >
+        <div class="rail-note">
+          <span class="privacy-dot"></span> Private workspace
+        </div>
+        <nav aria-label="Workspace">
+          <p class="nav-label">YOUR WORKSPACE</p>
+          <button data-view="today" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">▦</span>Overview
+          </button>
+          <button data-view="questions">
+            <span class="nav-icon" aria-hidden="true">◇</span>Needs you
+            <span id="question-count" class="nav-count"></span>
+          </button>
+          <p class="nav-label">MAKE IT YOURS</p>
+          <button data-view="profile">
+            <span class="nav-icon" aria-hidden="true">◎</span>Your facts
+          </button>
+          <button data-view="materials">
+            <span class="nav-icon" aria-hidden="true">▤</span>Writing &amp;
+            context
+          </button>
+          <button data-view="settings">
+            <span class="nav-icon" aria-hidden="true">≡</span>Preferences
+          </button>
+          <p class="nav-label">CONNECTIONS</p>
+          <button data-view="providers">
+            <span class="nav-icon" aria-hidden="true">⌘</span>Model connection
+          </button>
+          <button data-view="connections">
+            <span class="nav-icon" aria-hidden="true">✉</span>Email automation
+          </button>
+          <button data-view="setup">
+            <span class="nav-icon" aria-hidden="true">✦</span>Setup checklist
+          </button>
+        </nav>
+        <div class="rail-footer">
+          <div class="worker-indicator">
+            <span id="worker-dot"></span
+            ><span id="worker-state">Connecting…</span>
+          </div>
+          <p>Your documents and application history stay on this computer.</p>
+          <span class="footer-label">A LITTLE LESS BUSYWORK.</span>
+        </div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <div
+          id="connection-status"
+          class="connection-banner"
+          role="status"
+          hidden
+        >
+          <span id="connection-message"></span
+          ><button id="retry-connection" class="secondary" type="button">
+            Reconnect
+          </button>
+        </div>
+        <div
+          id="recovery-banner"
+          class="connection-banner"
+          role="status"
+          hidden
+        >
+          <div>
+            <strong>Your previous work was interrupted.</strong>
+            <p id="recovery-detail" class="help">
+              Recover the recorded work before starting another batch. Uncertain
+              submissions stay held for your verification.
+            </p>
+          </div>
+          <button id="recover-worker" class="secondary" type="button">
+            Recover and stay paused
+          </button>
+        </div>
+        <p id="worker-error" class="callout" role="alert" hidden></p>
+        <div id="notice" role="status" aria-live="polite"></div>
+        <div id="demo-banner" class="demo-banner" hidden>
+          <span
+            ><strong>You’re exploring a sample workspace.</strong> Companies,
+            applications and answers here are invented. Nothing will be
+            submitted or saved.</span
+          ><code>hireme dashboard</code>
+        </div>
+        <div class="workspace-topbar">
+          <span id="workspace-date">YOUR APPLICATION WORKSPACE</span>
+          <div class="topbar-tools">
+            <span class="local-label"
+              ><span class="privacy-dot"></span> Local &amp; private</span
+            >
+            <button
+              id="find-tool"
+              type="button"
+              class="secondary"
+              aria-haspopup="dialog"
+              aria-keyshortcuts="Control+k Meta+k"
+            >
+              <span aria-hidden="true">⌕</span> Find a tool
+            </button>
+          </div>
+        </div>
+        <header class="page-head">
+          <div>
+            <p class="eyebrow" id="page-eyebrow">YOUR SEARCH, IN MOTION</p>
+            <h1 id="heading">Today’s applications</h1>
+            <p id="subheading">Loading your application ledger…</p>
+          </div>
+          <div class="actions">
+            <button id="discover" class="secondary" disabled>
+              Find opportunities
+            </button>
+            <button id="pause" class="secondary" disabled>Pause</button
+            ><button id="run" disabled>
+              Run a batch <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+        </header>
+        <section id="setup" class="view" hidden>
+          <p class="intro">
+            Your documents, your voice, your search. Start with a resume;
+            optional sources can be added later. Everything saves on this
+            computer.
+          </p>
+          <div class="setup-banner">
+            <div>
+              <span class="eyebrow">A GOOD SEARCH STARTS WITH YOU</span>
+              <h2>Your experience.<br />Your voice. Your next step.</h2>
+              <p>
+                Give your desk the essentials. It takes care of the repetitive
+                parts, and comes back to you when it needs an answer.
+              </p>
+            </div>
+            <div class="setup-art" aria-hidden="true">
+              <span class="art-sheet"
+                ><span>YOUR NEXT CHAPTER</span><i></i><i></i><i></i
+                ><b>↗</b></span
+              ><span class="art-tag">Made for your ambitions.</span>
+            </div>
+          </div>
+          <div id="machine-checks" class="section"></div>
+          <details class="section" id="setup-diagnostics">
+            <summary>Check local setup and get help</summary>
+            <p class="help">
+              Check your saved setup without sending model requests or
+              applications. Download a report with setup status and next steps;
+              applicant answers and credentials are omitted.
+            </p>
+            <div class="actions">
+              <button id="check-setup">Check local setup</button>
+              <button id="download-setup-report" class="secondary" disabled>
+                Download setup report
+              </button>
+            </div>
+            <p id="setup-check-error" role="alert" hidden></p>
+            <p id="setup-check-status" class="help" role="status"></p>
+            <div id="setup-check-results" class="diagnostic-list"></div>
+          </details>
+          <div class="section-head">
+            <h2>Your setup checklist</h2>
+            <span id="setup-progress-text" class="help"></span>
+          </div>
+          <div id="setup-steps" class="setup-grid"></div>
+          <button id="begin-setup">
+            Let’s get started <span aria-hidden="true">→</span>
+          </button>
+        </section>
+        <div id="guided-setup" class="section" hidden>
+          <div class="guided-top">
+            <span class="eyebrow">SETTING UP YOUR DESK</span
+            ><span id="guided-progress-text" class="help"></span>
+          </div>
+          <progress
+            id="guided-progress"
+            value="1"
+            max="7"
+            aria-label="Setup progress"
+          ></progress>
+          <p id="guided-label"></p>
+          <div class="actions">
+            <button id="setup-back" class="secondary">Back</button
+            ><button id="setup-next">Continue</button
+            ><button id="setup-exit" class="secondary">
+              Explore on my own
+            </button>
+          </div>
+        </div>
+        <section id="today" class="view">
+          <div class="overview-grid" aria-label="Application overview">
+            <article class="metric metric-primary">
+              <div class="metric-top">
+                <span>Submitted today</span><span aria-hidden="true">↗</span>
+              </div>
+              <strong id="metric-submitted">0</strong>
+              <p id="metric-submitted-help">Confirmed applications</p>
+              <progress
+                id="submission-progress"
+                value="0"
+                max="28"
+                aria-label="Daily application target"
+              ></progress>
+            </article>
+            <button class="metric metric-attention" id="review-queue">
+              <div class="metric-top">
+                <span>Needs your attention</span
+                ><span aria-hidden="true">◇</span>
+              </div>
+              <strong id="metric-attention">0</strong>
+              <p id="metric-attention-help">You're all caught up</p>
+              <span class="metric-link"
+                >Review your queue <span aria-hidden="true">→</span></span
+              >
+            </button>
+            <article class="metric">
+              <div class="metric-top">
+                <span>Opportunities</span><span aria-hidden="true">▤</span>
+              </div>
+              <strong id="metric-opportunities">0</strong>
+              <p>In your application ledger</p>
+              <span class="metric-foot" id="metric-ready"
+                >Discovery is ready when you are</span
+              >
+            </article>
+          </div>
+          <section class="section" aria-labelledby="cycle-funnel-title">
+            <h2 id="cycle-funnel-title">Latest application cycle</h2>
+            <p id="cycle-funnel-status" class="help">No recorded cycle yet.</p>
+            <dl id="cycle-funnel" class="cycle-funnel"></dl>
+          </section>
+          <details id="coverage-panel" class="section">
+            <summary>Application platform coverage</summary>
+            <p class="help">Discovery and automatic submission have different support. Counts cover your saved opportunities.</p>
+            <div id="coverage-results" aria-live="polite"></div>
+            <button id="coverage-refresh" class="secondary" type="button">Refresh coverage</button>
+            <p id="coverage-error" role="alert" hidden></p>
+          </details>
+          <div class="daily-line">
+            <span id="daily-progress">No confirmed applications yet</span
+            ><span id="daily-target">Daily target: 28</span>
+          </div>
+          <div id="setup-callout" class="callout" hidden>
+            <h2>Set up once. Let it work.</h2>
+            <p>
+              Import your resume, confirm the extracted facts, and answer the
+              few things a resume cannot tell us. Missing facts stay blank.
+            </p>
+            <button id="setup-link">Complete your profile</button>
+          </div>
+          <div class="ledger-panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">ONE OPPORTUNITY AT A TIME</p>
+                <h2>
+                  Application ledger
+                  <span id="ledger-count" class="count-pill">0</span>
+                </h2>
+              </div>
+              <div class="ledger-actions">
+                <button id="export-ledger" class="secondary" type="button">
+                  Export CSV <span aria-hidden="true">↓</span></button
+                ><button id="add-posting" class="secondary">
+                  + Add a posting
+                </button>
+              </div>
+            </div>
+            <div class="ledger-toolbar">
+              <label class="search-field"
+                ><span aria-hidden="true">⌕</span
+                ><input
+                  id="job-search"
+                  maxlength="200"
+                  type="search"
+                  placeholder="Search company, role or location"
+                  aria-label="Search opportunities" /></label
+              ><label class="filter-field"
+                ><span>Status</span
+                ><select
+                  id="status-filter"
+                  aria-label="Filter opportunities by status"
+                >
+                  <option value="all">All jobs</option>
+                  <option value="confirmed">Submitted</option>
+                  <option value="manually_applied">Applied manually</option>
+                  <option value="skipped">Don’t apply</option>
+                  <option value="blocked">Needs action</option>
+                  <option value="not_match">Not a match</option>
+                  <option value="waiting">Limit active</option>
+                  <option value="unknown">Uncertain</option>
+                  <option value="awaiting_verification">
+                    Email verification pending
+                  </option>
+                  <option value="discovered">Ready to evaluate</option>
+                  <option value="prepared">Prepared drafts</option>
+                </select></label
+              ><label class="filter-field"
+                ><span>Sort</span
+                ><select id="job-sort" aria-label="Sort opportunities">
+                  <option value="recent">Most recent</option>
+                  <option value="fit">Best fit</option>
+                  <option value="company">Company A–Z</option>
+                </select></label
+              >
+            </div>
+            <p id="ledger-scope" class="help ledger-scope"></p>
+            <details id="saved-views-panel" class="section">
+              <summary>Save and reopen your filters</summary>
+              <p class="help">
+                Name the current search, status and sorting. Saved views stay in
+                your private history and work after reopening the dashboard.
+                They change which opportunities you see.
+              </p>
+              <form id="saved-view-form" method="post" class="form-grid">
+                <label
+                  >View name<input
+                    name="name"
+                    required
+                    maxlength="48"
+                    placeholder="For example, prepared engineering roles"
+                    disabled
+                /></label>
+                <button type="submit" class="secondary" disabled>
+                  Save current filters
+                </button>
+              </form>
+              <p id="saved-view-status" class="help" role="status"></p>
+              <div id="saved-views"></div>
+            </details>
+            <div id="jobs" tabindex="-1"></div>
+            <div class="ledger-pagination">
+              <span
+                id="ledger-page-label"
+                class="help"
+                role="status"
+                aria-live="polite"
+              ></span>
+              <div class="actions">
+                <button
+                  id="ledger-previous"
+                  class="secondary"
+                  type="button"
+                  disabled
+                >
+                  ← Previous</button
+                ><button
+                  id="ledger-next"
+                  class="secondary"
+                  type="button"
+                  disabled
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          </div>
+          <details id="add-posting-panel" class="section">
+            <summary>Add a specific posting</summary>
+            <p class="help">
+              Found something promising? Add the official application link and
+              we’ll check it against your preferences.
+            </p>
+            <form id="job-form" class="form-grid">
+              <label>Company<input name="company" required /></label
+              ><label>Role<input name="title" required /></label
+              ><label class="wide"
+                >Official application URL<input
+                  name="url"
+                  type="url"
+                  required /></label
+              ><label>Location<input name="location" required /></label
+              ><label class="wide"
+                >Posting text<textarea
+                  name="description"
+                  rows="4"
+                ></textarea></label
+              ><button type="submit">Add to discovery queue</button>
+            </form>
+          </details>
+          <details id="posting-import-panel" class="section">
+            <summary>Add postings from a spreadsheet</summary>
+            <p class="help">
+              Save your spreadsheet as a UTF-8 CSV with Company, Role and
+              Application URL columns. Location and Posting text are optional.
+              You can also use an exported opportunity ledger. Import up to 500
+              rows in a file up to 1 MiB.
+            </p>
+            <p class="help">
+              Use official links from Ashby, Greenhouse, Lever, Workable,
+              SmartRecruiters or a supported employer portal. Adding postings
+              saves discovery metadata; eligibility is checked before preparing
+              an application.
+            </p>
+            <button
+              type="button"
+              class="secondary"
+              id="posting-import-template"
+            >
+              Download blank CSV template
+            </button>
+            <form id="posting-import-form" method="post" class="form-grid">
+              <label
+                >Posting CSV<input
+                  type="file"
+                  id="posting-import-file"
+                  accept=".csv,text/csv"
+                  required
+                  disabled
+              /></label>
+              <button type="submit" class="secondary" disabled>
+                Check CSV
+              </button>
+            </form>
+            <p id="posting-import-status" class="help" role="status"></p>
+            <div id="posting-import-preview" hidden></div>
+            <button
+              type="button"
+              class="primary"
+              id="posting-import-save"
+              hidden
+              disabled
+            >
+              Add checked postings
+            </button>
+          </details>
+          <details id="prepare-panel" class="section">
+            <summary>Prepare drafts without submitting</summary>
+            <p>
+              While submissions are paused, prepare application answers and
+              documents for review. This uses your normal model and batch
+              limits. The worker keeps submissions paused and holds forms that
+              need an account or your help.
+            </p>
+            <button id="prepare" type="button" class="secondary" disabled>
+              Prepare drafts
+            </button>
+            <p id="prepare-help" class="help"></p>
+            <p class="help">
+              Choose Prepared drafts in the ledger’s status filter, then open
+              Answers &amp; evidence to review saved work. A later live batch
+              rechecks answers and documents before submitting.
+            </p>
+          </details>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">BEHIND THE SCENES</p>
+              <h2>Recent batches</h2>
+            </div>
+            <span class="help">Your worker’s activity</span>
+          </div>
+          <div id="runs"></div>
+          <details id="run-history-panel" class="section">
+            <summary>Search complete batch history</summary>
+            <div class="form-grid">
+              <label
+                >Show batches<select id="run-filter">
+                  <option value="all">All recorded batches</option>
+                  <option value="running">Running</option>
+                  <option value="finished">Finished</option>
+                  <option value="paused">Paused</option>
+                  <option value="blocked">Stopped for a blocker</option>
+                  <option value="interrupted">Interrupted</option>
+                </select></label
+              >
+              <label
+                >Search recorded notes<input
+                  id="run-search"
+                  type="search"
+                  maxlength="200"
+                  autocomplete="off"
+              /></label>
+            </div>
+            <p id="run-history-error" class="help" role="alert" hidden></p>
+            <button
+              id="run-history-retry"
+              type="button"
+              class="secondary"
+              hidden
+            >
+              Retry batch history
+            </button>
+            <div
+              id="run-history"
+              tabindex="-1"
+              role="region"
+              aria-label="Complete batch history"
+            ></div>
+            <div class="ledger-pagination">
+              <span
+                id="run-history-page"
+                class="help"
+                role="status"
+                aria-live="polite"
+              ></span>
+              <div class="actions">
+                <button
+                  id="run-history-previous"
+                  type="button"
+                  class="secondary"
+                  disabled
+                >
+                  Newer batches</button
+                ><button
+                  id="run-history-next"
+                  type="button"
+                  class="secondary"
+                  disabled
+                >
+                  Older batches
+                </button>
+              </div>
+            </div>
+          </details>
+          <details id="source-health-panel" class="section">
+            <summary>Discovery source health</summary>
+            <p class="help">
+              The latest check for each source. Earlier opportunities stay saved
+              when a source is unavailable.
+            </p>
+            <p id="source-health-summary" class="help" role="status"></p>
+            <div class="ledger-toolbar">
+              <label
+                >Search source or error<input
+                  id="source-search"
+                  type="search"
+                  maxlength="200"
+                  autocomplete="off"
+              /></label>
+              <label
+                >Source status<select id="source-filter">
+                  <option value="all">All sources</option>
+                  <option value="error">Unavailable</option>
+                  <option value="ok">Available</option>
+                </select></label
+              >
+            </div>
+            <p
+              id="source-health-error"
+              class="callout error"
+              role="alert"
+              hidden
+            ></p>
+            <button
+              id="source-health-retry"
+              type="button"
+              class="secondary"
+              hidden
+            >
+              Retry source health
+            </button>
+            <div
+              id="sources"
+              tabindex="-1"
+              role="region"
+              aria-label="Discovery source checks"
+            ></div>
+            <div class="ledger-pagination">
+              <span
+                id="source-health-page"
+                class="help"
+                role="status"
+                aria-live="polite"
+              ></span>
+              <div class="actions">
+                <button
+                  id="source-health-previous"
+                  type="button"
+                  class="secondary"
+                  disabled
+                >
+                  Previous sources</button
+                ><button
+                  id="source-health-next"
+                  type="button"
+                  class="secondary"
+                  disabled
+                >
+                  Next sources
+                </button>
+              </div>
+            </div>
+          </details>
+        </section>
+        <section id="questions" class="view" hidden>
+          <p class="intro">
+            Answer a personal question once and it will be reused for the same
+            wording and options. Account and CAPTCHA blocks link straight to the
+            job. The worker continues with other opportunities.
+          </p>
+          <label
+            >Search question, employer or role<input
+              id="question-search"
+              type="search"
+              maxlength="200"
+              autocomplete="off"
+          /></label>
+          <p id="question-draft-help" class="help" hidden>
+            Save or discard your unfinished answers before searching or changing
+            question pages.
+          </p>
+          <p id="question-error" class="help" role="alert" hidden></p>
+          <button id="question-retry" type="button" class="secondary" hidden>
+            Retry questions
+          </button>
+          <div
+            id="question-list"
+            tabindex="-1"
+            role="region"
+            aria-label="Unanswered questions"
+          ></div>
+          <div class="ledger-pagination">
+            <span
+              id="question-page"
+              class="help"
+              role="status"
+              aria-live="polite"
+            ></span>
+            <div class="actions">
+              <button
+                id="question-previous"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Previous questions
+              </button>
+              <button
+                id="question-next"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Next questions
+              </button>
+            </div>
+          </div>
+          <h2 class="section">Applications that need a hand</h2>
+          <p id="blocked-scope" class="help"></p>
+          <div id="blocked-jobs"></div>
+          <button id="view-all-holds" type="button" class="secondary">
+            View all held opportunities
+          </button>
+          <h2 class="section">Uncertain submissions</h2>
+          <p>
+            Verify the employer’s confirmation or candidate portal before
+            recording an outcome. These jobs will never be retried
+            automatically.
+          </p>
+          <div class="form-grid">
+            <label
+              >Show outcomes<select id="outcome-filter">
+                <option value="pending">All unresolved outcomes</option>
+                <option value="unknown">Uncertain submissions</option>
+                <option value="awaiting_verification">
+                  Email verification pending
+                </option>
+              </select></label
+            >
+            <label
+              >Search employer or role<input
+                id="outcome-search"
+                type="search"
+                maxlength="200"
+                autocomplete="off"
+            /></label>
+          </div>
+          <p id="outcome-draft-help" class="help" hidden>
+            Record or discard unfinished verification notes before changing
+            filters or pages.
+          </p>
+          <p id="outcome-error" class="help" role="alert" hidden></p>
+          <button id="outcome-retry" type="button" class="secondary" hidden>
+            Retry unresolved outcomes
+          </button>
+          <div
+            id="uncertain"
+            tabindex="-1"
+            role="region"
+            aria-label="Unresolved submission records"
+          ></div>
+          <div class="ledger-pagination">
+            <span
+              id="outcome-page"
+              class="help"
+              role="status"
+              aria-live="polite"
+            ></span>
+            <div class="actions">
+              <button
+                id="outcome-previous"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Previous outcomes</button
+              ><button
+                id="outcome-next"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Next outcomes
+              </button>
+            </div>
+          </div>
+          <h2 class="section">Employer accounts</h2>
+          <p>
+            Complete held verification in the dedicated browser, then record
+            evidence that the account exists and you can sign in. Passwords are
+            never displayed here.
+          </p>
+          <div class="form-grid">
+            <label
+              >Show accounts<select id="account-filter">
+                <option value="uncertain">Needs verification</option>
+                <option value="all">All accounts</option>
+              </select></label
+            >
+            <label
+              >Search employer or website<input
+                id="account-search"
+                type="search"
+                maxlength="200"
+                autocomplete="off"
+            /></label>
+          </div>
+          <p id="account-draft-help" class="help" hidden>
+            Save your verification evidence before changing account pages or
+            filters.
+          </p>
+          <p id="account-error" class="help" role="alert" hidden></p>
+          <button id="account-retry" type="button" class="secondary" hidden>
+            Retry account history
+          </button>
+          <div
+            id="employer-accounts"
+            tabindex="-1"
+            role="region"
+            aria-label="Employer account records"
+          ></div>
+          <div class="ledger-pagination">
+            <span
+              id="account-page"
+              class="help"
+              role="status"
+              aria-live="polite"
+            ></span>
+            <div class="actions">
+              <button
+                id="account-previous"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Previous accounts
+              </button>
+              <button
+                id="account-next"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Next accounts
+              </button>
+            </div>
+          </div>
+          <details id="account-transfer-panel" class="section">
+            <summary>Move employer passwords to another computer</summary>
+            <p class="help">
+              Your history backup keeps account records, but excludes passwords.
+              Use a separate encrypted transfer to recover existing employer
+              passwords after restoring matching history on your other computer
+              or Pi. Both workspaces must use the same confirmed applicant email
+              and stay paused.
+            </p>
+            <p id="account-transfer-readiness" class="help"></p>
+            <div class="account-transfer-grid">
+              <form id="account-export-form" method="post">
+                <h3>1. Export from this computer</h3>
+                <label
+                  >New transfer passphrase<input
+                    name="passphrase"
+                    type="password"
+                    autocomplete="new-password"
+                    minlength="12"
+                    maxlength="1024"
+                    required
+                /></label>
+                <label
+                  >Repeat transfer passphrase<input
+                    name="confirmation"
+                    type="password"
+                    autocomplete="new-password"
+                    minlength="12"
+                    maxlength="1024"
+                    required
+                /></label>
+                <p class="help">
+                  Use at least 12 characters. Keep this passphrase separately;
+                  it is required to unlock the transfer.
+                </p>
+                <button type="submit" disabled>
+                  Download encrypted passwords
+                </button>
+                <p id="account-export-feedback" class="help" role="status"></p>
+              </form>
+              <form id="account-import-form" method="post">
+                <h3>2. Import on the other computer</h3>
+                <label
+                  >Encrypted credential transfer<input
+                    name="archive"
+                    type="file"
+                    accept=".encrypted,application/json"
+                    required
+                /></label>
+                <label
+                  >Transfer passphrase<input
+                    name="passphrase"
+                    type="password"
+                    autocomplete="off"
+                    minlength="12"
+                    maxlength="1024"
+                    required
+                /></label>
+                <p class="help">
+                  Restore the matching history backup first. Existing different
+                  passwords are rejected. Account uncertainty stays recorded;
+                  importing keeps submissions paused.
+                </p>
+                <button type="submit" disabled>
+                  Import encrypted passwords
+                </button>
+                <p id="account-import-feedback" class="help" role="status"></p>
+              </form>
+            </div>
+          </details>
+        </section>
+        <section id="profile" class="view" hidden>
+          <div class="section">
+            <h2>Your resume</h2>
+            <p id="resume-state">No resume imported.</p>
+            <button
+              id="download-selected-resume"
+              type="button"
+              class="secondary"
+              hidden
+            >
+              Download selected resume
+            </button>
+            <p
+              id="selected-resume-feedback"
+              class="help"
+              role="status"
+              hidden
+            ></p>
+            <label class="upload"
+              >Import a PDF<input
+                id="resume-upload"
+                type="file"
+                accept="application/pdf"
+            /></label>
+            <p class="help">
+              The original PDF is copied into private storage. Extracted values
+              require your confirmation.
+            </p>
+          </div>
+          <div class="section">
+            <h2>Your transcript</h2>
+            <p id="transcript-state">No transcript imported.</p>
+            <button
+              id="download-selected-transcript"
+              type="button"
+              class="secondary"
+              hidden
+            >
+              Download selected transcript
+            </button>
+            <p
+              id="selected-transcript-feedback"
+              class="help"
+              role="status"
+              hidden
+            ></p>
+            <button
+              id="withdraw-transcript"
+              type="button"
+              class="secondary"
+              hidden
+            >
+              Stop using transcript
+            </button>
+            <p id="transcript-withdraw-help" class="help" hidden>
+              Stops future uploads and clears unattempted drafts that include
+              it. Private files stay stored for application evidence. Wait for
+              an active batch to finish first.
+            </p>
+            <label class="upload"
+              >Import a transcript PDF<input
+                id="transcript-upload"
+                type="file"
+                accept="application/pdf"
+            /></label>
+            <p class="help">
+              Stored privately and uploaded automatically to recognized
+              transcript fields. If an employer requires an official transcript
+              sent directly by your school, handle that through the employer.
+            </p>
+          </div>
+          <div class="section-head">
+            <div>
+              <h2>The essentials</h2>
+              <p id="fact-completion" class="help"></p>
+            </div>
+          </div>
+          <label class="confirmation optional-toggle"
+            ><input id="show-optional-facts" type="checkbox" /> Show optional
+            facts, availability and disclosures</label
+          ><datalist id="yes-no-values">
+            <option value="Yes"></option>
+            <option value="No"></option>
+          </datalist>
+          <form id="facts-form">
+            <div id="fact-fields"></div>
+            <div class="form-footer">
+              <label class="confirmation"
+                ><input type="checkbox" id="confirm-facts" required /> I confirm
+                these values are accurate. Blank fields remain unknown. Clearing
+                a saved optional value stops its reuse.</label
+              ><button type="submit">Save confirmed facts</button>
+              <button
+                type="button"
+                id="discard-fact-edits"
+                class="secondary"
+                disabled
+              >
+                Discard fact edits
+              </button>
+              <span
+                class="draft-status"
+                data-draft-for="facts-form"
+                role="status"
+              ></span>
+            </div>
+          </form>
+          <div class="section">
+            <h2>Approved answer templates</h2>
+            <p>
+              Write factual personal text once. The model can adapt your wording
+              when tailored writing is enabled. Personal claims must be
+              supported by your confirmed sources. Add document examples in
+              Writing &amp; context. Keep company-specific wording in the Needs
+              you queue.
+            </p>
+            <form id="template-form" class="form-grid">
+              <label
+                >Use for<select name="category">
+                  <option value="motivation">Why this role</option>
+                  <option value="project">A project I built</option>
+                  <option value="experience">My background</option>
+                </select></label
+              ><label class="wide"
+                >Your confirmed wording<textarea
+                  name="body"
+                  rows="5"
+                  required
+                  minlength="20"
+                ></textarea></label
+              ><button type="submit">Save approved wording</button>
+            </form>
+            <div id="templates"></div>
+          </div>
+          <details id="saved-answers-panel" class="section">
+            <summary>Review saved answers</summary>
+            <p class="help">
+              These are exact answers you confirmed in Needs you. Withdraw an
+              outdated response to stop its reuse. Confirmed facts may still
+              answer the same question; update those separately above. Past
+              application evidence stays recorded.
+            </p>
+            <label
+              >Search question, employer or answer<input
+                id="answer-search"
+                type="search"
+                maxlength="200"
+                autocomplete="off"
+            /></label>
+            <div id="saved-answers" aria-live="polite"></div>
+            <div class="actions">
+              <button
+                id="answers-previous"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Previous answers
+              </button>
+              <span id="answers-page" class="help" role="status"></span>
+              <button
+                id="answers-next"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Next answers
+              </button>
+            </div>
+          </details>
+          <div class="section">
+            <h2>Start automatic applications</h2>
+            <p id="setup-status">Checking required facts…</p>
+            <button id="complete-setup">Start automatic applications</button>
+            <p class="help">
+              Installs your chosen worker schedule and starts a cycle. No
+              individual application approvals. You can pause at any time.
+            </p>
+          </div>
+        </section>
+        <section id="materials" class="view" hidden>
+          <p class="intro">
+            Give the model your writing, cover-letter examples and supporting
+            context. Review the extracted text before it is used. Resume and
+            transcript uploads are in Your facts.
+          </p>
+          <form id="material-upload-form" class="form-grid">
+            <label
+              >Document purpose<select name="kind">
+                <option value="writing_sample">Writing sample</option>
+                <option value="cover_letter">
+                  Cover-letter example or template
+                </option>
+                <option value="context">Additional context or research</option>
+              </select></label
+            >
+            <label
+              >Source file<input
+                name="file"
+                type="file"
+                accept=".docx,.pdf,.pptx,.txt,.md"
+                required
+            /></label>
+            <p class="help wide">
+              DOCX, PDF, PPTX or UTF-8 text; up to 20 MiB. For files containing
+              both an example and research notes, review the relevant excerpts
+              separately. Imported files remain private. To repair a missing or
+              damaged copy, upload the matching original with the same document
+              purpose; existing reviews stay saved.
+            </p>
+            <button type="submit">Upload for review</button>
+          </form>
+          <form id="context-form" class="section form-grid">
+            <label class="wide"
+              >Additional context or writing<textarea
+                name="text"
+                required
+                minlength="20"
+                maxlength="12000"
+                rows="6"
+              ></textarea></label
+            ><label
+              >Approved use<select name="role">
+                <option value="personal">
+                  My own factual work and experience
+                </option>
+                <option value="reference">Background reference only</option>
+                <option value="style">Writing style only</option>
+              </select></label
+            ><label class="confirmation wide"
+              ><input type="checkbox" required /> I reviewed this text and
+              approve the selected use.</label
+            ><button>Save approved context</button>
+          </form>
+          <form id="material-filter-form" class="actions section">
+            <label
+              >Search your sources<input
+                id="material-search"
+                type="search"
+                maxlength="200"
+                placeholder="Filename or excerpt text"
+            /></label>
+            <label
+              >Approved use<select id="material-filter">
+                <option value="all">All sources</option>
+                <option value="review">Needs review</option>
+                <option value="approved">All approved sources</option>
+                <option value="personal">Approved personal experience</option>
+                <option value="style">Approved writing style</option>
+                <option value="reference">Approved background reference</option>
+              </select></label
+            >
+            <button>Search sources</button
+            ><button id="clear-material-filter" type="button" class="secondary">
+              Clear filters
+            </button>
+          </form>
+          <p id="material-filter-status" class="help" role="status"></p>
+          <div
+            id="material-list"
+            tabindex="-1"
+            aria-label="Writing source library"
+          ></div>
+        </section>
+        <section id="connections" class="view" hidden>
+          <div class="section">
+            <h2>Your Gmail connection</h2>
+            <p id="gmail-state">Checking authorization…</p>
+            <p class="intro">
+              Connect the same email you use on applications to read
+              verification codes and receive batch reports. Being signed into
+              Gmail in a browser does not grant background access.
+            </p>
+            <label class="upload"
+              >Google Desktop OAuth client JSON<input
+                id="gmail-client-upload"
+                type="file"
+                accept="application/json,.json"
+            /></label>
+            <p class="help">
+              Create a Desktop app OAuth client with the Gmail API enabled in
+              your Google Cloud project. The credentials stay in private
+              storage.
+              <a
+                href="https://developers.google.com/workspace/gmail/api/quickstart/python"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Google setup instructions</a
+              >.
+            </p>
+            <p>
+              Then run this from the project folder in a terminal on the
+              computer running the worker:
+            </p>
+            <pre
+              tabindex="0"
+              aria-label="Gmail connection command"
+            ><code>.venv/bin/python -m hireme gmail connect</code></pre>
+            <p class="help">
+              Google will open a consent screen. Select your confirmed
+              application email and authorize reading email and sending reports.
+              Testing-mode OAuth tokens generally expire after seven days;
+              finish the personal-use OAuth setup before relying on unattended
+              runs.
+            </p>
+          </div>
+          <form id="mail-settings-form" class="section">
+            <h2>Email automation</h2>
+            <label class="confirmation"
+              ><input name="gmail_verification" type="checkbox" /> Retrieve
+              matching email codes for supported application verification
+              steps.</label
+            ><label class="confirmation"
+              ><input name="gmail_reports" type="checkbox" /> Email me a report
+              after each batch, including paused and failed batches.</label
+            ><button type="submit">Save email preferences</button>
+            <p class="help">
+              Codes stay out of Claude prompts and logs. Unsupported
+              verification steps remain held for manual handling.
+            </p>
+          </form>
+          <div class="section">
+            <h2>Batch report delivery</h2>
+            <div id="report-delivery"></div>
+            <button id="flush-reports" class="secondary">
+              Send queued reports
+            </button>
+          </div>
+        </section>
+        <section id="settings" class="view" hidden>
+          <form id="settings-form">
+            <div class="form-grid">
+              <label
+                >Locations, one per line<textarea
+                  name="locations"
+                  rows="4"
+                ></textarea></label
+              ><label
+                >Summer 2027 locations<textarea
+                  name="summer_2027_locations"
+                  rows="3"
+                ></textarea></label
+              ><label
+                >Locations during school<textarea
+                  name="school_locations"
+                  rows="3"
+                ></textarea></label
+              ><label
+                >Employers on your resume<textarea
+                  name="prior_employers"
+                  rows="4"
+                ></textarea></label
+              ><label
+                >Role keywords, one per line<textarea
+                  name="roles"
+                  rows="4"
+                ></textarea></label
+              ><label
+                >Seniority keywords, one per line<textarea
+                  name="seniority"
+                  rows="3"
+                  required
+                ></textarea></label
+              ><label
+                >Never apply to, one company per line<textarea
+                  name="skip_companies"
+                  rows="4"
+                ></textarea></label
+              ><label
+                >Interviewing with, one company per line<textarea
+                  name="interview_companies"
+                  rows="4"
+                ></textarea></label
+              ><label
+                >Signed-in portal hosts<textarea
+                  name="signed_in_portals"
+                  rows="3"
+                ></textarea>
+              </label>
+              <div id="company-alias-editor" data-preference-field>
+                <h3>Alternate company names</h3>
+                <p class="help">
+                  Group different names for the same employer so exclusions and
+                  company limits apply consistently. For example, map “Acme Inc”
+                  to “Acme”.
+                </p>
+                <div id="company-alias-rows"></div>
+                <div class="actions">
+                  <button
+                    id="add-company-alias"
+                    type="button"
+                    class="secondary"
+                  >
+                    Add another name
+                  </button>
+                  <button
+                    id="alias-json-toggle"
+                    type="button"
+                    class="secondary"
+                    aria-expanded="false"
+                    aria-controls="alias-json-field"
+                  >
+                    Edit as JSON
+                  </button>
+                </div>
+                <label id="alias-json-field" hidden
+                  >Company aliases (JSON object)<textarea
+                    name="company_aliases"
+                    rows="5"
+                  ></textarea>
+                </label>
+                <p
+                  id="alias-error"
+                  class="error-message"
+                  role="alert"
+                  hidden
+                ></p>
+              </div>
+              <label
+                >Full-time minimum USD/year<input
+                  name="min_annual_usd"
+                  type="number"
+                  min="0" /></label
+              ><label
+                >Internship minimum USD/hour<input
+                  name="min_hourly_usd"
+                  type="number"
+                  min="0" /></label
+              ><label
+                >Maximum required professional years<input
+                  name="max_years_required"
+                  type="number"
+                  min="0"
+                  step="0.1" /></label
+              ><label
+                >Minimum fit score<input
+                  name="min_fit_score"
+                  type="number"
+                  min="0"
+                  max="100" /></label
+              ><label
+                >Lifetime applications per company<input
+                  name="max_per_company"
+                  type="number"
+                  min="1" /></label
+              ><label
+                >Company cooldown, days<input
+                  name="company_cooldown_days"
+                  type="number"
+                  min="1" /></label
+              ><label
+                >Hours between batches<input
+                  name="schedule_hours"
+                  type="number"
+                  min="1"
+                  max="24" /></label
+              ><label>Timezone<input name="timezone" required /></label
+              ><label
+                >Time budget per batch, minutes<input
+                  name="cycle_timeout_seconds"
+                  type="number"
+                  min="0.016666666666666666"
+                  max="1440"
+                  step="any"
+                  required
+                /><span class="help"
+                  >Discovery and application steps share this budget. Progress
+                  stays recorded when a batch stops.</span
+                ></label
+              ><label
+                >Attempt ceiling per batch<input
+                  name="max_attempts_per_cycle"
+                  type="number"
+                  min="1"
+                  max="50" /></label
+              ><label
+                >Model requests per batch<input
+                  name="max_model_requests_per_cycle"
+                  type="number"
+                  min="1"
+                  max="200" /></label
+              ><label
+                >Model requests per day<input
+                  name="max_model_requests_per_day"
+                  type="number"
+                  min="1"
+                  max="500" /></label
+              ><label
+                >API output tokens per request<input
+                  name="max_output_tokens"
+                  type="number"
+                  min="1"
+                  max="8000" /></label
+              ><label
+                >Cycle target<input
+                  name="target_per_cycle"
+                  type="number"
+                  min="1" /></label
+              ><label
+                >Cycle ceiling<input
+                  name="max_per_cycle"
+                  type="number"
+                  min="1"
+                  max="50" /></label
+              ><label
+                >Daily target<input
+                  name="target_per_day"
+                  type="number"
+                  min="1" /></label
+              ><label
+                >Daily ceiling<input
+                  name="max_per_day"
+                  type="number"
+                  min="1"
+                  max="100" /></label
+              ><label
+                >Browser<select name="browser_channel">
+                  <option value="chrome">Google Chrome</option>
+                  <option value="chromium">Bundled Chromium</option>
+                  <option value="system-chromium">System Chromium (Pi)</option>
+                </select></label
+              >
+            </div>
+            <fieldset class="section">
+              <legend>Context and writing</legend>
+              <label class="confirmation"
+                ><input name="employer_accounts" type="checkbox" /> Create and
+                reuse employer accounts with my confirmed email when a supported
+                account form is required. Passwords stay on this computer.
+                Agreement checkboxes and unsupported sign-in steps require
+                manual handling.</label
+              ><label class="confirmation"
+                ><input name="tailored_writing" type="checkbox" /> Adapt answers
+                in the style of my approved writing, with a factual support
+                check.</label
+              ><label class="confirmation"
+                ><input name="contextual_preferences" type="checkbox" /> Choose
+                matching roles, engineering tracks and local work options from
+                my confirmed skills and availability.</label
+              ><label class="confirmation"
+                ><input name="cover_letters" type="checkbox" /> Generate a
+                grounded cover letter when an application requires one. Requires
+                tailored writing above.</label
+              ><label
+                >Maximum cover-letter words<input
+                  name="cover_letter_words"
+                  type="number"
+                  min="100"
+                  max="350" /></label
+              ><label class="confirmation"
+                ><input name="headless" type="checkbox" /> Run the application
+                browser in the background.</label
+              >
+            </fieldset>
+            <p class="help">
+              Targets are goals, not guarantees. Eligibility, company limits and
+              unknown answers always take priority. Use “hireme login URL” in a
+              terminal to sign into a dedicated portal session.
+            </p>
+            <div class="preferences-savebar">
+              <button type="submit">Save preferences</button>
+              <button
+                type="button"
+                id="discard-preferences"
+                class="secondary"
+                disabled
+              >
+                Discard changes
+              </button>
+              <span
+                class="draft-status"
+                data-draft-for="settings-form"
+                role="status"
+              ></span>
+            </div>
+          </form>
+          <div class="section">
+            <h2>Automatic batch schedule</h2>
+            <p class="help">
+              Save your preferences first, then apply the saved interval to this
+              computer’s scheduler. Applying a schedule keeps paused
+              applications paused. Your dashboard can be closed while the
+              computer remains awake.
+            </p>
+            <p id="schedule-state" role="status" class="help">
+              Checking installed schedule…
+            </p>
+            <div class="actions">
+              <button
+                id="apply-schedule"
+                type="button"
+                class="secondary"
+                disabled
+              >
+                Apply saved interval
+              </button>
+              <button id="check-schedule" type="button" class="secondary">
+                Check schedule
+              </button>
+            </div>
+          </div>
+          <div class="section backup-tools">
+            <p class="eyebrow">KEEP YOUR HISTORY WITH YOU</p>
+            <h2>Your data and backups</h2>
+            <p class="intro">
+              Download a consistent copy of your application history, confirmed
+              facts, documents and reviewed sources. Restoring a backup starts
+              with applications paused.
+            </p>
+            <p class="help">
+              The archive contains personal information and is not encrypted.
+              Save it somewhere private. API keys, Gmail authorization, employer
+              passwords and browser sessions are excluded.
+            </p>
+            <button
+              id="download-backup"
+              class="secondary"
+              type="button"
+              disabled
+            >
+              Download history backup <span aria-hidden="true">↓</span>
+            </button>
+            <p id="backup-state" class="help">Checking worker status…</p>
+            <details class="section" id="backup-check-panel">
+              <summary>Check a backup before moving it</summary>
+              <p class="help">
+                Check the archive, ledger and document references with a
+                temporary restore. Your current workspace stays unchanged. The
+                temporary copy is removed after the check.
+              </p>
+              <form id="backup-check-form" method="post" class="form-grid">
+                <label
+                  >History backup ZIP<input
+                    id="backup-check-file"
+                    type="file"
+                    disabled
+                    accept=".zip,application/zip"
+                    required
+                    aria-describedby="backup-check-help"
+                /></label>
+                <p id="backup-check-help" class="help">
+                  Choose a private history backup up to 1 GiB. Checking a large
+                  archive may take a little time.
+                </p>
+                <button type="submit" class="secondary" disabled>
+                  Check backup
+                </button>
+              </form>
+              <p id="backup-check-status" class="help" role="status"></p>
+              <div id="backup-check-result" hidden></div>
+            </details>
+          </div>
+        </section>
+        <section id="providers" class="view" hidden>
+          <p class="intro">
+            Choose your connection explicitly. CLI subscriptions and API billing
+            are separate. No inherited API keys are used.
+          </p>
+          <form id="provider-form" class="form-grid">
+            <label
+              >Provider<select name="provider">
+                <option value="claude-cli">Claude Code · subscription</option>
+                <option value="codex-cli">
+                  Codex CLI · ChatGPT subscription
+                </option>
+                <option value="anthropic-api">Anthropic API · paid key</option>
+                <option value="openai-api">OpenAI API · paid key</option>
+              </select></label
+            ><label
+              >Model ID<input
+                name="provider_model"
+                placeholder="Model identifier"
+                aria-describedby="provider-model-help" /><span
+                id="provider-model-help"
+                class="help"
+              ></span></label
+            ><label
+              >Run on<select name="deployment">
+                <option value="local">This computer</option>
+                <option value="pi">Raspberry Pi / Linux systemd</option>
+              </select></label
+            ><label id="provider-key-field"
+              >API key (API providers only)<input
+                name="key"
+                type="password"
+                autocomplete="new-password"
+            /></label>
+            <p class="help wide">
+              Keys are stored in a private local file, never returned to this
+              page or included in backups. API mode makes paid requests to the
+              selected vendor. Set a spending limit in that vendor’s account
+              too. CLI request caps do not guarantee remaining subscription
+              credits.
+            </p>
+            <button type="submit">Save connection</button>
+          </form>
+          <div class="section">
+            <h2>Install and sign in</h2>
+            <p>
+              Install the selected CLI using its official instructions, then
+              sign in in a terminal on the machine that runs the worker.
+            </p>
+            <p>
+              <a
+                href="https://code.claude.com/docs/en/setup"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Claude Code setup</a
+              >
+              ·
+              <a
+                href="https://developers.openai.com/codex/cli"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Codex CLI setup</a
+              >
+            </p>
+            <pre
+              id="provider-instructions"
+              tabindex="0"
+              aria-label="Model login instructions"
+            >
+claude auth login</pre
+            >
+            <p id="provider-state"></p>
+            <div class="callout">
+              <h3>Daily worker request budget</h3>
+              <p id="model-request-usage" role="status"></p>
+              <p id="model-request-reset" class="help"></p>
+              <p class="help">
+                Counts successful and failed model requests across providers in
+                this private ledger. Change the daily and per-batch caps in
+                Preferences.
+              </p>
+            </div>
+            <button id="check-provider" class="secondary">
+              Check installation and login
+            </button>
+            <button id="remove-provider-key" class="secondary">
+              Remove saved API key
+            </button>
+          </div>
+          <div class="section">
+            <h2>Ready to work</h2>
+            <p>
+              Finish setup with submissions paused, or start automatic batches
+              now. The worker continues with supported applications and holds
+              unknown answers for you.
+            </p>
+            <button id="finish-paused" class="secondary">
+              Finish setup · stay paused
+            </button>
+            <button id="finish-start">Start scheduled applications</button>
+            <p class="help">
+              For Pi: finish paused on the Pi, run the Pi configuration commands
+              in the README, then start. Changing “Run on” does not transfer
+              data or install an operating system.
+            </p>
+          </div>
+        </section>
+        <footer class="workspace-footer">
+          <span>Small steps. Real progress.</span
+          ><span>Application desk · Your private search workspace</span>
+        </footer>
+      </main>
+    </div>
+    <dialog
+      id="job-dialog"
+      class="job-dialog"
+      aria-labelledby="job-dialog-title"
+    >
+      <header class="dialog-head">
+        <div>
+          <p class="eyebrow">OPPORTUNITY DETAILS</p>
+          <h2 id="job-dialog-title"></h2>
+          <p id="job-dialog-company" class="help"></p>
+        </div>
+        <button
+          id="close-job-dialog"
+          class="secondary icon-button"
+          type="button"
+          aria-label="Close opportunity details"
+          autofocus
+        >
+          ×
+        </button>
+      </header>
+      <div class="dialog-body">
+        <div id="job-dialog-state"></div>
+        <div id="job-dialog-guidance" class="callout" hidden></div>
+        <dl class="opportunity-facts">
+          <div>
+            <dt>Location</dt>
+            <dd id="job-dialog-location"></dd>
+          </div>
+          <div>
+            <dt>Last recorded fit</dt>
+            <dd id="job-dialog-fit"></dd>
+          </div>
+          <div>
+            <dt>Discovered</dt>
+            <dd id="job-dialog-discovered"></dd>
+          </div>
+        </dl>
+        <p class="help">
+          Recorded fit is the worker’s last keyword-based assessment. Check the
+          saved posting below to compare current saved facts and preferences.
+          Fit does not predict employer interest.
+        </p>
+        <details id="opportunity-notes" class="section">
+          <summary>Your private notes</summary>
+          <p id="opportunity-note-help" class="help">
+            Keep reminders about this role. Notes stay in your private workspace
+            and history backups; they are not used in applications or sent to a
+            model. Up to 4,000 characters. Save an empty note to clear it.
+          </p>
+          <div id="opportunity-note-editor"></div>
+        </details>
+        <h3>About the opportunity</h3>
+        <p id="job-dialog-description" class="posting-description"></p>
+        <div class="section">
+          <h3>Check your current preferences</h3>
+          <p class="help">
+            Uses the saved posting, confirmed facts and saved preferences. No
+            model request, live page visit or application is sent. Unsaved edits
+            are not included.
+          </p>
+          <button id="check-saved-posting" type="button" class="secondary">
+            Check saved posting
+          </button>
+          <div
+            id="posting-check-result"
+            class="callout"
+            role="status"
+            hidden
+          ></div>
+        </div>
+        <details id="job-dialog-diagnostics" hidden>
+          <summary>Recorded details</summary>
+          <p id="job-dialog-reason" class="help"></p>
+        </details>
+      </div>
+      <footer class="dialog-footer">
+        <div class="company-action">
+          <button
+            id="skip-job-company"
+            type="button"
+            class="secondary"
+            aria-describedby="skip-company-help"
+          >
+            Skip this company
+          </button>
+          <p id="skip-company-help" class="help"></p>
+        </div>
+        <a
+          id="job-dialog-link"
+          class="button-link"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Open official posting <span aria-hidden="true">↗</span></a
+        ><span id="job-dialog-demo" class="help" hidden
+          >Invented opportunity for this sample workspace.</span
+        >
+      </footer>
+    </dialog>
+    <dialog
+      id="tool-dialog"
+      class="job-dialog tool-dialog"
+      aria-labelledby="tool-dialog-title"
+      aria-describedby="tool-dialog-help"
+    >
+      <header class="dialog-head">
+        <div>
+          <h2 id="tool-dialog-title">Find a tool</h2>
+          <p id="tool-dialog-help" class="help">
+            Search by what you want to do. Choosing a tool opens its section.
+          </p>
+        </div>
+        <button
+          id="close-tool-dialog"
+          type="button"
+          class="secondary"
+          aria-label="Close tool search"
+        >
+          Close
+        </button>
+      </header>
+      <div class="tool-search-content">
+        <label for="tool-search">What would you like to do?</label>
+        <input
+          id="tool-search"
+          type="search"
+          maxlength="100"
+          autocomplete="off"
+          placeholder="Try resume, backup or questions"
+          aria-describedby="tool-search-count"
+        />
+        <p
+          id="tool-search-count"
+          class="help"
+          role="status"
+          aria-live="polite"
+        ></p>
+        <div id="tool-search-results"></div>
+        <p class="help">
+          Use Tab or the arrow keys to browse, Enter to open, and Escape to
+          close. Open this search with Ctrl or ⌘ K.
+        </p>
+      </div>
+    </dialog>
+  </body>
+</html>

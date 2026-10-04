@@ -12,4 +12,4 @@ else
   .venv/bin/python -m hireme pi configure
 fi
 printf '\nOpen the printed dashboard URL. Import your resume, confirm facts once, and enable automatic applications.\n'
-exec .venv/bin/python -m hireme dashboard
+exec .venv/bin/python -m hireme dashboard --open

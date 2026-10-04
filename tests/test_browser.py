@@ -25,6 +25,9 @@ def ats(request):
           form.append(button);document.body.append(form);
           form.addEventListener('submit',async event=>{event.preventDefault();if(controls.map(x=>x.value).join('')!=='ABC12345')return;
             await fetch('/submit',{method:'POST',body:new FormData(original)});document.body.innerHTML='<h1>Thank you for applying. Your application has been received.</h1>';});return;}let f=''' )
+    if getattr(request,'param',None)=='spam':
+        html=html.replace(b"h.textContent='Thank you for applying. Your application has been received.';",
+            b'h.textContent="We couldn\'t submit your application. Your application submission was flagged as possible spam.";')
     class H(BaseHTTPRequestHandler):
         def log_message(self,*a):pass
         def do_GET(self):
@@ -408,7 +411,7 @@ def test_without_gmail_connection_verification_is_held_and_not_retried(store,ats
     assert store.db.execute('SELECT state FROM applications').fetchone()[0]=='awaiting_verification'
 
 
-@pytest.mark.parametrize('reason',['model_budget_exhausted','provider_rate_limited'])
+@pytest.mark.parametrize('reason',['model_budget_exhausted','provider_rate_limited','cycle_timeout'])
 def test_model_budget_and_rate_limit_stop_before_employer_write(store,ats,monkeypatch,reason):
     class Model:
         def __init__(self,*args):pass
@@ -606,14 +609,10 @@ def test_submission_waits_for_delayed_ats_confirmation(store,ats):
         assert 'received' in text
 
 
+@pytest.mark.parametrize('ats',['spam'],indirect=True)
 def test_explicit_ats_spam_rejection_is_not_uncertain_or_retried(store,ats):
     with Browser(store,test_url=ats[0]) as b:
         job=local_job(store,ats)
-        original=b._wait_submission_outcome
-        def rejection(job,accept_verification=True):
-            b.page.set_content("We couldn't submit your application. Your application submission was flagged as possible spam.")
-            return original(job,accept_verification)
-        b._wait_submission_outcome=rejection
         assert b.apply(job)=='not_submitted'
         with pytest.raises(Blocked):b.apply(job)
     app=store.db.execute('SELECT state,confirmation FROM applications').fetchone()

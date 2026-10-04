@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .util import Blocked, company_key
+from .util import Blocked, company_normalizer
 
 LOCATIONS = {
  "San Francisco Bay Area": r"san francisco|\bsf\b|bay area|palo alto|mountain view|menlo park|redwood city|san mateo|sunnyvale|santa clara|san jose|oakland|berkeley|cupertino|foster city|emeryville|burlingame",
@@ -76,8 +76,7 @@ def eligible(job,s,facts):
             raise Blocked("compensation_unknown")
         if pay["min"]<floor: raise Blocked("compensation_mismatch")
     # Every pipeline uses the same exact/alias company policy.
-    aliases={company_key(k):company_key(v) for k,v in s["company_aliases"].items()}
-    norm=lambda x:aliases.get(company_key(x),company_key(x))
+    norm=company_normalizer(s['company_aliases'])
     if norm(job["company"]) in {norm(x) for x in s["skip_companies"]+s["interview_companies"]}:
         raise Blocked("company_blocked")
     score,evidence=fit_score(job,facts)

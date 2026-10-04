@@ -19,13 +19,13 @@ The `hireme/` package stays flat so existing imports and command wrappers remain
 
 | Responsibility | Modules |
 | --- | --- |
-| Entry points and local desk | `cli.py`, `server.py`, `setup_status.py`, `static/` |
-| Applicant documents and writing | `onboarding.py`, `materials.py`, `letters.py`, `answers.py` |
+| Entry points and local desk | `cli.py`, `server.py`, `setup_status.py`, `demo.py`, `doctor.py`, `recovery.py`, `ledger.py`, `saved_views.py`, `outcome_ledger.py`, `run_ledger.py`, `source_ledger.py`, `document_controls.py`, `document_downloads.py`, `posting_check.py`, `presentation.py`, `static/` |
+| Applicant documents, writing and question review | `onboarding.py`, `materials.py`, `material_ledger.py`, `letters.py`, `answers.py`, `saved_answers.py`, `question_ledger.py` |
 | Inference and credentials | `provider.py`, `connections.py` |
-| Employer accounts and encrypted transfer | `accounts.py`, `account_transfer.py` |
-| Application execution | `worker.py`, `browser.py`, `policy.py` |
-| Discovery | `discovery.py`, `portals.py`, `net.py` |
-| Persistence and migration | `store.py`, `config.py`, `backup.py`, `migration.py`, `util.py` |
+| Employer accounts, metadata review and encrypted transfer | `accounts.py`, `account_ledger.py`, `account_transfer.py`, `account_transfer_web.py` |
+| Application execution and company boundaries | `worker.py`, `browser.py`, `policy.py`, `company_controls.py` |
+| Discovery | `discovery.py`, `posting_import.py`, `opportunity_search.py`, `portals.py`, `net.py` |
+| Persistence and migration | `store.py`, `config.py`, `backup.py`, `backup_inspection.py`, `migration.py`, `util.py` |
 | Email | `gmail.py`, `reports.py` |
 | Local/Pi scheduling | `scheduler.py`, `pi.py` |
 

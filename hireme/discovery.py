@@ -92,6 +92,8 @@ def source_result(store,sid,jobs=None,error=None):
         for job in jobs: store.upsert_job(job)
     store.db.execute("INSERT INTO sources VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,checked=excluded.checked,error=excluded.error,payload=excluded.payload",
                      (sid,"error" if error else "ok",now(),str(error or "")[:500],json.dumps({"jobs":len(jobs or [])})))
+    results=getattr(store,'discovery_results',None)
+    if results is not None:results[sid]='error' if error else 'ok'
 
 
 def sweep_boards(store,repo,ats=None,limit=None,deadline_seconds=1800):

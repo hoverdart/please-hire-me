@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+import stat
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,14 @@ def digest(value) -> str:
 
 def company_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def company_normalizer(aliases):
+    mapping = {company_key(key): company_key(value) for key, value in aliases.items()}
+    def normalize(value):
+        key = company_key(value)
+        return mapping.get(key, key)
+    return normalize
 
 
 def private_dir(path: Path) -> Path:
@@ -107,3 +116,38 @@ def write_private_blob(path: Path, data: bytes) -> None:
         finally:os.close(directory_fd)
     finally:
         Path(tmp).unlink(missing_ok=True)
+
+
+def restore_imported_blob(path: Path, data: bytes) -> bool:
+    """Only an explicit import may restore the exact bytes for a hash-named source."""
+    expected = hashlib.sha256(data).hexdigest()
+    if not re.fullmatch(re.escape(expected) + r'\.(?:pdf|docx|pptx|txt|md)', path.name):
+        raise ValueError('Unsafe imported source destination')
+    private_dir(path.parent)
+    if path.is_symlink(): raise ValueError('Unsafe imported source destination')
+    if not path.exists():
+        write_private_blob(path, data)
+        return False
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, 'rb') as existing:
+            info = os.fstat(existing.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError('Choose a regular imported source destination')
+            if existing.read(len(data) + 1) == data and stat.S_IMODE(info.st_mode) == 0o600: return False
+    except PermissionError:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError('Unsafe imported source destination') from None
+    except OSError: raise ValueError('Stored source could not be checked') from None
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix='.source-repair-')
+    try:
+        with os.fdopen(descriptor, 'wb') as repaired:
+            repaired.write(data); repaired.flush(); os.fsync(repaired.fileno())
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError('Unsafe imported source destination')
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try: os.fsync(directory_fd)
+        finally: os.close(directory_fd)
+    finally: Path(temporary).unlink(missing_ok=True)
+    return True
