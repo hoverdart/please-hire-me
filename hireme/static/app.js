@@ -4970,7 +4970,7 @@ $("#recover-worker").onclick = async (event) => {
 
 function renderCycleFunnel() {
   const parent=$("#cycle-funnel"),run=state.cycle_funnel;parent.replaceChildren();
-  $("#cycle-funnel-status").textContent=run ? `${run.mode === "prepare" ? "Preparation" : "Live"} · ${run.status} · ${run.run_id.slice(0,8)}` : "No recorded cycle yet.";
+  $("#cycle-funnel-status").textContent=run ? `${run.mode === "prepare" ? "Preparation" : "Live"} · ${run.status} · ${run.run_id.slice(0,8)}${run.reconciled ? ` · ${run.reconciled} outcome${run.reconciled === 1 ? "" : "s"} updated after review` : ""}` : "No recorded cycle yet.";
   if (!run) return;
   for (const [key,label] of [["discovered","New discoveries"],["eligible","Eligible"],["attempted","Browser attempted"],["prepared","Prepared"],["confirmed","Confirmed"],["blocked","Attempt blocked"],["uncertain","Uncertain"]]) {
     const item=el("div");item.append(el("dt",label),el("dd",run[key] == null ? "Not recorded" : String(run[key])));parent.append(item);

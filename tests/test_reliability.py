@@ -345,3 +345,42 @@ def test_text_prefill_value_does_not_change_binding_meaning(store,job):
     store.put_facts({'school':'Confirmed University'})
     f=field();resolve(store,job['host'],f,Model(),context=job)
     assert resolve(store,job['host'],{**f,'step_base':'Unrelated prefill'},context=job)['value']=='Confirmed University'
+
+
+@pytest.mark.parametrize('submitted',[True,False])
+def test_latest_funnel_reflects_review_without_rewriting_the_attempt(store,job,package,submitted):
+    from hireme.util import now
+    store.db.execute('INSERT INTO runs(id,started,status,detail) VALUES(?,?,?,?)',('review-run',now(),'finished','{}'))
+    store.event('application_started',job['id'],{'run_id':'review-run'})
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    store.event('application_finished',job['id'],{'run_id':'review-run','outcome':'unknown'})
+    assert cycle_funnel(store)['uncertain']==1
+    store.reconcile(aid,submitted,'Inspected the employer outcome manually')
+    result=cycle_funnel(store)
+    assert result['attempted']==1 and result['reconciled']==1 and result['uncertain']==0
+    assert result['confirmed']==int(submitted) and result['not_submitted']==int(not submitted)
+    assert result['recorded_outcomes']['unknown']==1 and result['recorded_outcomes']['confirmed']==0
+    original=json.loads(store.db.execute("SELECT detail FROM events WHERE kind='application_finished'").fetchone()[0])
+    assert original['outcome']=='unknown'
+
+
+def test_funnel_does_not_credit_a_different_jobs_reconciliation(store,job,package):
+    from hireme.util import now
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    store.db.execute('INSERT INTO runs(id,started,status,detail) VALUES(?,?,?,?)',('other-run',now(),'finished','{}'))
+    store.event('application_started','different-job',{'run_id':'other-run'})
+    store.reconcile(aid,True,'Inspected receipt from the older unrelated application')
+    result=cycle_funnel(store)
+    assert result['attempted']==1 and result['confirmed']==0 and result['reconciled']==0
+
+
+@pytest.mark.parametrize('finished',[True,False])
+def test_funnel_does_not_reuse_review_from_before_the_current_attempt(store,job,package,finished):
+    from hireme.util import now
+    store.db.execute('INSERT INTO runs(id,started,status,detail) VALUES(?,?,?,?)',('new-run',now(),'finished','{}'))
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    store.reconcile(aid,True,'A prior attempt had its receipt inspected')
+    store.event('application_started',job['id'],{'run_id':'new-run'})
+    if finished:store.event('application_finished',job['id'],{'run_id':'new-run','outcome':'blocked'})
+    result=cycle_funnel(store)
+    assert result['blocked']==int(finished) and result['confirmed']==0 and result['reconciled']==0

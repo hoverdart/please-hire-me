@@ -2628,3 +2628,33 @@ def test_supplied_employer_credentials_auth_retry_duplicate_save_and_secret_clea
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             browser.close()
     finally:process.terminate();process.join(5)
+
+
+def test_latest_cycle_displays_reviewed_receipt_without_erasing_original_outcome(store,job,package):
+    from hireme.util import now
+    from playwright.sync_api import sync_playwright,expect
+    store.db.execute('INSERT INTO runs(id,started,status,detail) VALUES(?,?,?,?)',('receipt-review-run',now(),'finished','{}'))
+    store.event('application_started',job['id'],{'run_id':'receipt-review-run'})
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    store.event('application_finished',job['id'],{'run_id':'receipt-review-run','outcome':'unknown'})
+    sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+    process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port));process.start()
+    base=f'http://127.0.0.1:{port}'
+    try:
+        for _ in range(50):
+            try:urllib.request.urlopen(base).close();break
+            except OSError:time.sleep(.1)
+        with sync_playwright() as p:
+            browser=p.chromium.launch();page=browser.new_page(viewport={'width':390,'height':844});errors=[]
+            page.on('pageerror',lambda error:errors.append(str(error)))
+            page.goto(base+'/#token=fixture-capability')
+            confirmed=page.locator('#cycle-funnel > div').filter(has=page.get_by_text('Confirmed',exact=True)).locator('dd')
+            expect(confirmed).to_have_text('0')
+            store.reconcile(aid,True,'Inspected the employer receipt in the saved screenshot')
+            page.evaluate('refresh()')
+            expect(confirmed).to_have_text('1')
+            expect(page.locator('#cycle-funnel-status')).to_contain_text('1 outcome updated after review')
+            assert json.loads(store.db.execute("SELECT detail FROM events WHERE kind='application_finished'").fetchone()[0])['outcome']=='unknown'
+            assert not errors and page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+            browser.close()
+    finally:process.terminate();process.join(5)

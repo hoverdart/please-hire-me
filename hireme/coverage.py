@@ -9,22 +9,42 @@ def cycle_funnel(store):
     if not run:return None
     try:detail=json.loads(run['detail'] or '{}')
     except ValueError:detail={}
-    attempted=set();blocked=set();outcomes={};screened=set()
-    for event in store.db.execute("SELECT kind,subject,detail FROM events WHERE timestamp>=? AND kind IN ('application_started','application_finished','job_screening_blocked')",(run['started'],)):
+    attempted=set();blocked=set();outcomes={};screened=set();finished_sequences={};started_sequences={}
+    for event in store.db.execute("SELECT seq,kind,subject,detail FROM events WHERE timestamp>=? AND kind IN ('application_started','application_finished','job_screening_blocked') ORDER BY seq",(run['started'],)):
         try:data=json.loads(event['detail'])
         except ValueError:continue
         if data.get('run_id')!=run['id']:continue
-        if event['kind']=='application_started':attempted.add(event['subject'])
+        if event['kind']=='application_started':
+            attempted.add(event['subject']);started_sequences[event['subject']]=event['seq']
         elif event['kind']=='job_screening_blocked':screened.add(event['subject'])
         elif event['kind']=='application_finished':
             outcome=data.get('outcome','error');outcomes[event['subject']]=outcome
+            finished_sequences[event['subject']]=event['seq']
             if outcome in {'blocked','error'}:blocked.add(event['subject'])
+    recorded=dict(outcomes)
+    reconciled=set()
+    # The latest cycle should show the subsequently verified outcome, while
+    # keeping its original finish event/report unchanged. Scope reconciliation
+    # to its current application and require it to follow that run's finish.
+    for event in store.db.execute("SELECT e.seq,e.detail,a.job_id,a.state FROM events e JOIN applications a ON a.id=e.subject WHERE e.kind='human_reconciliation' AND e.timestamp>=? ORDER BY e.seq",(run['started'],)):
+        job_id=event['job_id']
+        if job_id not in attempted or event['seq']<=max(finished_sequences.get(job_id,0),started_sequences.get(job_id,0)):continue
+        try:data=json.loads(event['detail'])
+        except ValueError:continue
+        if not isinstance(data,dict):continue
+        submitted=data.get('submitted')
+        if type(submitted) is not bool:continue
+        outcome='confirmed' if submitted else 'not_submitted'
+        if event['state']!=outcome:continue
+        outcomes[job_id]=outcome;blocked.discard(job_id);reconciled.add(job_id)
     uncertain=sum(1 for row in store.db.execute("SELECT job_id,state FROM applications WHERE state IN ('unknown','submitting','awaiting_verification')") if row['job_id'] in attempted)
     counts={k:sum(v==k for v in outcomes.values()) for k in ('prepared','confirmed')}
     return {'run_id':run['id'],'status':run['status'],'mode':detail.get('mode','live'),
         'discovered':detail.get('discovered'), 'eligible':detail.get('eligible'),
         'attempted':len(attempted),'prepared':counts['prepared'],'confirmed':counts['confirmed'],
-        'blocked':len(blocked),'uncertain':uncertain,'screened_out':len(screened)}
+        'blocked':len(blocked),'uncertain':uncertain,'screened_out':len(screened),
+        'not_submitted':sum(value=='not_submitted' for value in outcomes.values()),
+        'reconciled':len(reconciled),'recorded_outcomes':{kind:sum(value==kind for value in recorded.values()) for kind in ('prepared','confirmed','unknown','blocked','error')}}
 
 def coverage(store):
     groups={}
