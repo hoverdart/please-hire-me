@@ -58,7 +58,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                             try:
                                 score,evidence=eligible(job,s,store.facts())
                                 store._check_budget(job,s)
-                                store.db.execute("UPDATE jobs SET score=?,reason='' WHERE id=?",(score,job['id']))
+                                store.db.execute("UPDATE jobs SET score=?,reason='',status=CASE WHEN status='blocked' THEN 'discovered' ELSE status END WHERE id=?",(score,job['id']))
                                 ranked.append((score,job))
                             except Blocked as e:
                                 store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail,'screening');reasons[e.reason]=reasons.get(e.reason,0)+1

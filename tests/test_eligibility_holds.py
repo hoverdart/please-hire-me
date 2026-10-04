@@ -102,6 +102,19 @@ def test_large_excluded_queue_groups_writes_and_phone_edit_consumes_no_attempts(
     assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
 
 
+def test_rescreened_eligible_job_returns_to_ready_queue_without_browser_or_model(store,job):
+    store.block(job['id'],'missing_fact')
+    hold(store,job,'missing_fact')
+    store.put_facts({'school':'Confirmed University'})
+    class ForbiddenBrowser:
+        def __init__(self,*args):raise AssertionError('Screening-only run opened a browser')
+    result=cycle(store,Path.cwd(),discover=False,live=False,limit=0,browser_factory=ForbiddenBrowser)
+    current=store.db.execute('SELECT status,reason FROM jobs WHERE id=?',(job['id'],)).fetchone()
+    assert result['eligible']==1 and result['attempts']==0
+    assert current['status']=='discovered' and current['reason']==''
+    assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
+
+
 def test_browser_and_model_reservation_stay_outside_screening_transactions(store,job):
     class PreparedBrowser:
         def __init__(self,s):self.store=s
