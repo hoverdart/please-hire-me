@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "provider": "claude-cli",
-  "provider_model": "",
+  "provider_model": "sonnet",
   "deployment": "local",
   "max_attempts_per_cycle": 10,
   "max_model_requests_per_cycle": 40,
@@ -63,5 +63,8 @@
   "max_years_required": 1,
   "model_timeout_seconds": 90,
   "cycle_timeout_seconds": 10800,
-  "employer_accounts": false
+  "employer_accounts": false,
+  "model_effort": "medium",
+  "model_escalation": false,
+  "remote_drafts": false
 }

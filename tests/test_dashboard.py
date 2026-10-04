@@ -2408,6 +2408,9 @@ def test_saved_view_requests_release_queued_preference_refresh_on_success_or_fai
             expect(page.locator('#settings-form')).to_have_attribute('data-saving','true')
             if fails:pending.pop().fulfill(status=503,json={'error':'Synthetic view interruption'})
             else:pending.pop().continue_()
+            # The failed view must release its barrier and finish the queued
+            # server read before the save guard can release its controls.
+            page.wait_for_function('()=>!savedViewBusy && deferredRefresh===null && !refreshing', timeout=20000)
             expect(page.locator('#settings-form')).not_to_have_attribute('data-saving','true')
             expect(score).to_have_value('59');expect(score).to_be_enabled()
             assert page.evaluate('state.settings.min_fit_score')==59 and store.settings()['min_fit_score']==59
