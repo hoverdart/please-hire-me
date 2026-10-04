@@ -9,6 +9,17 @@ from hireme.server import serve
 from pathlib import Path
 
 
+def wait_for_dashboard(process,base,timeout=30):
+    """Wait for a live fixture's HTTP readiness, including slow Pi startup."""
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        if not process.is_alive():raise AssertionError('Dashboard fixture exited before HTTP readiness')
+        try:
+            with urllib.request.urlopen(base,timeout=1):return
+        except OSError:time.sleep(.1)
+    raise AssertionError('Dashboard fixture did not become HTTP-ready within its startup deadline')
+
+
 def pause_first_request(page,pattern,pending):
     """Suspend one request while forwarding later reads through a stable route."""
     intercepted=False
@@ -150,24 +161,22 @@ def test_dashboard_worker_failure_is_visible_and_retryable(store, failure_mode):
     process = multiprocessing.Process(target=launch_worker_failure_fixture, args=(str(store.root), str(Path.cwd()), port, failure_mode)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(base + '/#token=fixture-capability')
-            expect(page.locator('#run')).to_be_enabled(); page.locator('#run').click()
+            expect(page.locator('#run')).to_be_enabled(timeout=15000); page.locator('#run').click()
             for _ in range(50):
                 page.evaluate('refresh()')
                 if page.locator('#worker-error').is_visible(): break
                 page.wait_for_timeout(20)
             expect(page.locator('#worker-error')).to_contain_text('Your last application batch stopped')
             expect(page.locator('#worker-error')).not_to_contain_text('synthetic-private-error-detail')
-            expect(page.locator('#run')).to_be_enabled()
+            expect(page.locator('#run')).to_be_enabled(timeout=15000)
             assert not page.request.get(base + '/api/state', headers={'X-Hireme-Token': 'fixture-capability'}).json()['worker_running']
             page.locator('#run').click(); page.evaluate('refresh()')
-            expect(page.locator('#worker-error')).to_be_hidden(); expect(page.locator('#run')).to_be_enabled()
+            expect(page.locator('#worker-error')).to_be_hidden(); expect(page.locator('#run')).to_be_enabled(timeout=15000)
             assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='fixture_dashboard_cycle'").fetchone()[0] == (2 if failure_mode == 'cleanup' else 1)
             assert not store.db.execute('SELECT * FROM applications').fetchone()
             assert not store.db.execute('SELECT * FROM model_requests').fetchone()
@@ -183,9 +192,7 @@ def test_dashboard_stops_preparation_without_resuming_submissions(store, job):
     process = multiprocessing.Process(target=launch_preparation_fixture, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -276,9 +283,7 @@ def test_find_opportunities_and_stop_without_enabling_submissions(tmp_path):
     process = multiprocessing.Process(target=launch_discovery_fixture, args=(str(root), str(Path(__file__).parent.parent), port))
     process.start(); base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 800}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -336,9 +341,7 @@ def test_question_pages_keep_old_employer_context_and_protect_unsaved_answers(st
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -393,9 +396,7 @@ def test_unresolved_outcome_pages_preserve_old_context_and_require_explicit_veri
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -447,9 +448,7 @@ def test_outcome_evidence_loads_only_on_request_retries_and_preserves_reading_fo
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []; requests = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -491,9 +490,7 @@ def test_compact_holds_preview_opens_complete_ledger_and_keeps_controls_stable(s
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -529,9 +526,7 @@ def test_model_request_budget_counts_all_providers_without_replacing_connection_
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -566,9 +561,7 @@ def test_complete_batch_history_pages_searches_old_notes_and_retries(store):
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []; history_requests = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -613,9 +606,7 @@ def test_complete_source_health_search_pages_retry_and_mobile_layout(store):
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []; requests = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -1055,9 +1046,7 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
     process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page(viewport={'width': 1440, 'height': 1000})
@@ -1122,9 +1111,7 @@ def test_demo_is_read_only_and_export_requires_auth(tmp_path):
     process = multiprocessing.Process(target=launch_demo, args=(str(root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         try: urllib.request.urlopen(base + '/api/export.csv'); assert False
         except urllib.error.HTTPError as error: assert error.code == 403
         try: urllib.request.urlopen(base + '/api/diagnostics'); assert False
@@ -1204,9 +1191,7 @@ def test_dashboard_applies_saved_schedule_without_resuming_and_protects_drafts(s
     process = multiprocessing.Process(target=launch_schedule_fixture, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         try: urllib.request.urlopen(base + '/api/schedule'); assert False
         except urllib.error.HTTPError as error: assert error.code == 403
         with sync_playwright() as p:
@@ -1241,9 +1226,7 @@ def test_unsaved_forms_survive_refresh_and_invalid_aliases_are_actionable(tmp_pa
     process = multiprocessing.Process(target=launch, args=(str(root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -1284,9 +1267,7 @@ def test_company_name_editor_preserves_drafts_and_round_trips_json(tmp_path):
     process = multiprocessing.Process(target=launch, args=(str(root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 800}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -1334,9 +1315,7 @@ def test_essential_facts_optional_toggle_and_provider_fields(tmp_path):
     process = multiprocessing.Process(target=launch, args=(str(root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 390, 'height': 844})
             page.goto(base + '/#token=fixture-capability')
@@ -1387,9 +1366,7 @@ def test_clearing_optional_fact_stops_reuse_and_survives_reload(store):
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page()
             page.goto(base + '/#token=fixture-capability')
@@ -1417,9 +1394,7 @@ def test_opportunity_dialog_and_approved_wording_edits(store, job):
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 390, 'height': 844})
             errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
@@ -1466,9 +1441,7 @@ def test_dashboard_backup_download_restores_paused_and_excludes_credentials(stor
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         for headers in ({}, {'X-Hireme-Token': 'fixture-capability', 'Origin': 'https://attacker.invalid'}):
             request = urllib.request.Request(base + '/api/backup', data=b'{}', headers=headers)
             try: urllib.request.urlopen(request); assert False
@@ -1527,9 +1500,7 @@ def test_full_ledger_search_and_pagination_preserve_old_evidence(store):
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         try: urllib.request.urlopen(base + '/api/jobs'); assert False
         except urllib.error.HTTPError as error: assert error.code == 403
         with sync_playwright() as p:
@@ -1565,9 +1536,7 @@ def test_dashboard_recovers_crashed_worker_and_refuses_live_recovery(store, job,
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with worker_lock(store.root):
             request = urllib.request.Request(base + '/api/recover', data=b'{}', headers={'X-Hireme-Token': 'fixture-capability'})
             try: urllib.request.urlopen(request); assert False
@@ -1600,9 +1569,7 @@ def test_saved_answers_review_withdrawal_and_restricted_browser_storage(store, j
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         try: urllib.request.urlopen(base + '/api/saved-answers'); assert False
         except urllib.error.HTTPError as error: assert error.code == 403
         with sync_playwright() as p:
@@ -1643,9 +1610,7 @@ def test_company_shortcut_preserves_preference_drafts_and_shows_dialog_errors(st
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -1697,16 +1662,15 @@ def test_company_shortcut_preserves_preference_drafts_and_shows_dialog_errors(st
     finally: process.terminate(); process.join(5)
 
 
-def test_record_evidence_loads_on_demand_retries_and_stays_open_after_refresh(store, job, package):
+@pytest.mark.parametrize('refresh_while_image_pending,viewport_width',[(False,1280),(True,390)])
+def test_record_evidence_loads_on_demand_retries_and_stays_open_after_refresh(store, job, package,refresh_while_image_pending,viewport_width):
     from playwright.sync_api import sync_playwright, expect
     aid = store.prepare(job, package); store.begin_submit(aid); store.finish(aid, 'unknown')
     sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         try: urllib.request.urlopen(base + '/api/application/' + aid); assert False
         except urllib.error.HTTPError as error: assert error.code == 403
         for endpoint in ('state', 'jobs'):
@@ -1715,7 +1679,7 @@ def test_record_evidence_loads_on_demand_retries_and_stays_open_after_refresh(st
                 payload = json.loads(response.read())
                 assert 'package' not in payload['applications'][0]
         with sync_playwright() as p:
-            browser = p.chromium.launch(); page = browser.new_page(); requests = []; errors = []; images = []
+            browser = p.chromium.launch(); page = browser.new_page(viewport={'width':viewport_width,'height':844}); requests = []; errors = []; images = []
             screenshot_directory = store.root / 'screenshots'; screenshot_directory.mkdir(mode=0o700, exist_ok=True)
             page.screenshot(path=str(screenshot_directory / 'synthetic-confirmation.jpg'), type='jpeg')
             store.db.execute('UPDATE applications SET screenshot=? WHERE id=?', ('synthetic-confirmation.jpg', aid))
@@ -1733,12 +1697,31 @@ def test_record_evidence_loads_on_demand_retries_and_stays_open_after_refresh(st
             page.locator('#jobs').get_by_role('button', name='Retry evidence').click()
             expect(page.locator('#jobs')).to_contain_text(store.facts()['email']['value'])
             assert len(requests) == 2
-            page.route('**/api/screenshot/*', lambda route: route.fulfill(status=200, body='Synthetic invalid image', content_type='image/jpeg'))
+            pending_images=[]
+            if refresh_while_image_pending:
+                pause_first_request(page,'**/api/screenshot/*',pending_images)
+            else:
+                page.route('**/api/screenshot/*', lambda route: route.fulfill(status=200, body='Synthetic invalid image', content_type='image/jpeg'))
             page.locator('#jobs').get_by_role('button', name='View confirmation').click()
+            if refresh_while_image_pending:
+                deadline=time.monotonic()+10
+                while not pending_images and time.monotonic()<deadline:page.wait_for_timeout(20)
+                assert len(pending_images)==1
+                page.locator('#job-search').fill('Acme')
+                page.evaluate('refresh()')
+                expect(page.locator('#jobs').get_by_role('button',name='View confirmation')).to_be_disabled()
+                pending_images[0].fulfill(status=200,body='Synthetic invalid image',content_type='image/jpeg')
             expect(page.locator('#jobs')).to_contain_text('The recorded image could not be displayed')
+            page.locator('#jobs').screenshot(path=str(store.root/'receipt-error-view.png'))
+            if refresh_while_image_pending:
+                page.locator('#job-search').fill('Engineer')
+                page.evaluate('refresh()')
+                expect(page.locator('#jobs')).to_contain_text('The recorded image could not be displayed')
+                assert len(images)==1
             page.unroute('**/api/screenshot/*')
             page.locator('#jobs').get_by_role('button', name='View confirmation').click()
             expect(page.locator('#jobs img.evidence')).to_be_visible()
+            expect(page.locator('#jobs img.evidence')).to_have_js_property('naturalWidth',viewport_width,timeout=15000)
             assert len(images) == 2
             summary.focus(); page.evaluate('refresh()')
             expect(summary.locator('..')).to_have_attribute('open', '')
@@ -1746,6 +1729,7 @@ def test_record_evidence_loads_on_demand_retries_and_stays_open_after_refresh(st
             expect(page.locator('#jobs')).to_contain_text(store.facts()['email']['value'])
             assert len(requests) == 2
             expect(page.locator('#jobs img.evidence')).to_be_visible()
+            expect(page.locator('#jobs img.evidence')).to_have_js_property('naturalWidth',viewport_width,timeout=15000)
             assert len(images) == 2
             summary.click(); summary.click()
             expect(page.locator('#jobs')).to_contain_text(store.facts()['email']['value'])
@@ -1761,6 +1745,7 @@ def test_record_evidence_loads_on_demand_retries_and_stays_open_after_refresh(st
             assert len(requests) == 3
             expect(page.locator('#jobs').get_by_role('button', name='View confirmation')).to_be_visible()
             assert len(images) == 2 and not errors
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             browser.close()
     finally: process.terminate(); process.join(5)
 
@@ -1779,9 +1764,7 @@ def test_account_queue_pages_old_holds_and_preserves_verification_drafts(store):
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         try: urllib.request.urlopen(base + '/api/accounts'); assert False
         except urllib.error.HTTPError as error: assert error.code == 403
         with sync_playwright() as p:
@@ -1831,9 +1814,7 @@ def test_source_library_pages_preserve_edits_and_recover_from_failed_page_load(s
     process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port)); process.start()
     base=f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser=p.chromium.launch(); page=browser.new_page(viewport={'width':320,'height':844})
             page.goto(base+'/#token=fixture-capability')
@@ -1888,9 +1869,7 @@ def test_recorded_pdf_download_auth_binding_and_local_retry(store,job,package):
     url=base+f"/api/application-document/{aid}/0/{document['hash']}"
     before=store.snapshot(); changes=store.db.total_changes
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser=p.chromium.launch(); page=browser.new_page(viewport={'width':320,'height':844},accept_downloads=True)
             assert page.request.get(url).status==403
@@ -1932,9 +1911,7 @@ def test_selected_resume_and_transcript_downloads_preserve_fact_drafts_and_follo
     process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port)); process.start()
     base=f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser=p.chromium.launch(); page=browser.new_page(viewport={'width':320,'height':844},accept_downloads=True)
             assert page.request.get(base+f"/api/selected-document/resume/{doc['hash']}").status==403
@@ -1975,9 +1952,7 @@ def test_dashboard_encrypted_password_transfer_auth_pause_retry_and_secret_clean
     process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port)); process.start()
     base=f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser=p.chromium.launch(); page=browser.new_page(viewport={'width':320,'height':844},accept_downloads=True)
             assert page.request.post(base+'/api/account-vault-export',data={'passphrase':phrase,'confirmation':phrase}).status==403
@@ -2039,9 +2014,7 @@ def test_backup_check_browser_retry_isolation_and_authentication(store, tmp_path
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844})
             errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
@@ -2081,9 +2054,7 @@ def test_posting_csv_browser_previews_retries_and_keeps_attempt_history(store, j
     process = multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
-        for _ in range(50):
-            try: urllib.request.urlopen(base).close(); break
-            except OSError: time.sleep(.1)
+        wait_for_dashboard(process,base)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width':320,'height':844},accept_downloads=True)
             errors = []; page.on('pageerror',lambda error:errors.append(str(error)))

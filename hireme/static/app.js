@@ -1329,30 +1329,62 @@ function renderEvidence(app, parent) {
   }
   if (app.screenshot) {
     const button = el("button", "View confirmation", "secondary"),
-      feedback = el("p", "", "help");
+      feedback = el("p", "", "help"),
+      imageBox = el("div"),
+      imageKey = evidenceKey(app);
     button.type = "button";
-    const imageKey = evidenceKey(app);
-    const showImage = (blob) => {
-      const img = el("img"),
-        url = URL.createObjectURL(blob);
-      img.src = url;
+    let record = evidenceImages.get(imageKey);
+    if (!record) {
+      record = { status: "idle", blob: null, error: "", render: null };
+      evidenceImages.set(imageKey, record);
+    }
+    const trimImages = () => {
+      for (const [key, value] of evidenceImages) {
+        if (evidenceImages.size <= 10) break;
+        if (key !== imageKey && value.status !== "loading")
+          evidenceImages.delete(key);
+      }
+    };
+    const imageError =
+      "The recorded image could not be displayed. Try again or verify the outcome at the employer.";
+    const updateImage = () => {
+      if (!parent.isConnected) return;
+      button.disabled = record.status === "loading";
+      feedback.textContent =
+        record.status === "loading" ? "Loading recorded image…" : record.error;
+      feedback.setAttribute("role", record.error ? "alert" : "status");
+      imageBox.setAttribute("aria-busy", String(record.status === "loading"));
+      if (record.status !== "ready") {
+        imageBox.replaceChildren(button);
+        return;
+      }
+      const img = el("img"), url = URL.createObjectURL(record.blob), blob = record.blob;
       img.alt = "Recorded page after submission";
       img.className = "evidence";
       img.onload = () => URL.revokeObjectURL(url);
       img.onerror = () => {
         URL.revokeObjectURL(url);
-        evidenceImages.delete(imageKey);
-        feedback.textContent =
-          "The recorded image could not be displayed. Try again or verify the outcome at the employer.";
-        feedback.setAttribute("role", "alert");
-        button.disabled = false;
-        img.replaceWith(button);
+        if (record.status !== "ready" || record.blob !== blob) return;
+        record.status = "error";
+        record.blob = null;
+        record.error = imageError;
+        record.render?.();
       };
-      button.replaceWith(img);
+      imageBox.replaceChildren(img);
+      img.src = url;
+      // Decoding also settles when a refresh detaches this node, ensuring its
+      // temporary URL is released even if load/error events are cancelled.
+      img.decode().finally(() => URL.revokeObjectURL(url)).catch(() => {});
     };
+    // A filtered/refreshing ledger replaces nodes. Pending requests update the
+    // latest connected view, while status and failures survive that replacement.
+    record.render = updateImage;
     button.onclick = async () => {
-      button.disabled = true;
-      feedback.textContent = "";
+      if (record.status === "loading") return;
+      evidenceImages.set(imageKey, record);
+      record.status = "loading";
+      record.error = "";
+      record.render?.();
       try {
         const response = await fetch(
           "/api/screenshot/" + encodeURIComponent(app.screenshot),
@@ -1362,19 +1394,32 @@ function renderEvidence(app, parent) {
           throw new Error(
             "Screenshot unavailable. Try again or verify the outcome at the employer.",
           );
-        const blob = await response.blob();
-        evidenceImages.set(imageKey, blob);
-        if (evidenceImages.size > 10)
-          evidenceImages.delete(evidenceImages.keys().next().value);
-        showImage(blob);
+        const blob = await response.blob(), url = URL.createObjectURL(blob);
+        try {
+          // Never cache an invalid image while a detached DOM node decodes it.
+          await new Promise((resolve, reject) => {
+            const probe = new Image();
+            probe.onload = resolve;
+            probe.onerror = () => reject(new Error(imageError));
+            probe.src = url;
+          });
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+        record.blob = blob;
+        record.status = "ready";
       } catch (error) {
-        feedback.textContent = error.message;
-        feedback.setAttribute("role", "alert");
-        button.disabled = false;
+        record.blob = null;
+        record.status = "error";
+        record.error = error.message;
+      } finally {
+        record.render?.();
+        trimImages();
       }
     };
-    parent.append(button, feedback);
-    if (evidenceImages.has(imageKey)) showImage(evidenceImages.get(imageKey));
+    parent.append(imageBox, feedback);
+    updateImage();
+    trimImages();
   }
 }
 

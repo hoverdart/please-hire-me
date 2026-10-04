@@ -140,7 +140,8 @@ def test_login_captcha_and_personal_tab_isolation(store,ats):
         b.page.goto(ats[0])
         b.page.set_content('<label>Password<input type=password></label>')
         with pytest.raises(Blocked,match='account'):b._guard(job)
-        b.page.set_content('<iframe src="https://captcha.invalid/bframe"></iframe>')
+        b.context.route('https://captcha.invalid/**',lambda route:route.abort())
+        b.page.set_content('<iframe src="https://captcha.invalid/bframe"></iframe>',wait_until='domcontentloaded')
         with pytest.raises(Blocked,match='captcha'):b._guard(job)
         # Only a private persistent context is opened; no CDP attachment to everyday Chrome.
         assert len(b.context.pages)==1
