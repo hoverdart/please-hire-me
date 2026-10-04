@@ -242,9 +242,22 @@ def test_dashboard_prepares_reviewable_drafts_while_staying_paused(store,job):
             page.evaluate('refresh()')
             expect(page.locator('#worker-state')).to_have_text('Submissions paused')
             expect(page.locator('#prepare')).to_be_enabled()
-            page.locator('#status-filter').select_option('prepared')
+            # The old table already says Prepared while the filter request is
+            # pending. Wait for that request before operating on its replacement.
+            with page.expect_response(lambda response: '/api/jobs?' in response.url and 'status=prepared' in response.url):
+                page.locator('#status-filter').select_option('prepared')
+            expect(page.locator('#jobs')).to_have_attribute('aria-busy', 'false')
             expect(page.locator('#jobs')).to_contain_text('Prepared')
-            page.locator('#jobs details[data-evidence-id]').first.evaluate('(element)=>{element.open=true;table(ledgerState.jobs,document.querySelector("#jobs"));}')
+            # Resolve the element inside the same browser task as the refresh;
+            # a previously resolved Playwright handle can refer to a removed row.
+            assert page.evaluate("""() => {
+                const parent = document.querySelector('#jobs');
+                const element = parent.querySelector('details[data-evidence-id]');
+                if (!element?.isConnected) return false;
+                element.open = true;
+                table(ledgerState.jobs, parent);
+                return parent.querySelector('details[data-evidence-id]').open;
+            }""")
             expect(page.locator('#jobs .answer-log')).to_contain_text('test@candidate.invalid')
             assert row['submitted']==0 and json.loads(row['detail'])['prepared']==1
             assert store.db.execute('SELECT state FROM applications').fetchone()[0]=='prepared'
