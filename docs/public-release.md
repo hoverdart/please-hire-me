@@ -42,9 +42,15 @@ Every completed attempt report was sent through Gmail with its attempted job lin
 
 The owner approved NVIDIA remote draft saves for supervised validation, but cannot perform the required manual account login now. Authenticated Workday transport inspection and live confirmation remain unavailable; no Workday automation capability is claimed. Veeam’s three business/consent questions were explicitly approved and saved privately. Confirmed employer history was updated privately; the conflict disclosure remains scoped to Veeam.
 
+## Owner-supplied employer credentials
+
+The candidate now accepts employer-scoped passwords through **Needs you → Employer accounts → Supply credentials for an employer**. Submissions must be paused and the worker idle. The confirmed applicant email is reused; matching passwords must contain 20–128 characters. Saving credentials creates no employer account and never replaces existing account history. Recognized native registration forms reuse the supplied password; their separate registration intent and exact write grant remain required. Explicit and implicit account agreements stop before credentials are accessed. Passwords remain outside models, ledger events, reports and ordinary backups.
+
+Supplied-password and agreement fixtures passed locally and on the Pi. The configured Workday shards now permit narrowly scoped first-party static assets; this permits rendering resources, not account or application writes. Workday JavaScript registration is still unverified. No real credentials were supplied or employer accounts created during this change. Four-platform CI at `747c882` passed **769 tests per platform**, including artifact installation and privacy checks. A filtered-ledger browser fixture was subsequently corrected to wait for the replacement table and resolve its element inside the same browser task, avoiding a detached-row race without weakening evidence assertions.
+
 ## Release gates still pending
 
-1. Finish authenticated Workday adapter inspection and browser fixtures. NVIDIA account setup is manual; remote draft saves require separate owner opt-in. Unknown agreements remain review items.
+1. Finish authenticated Workday adapter inspection and browser fixtures. NVIDIA account setup still needs a verified JavaScript registration/login flow or manual setup; remote draft saves require separate owner opt-in. Unknown agreements remain review items.
 2. Obtain the remaining new Workday confirmation within the six remaining supervised attempts. Both distinct Greenhouse confirmations have been obtained. Never retry prior uncertain outcomes or count draft saves/preparation as submissions.
 3. Observe the next two scheduled cycles (October 4 at 06:00 and 12:00 Pacific), confirm unchanged blockers/uncertainty exclusions and attempted-only emails. Permanent model caps are already restored.
 4. Publish v0.5.0 only if every gate passes. Otherwise retain a clearly marked candidate and exact outstanding blockers.
