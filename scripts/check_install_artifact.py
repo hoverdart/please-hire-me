@@ -1,11 +1,12 @@
-"""Smoke-test a built wheel outside the checkout, without credentials or network."""
+"""Smoke-test a built wheel outside the checkout, without applicant credentials or employer connections."""
 import os,subprocess,sys,tempfile,venv
 from pathlib import Path
 wheel=Path(sys.argv[1]).resolve()
 with tempfile.TemporaryDirectory(prefix='hireme-install-') as raw:
-    root=Path(raw);environment=root/'venv';venv.EnvBuilder(with_pip=True,system_site_packages=True).create(environment)
+    root=Path(raw);environment=root/'venv';venv.EnvBuilder(with_pip=True,system_site_packages=False).create(environment)
     python=environment/'bin/python'
-    subprocess.run([str(python),'-m','pip','install','--no-deps',str(wheel)],check=True,cwd=root)
+    subprocess.run([str(python),'-m','pip','install',str(wheel)],check=True,cwd=root)
+    subprocess.run([str(python),'-m','pip','check'],check=True,cwd=root)
     home=root/'home';home.mkdir()
     env={k:v for k,v in os.environ.items() if k in {'PATH','LANG','LC_ALL','SYSTEMROOT'}}
     env.update(HOME=str(home),USER='release-fixture',PYTHONNOUSERSITE='1')

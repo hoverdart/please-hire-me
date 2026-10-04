@@ -15,6 +15,7 @@ history.replaceState(null, "", location.pathname);
 let state = null,
   view = "today";
 let refreshing = null;
+let workerRefreshTimer = null;
 let backupBusy = false;
 let savedViewBusy = false,
   savedViewsSignature = null;
@@ -3036,6 +3037,13 @@ async function refresh() {
       if (!state) note(error.message, true);
     } finally {
       refreshing = null;
+      clearTimeout(workerRefreshTimer);
+      // Cancellation is asynchronous. Follow the running worker to its terminal
+      // state instead of leaving controls stale until the idle refresh.
+      if (state?.worker_running && !document.hidden)
+        workerRefreshTimer = setTimeout(() => {
+          if (!document.hidden) refresh();
+        }, 1500);
     }
   })();
   return refreshing;

@@ -47,8 +47,13 @@ def launch_preparation_fixture(root, repo, port):
         def apply(self, job, live=True):
             assert not live
             entered.set()
-            for _ in range(500):
-                self.store.checkpoint(); time.sleep(.01)
+            try:
+                for _ in range(500):
+                    self.store.checkpoint(); time.sleep(.01)
+            except Blocked:
+                # Keep the initial post-cancel snapshot observably running.
+                time.sleep(.3)
+                raise
             return 'prepared'
     def run():
         store = Store(Path(root))
