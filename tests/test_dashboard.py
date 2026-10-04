@@ -62,13 +62,17 @@ def launch_preparation_fixture(root, repo, port):
             assert not live
             entered.set()
             try:
-                for _ in range(500):
+                # The cancellation test must remain active until cancellation,
+                # even when Chromium startup takes longer than five seconds on
+                # the Pi. A missed cancellation fails rather than "prepares".
+                deadline=time.monotonic()+60
+                while time.monotonic()<deadline:
                     self.store.checkpoint(); time.sleep(.01)
             except Blocked:
                 # Keep the initial post-cancel snapshot observably running.
                 time.sleep(.3)
                 raise
-            return 'prepared'
+            raise RuntimeError('Synthetic cancellation was not received')
     def run():
         store = Store(Path(root))
         try: worker.cycle(store, Path(repo), discover=False, live=False, browser_factory=FakeBrowser)
