@@ -1,6 +1,7 @@
 """Workday write protocol. Unknown operations cannot inherit submit authority."""
 from dataclasses import dataclass
 import re
+import json
 import hashlib
 import uuid
 from urllib.parse import urlsplit
@@ -10,6 +11,27 @@ from .portals import WORKDAY
 VERSION=1
 TENANTS={host:tenant for _,tenant,_,_,host in WORKDAY}
 SECTIONS={'My Information','My Experience','Application Questions','Voluntary Disclosures','Review'}
+
+
+def search_read(host,url,method,payload):
+    """Recognize the configured public jobs search, not account/draft traffic.
+
+    The same empty-facet schema is used by discovery. Unknown search extensions
+    stay blocked until inspected; no generic Workday POST permission is added.
+    """
+    configured=next((row for row in WORKDAY if row[4]==host),None)
+    if not configured or method!='POST' or not isinstance(payload,bytes) or len(payload)>4096:return False
+    try:
+        parsed=urlsplit(url)
+        if (parsed.scheme!='https' or parsed.hostname!=host or parsed.port not in (None,443)
+                or parsed.username or parsed.password or parsed.query or parsed.fragment
+                or parsed.path!=f'/wday/cxs/{configured[1]}/{configured[3]}/jobs'):return False
+        data=json.loads(payload)
+    except (ValueError,UnicodeError):return False
+    return (isinstance(data,dict) and set(data)=={'appliedFacets','limit','offset','searchText'}
+            and data['appliedFacets']=={} and type(data['limit']) is int and 1<=data['limit']<=100
+            and type(data['offset']) is int and 0<=data['offset']<=10000
+            and isinstance(data['searchText'],str) and len(data['searchText'])<=500)
 
 def source_hash(store):
     return digest({'facts':{k:v['revision'] for k,v in store.facts().items()},

@@ -138,6 +138,12 @@ class Browser:
             try:self.store.checkpoint()
             except Blocked:return route.abort()
         url=route.request.url; p=urlsplit(url)
+        # Workday job search uses POST for a read. Recognize it before a
+        # one-use remote-write grant so background searches cannot consume it.
+        from .workday import search_read
+        if search_read(self.current_host,url,route.request.method,getattr(route.request,'post_data_buffer',None)):
+            if p.hostname not in self.host_cache:self.host_cache[p.hostname]=public_host(p.hostname)
+            return route.continue_() if self.host_cache[p.hostname] else route.abort()
         if self.workday_grant and route.request.method not in ('GET','HEAD','OPTIONS') and p.hostname==self.current_host:
             try:approved=self.workday_grant.consume(url,route.request.method,route.request.post_data_buffer or b'')
             except Blocked:approved=False
@@ -174,6 +180,12 @@ class Browser:
             if host in {shard+'.myworkday.com',shard+'.myworkdaycdn.com'}:
                 static=bool(re.fullmatch(r'/wday/asset/[A-Za-z0-9._/-]+',p.path)) and '..' not in p.path.split('/')
                 return route.continue_() if route.request.method in ('GET','HEAD','OPTIONS') and static and not p.username and not p.password else route.abort()
+        if self.current_host in TENANTS and host==self.current_host and route.request.method not in ('GET','HEAD','OPTIONS'):
+            # Marking a browser attempt does not authorize arbitrary Workday
+            # account, draft or final writes. Exact grants above are required.
+            self.denied_write=True
+            self.denied_request={'host':host,'path':p.path,'method':route.request.method}
+            return route.abort()
         if host in UPLOAD_HOSTS:
             payload=getattr(route.request,'post_data_buffer',None) or b''
             approved=self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and route.request.method=='POST' and any(data in payload or h.encode() in payload for h,data in self.upload_payloads.items())
