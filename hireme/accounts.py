@@ -221,9 +221,24 @@ def complete_native_account(browser, job):
             if len(matches)!=1:
                 raise Blocked('unsupported_account_form')
             matches[0].fill(credentials['password'] if f['type']=='password' else credentials['email'])
+        # Native maxlength limits and input handlers can silently transform a
+        # fill. The vaulted password must be the one the employer will receive.
+        for f in fields:
+            matches=[el for el in form.locator('input').all() if el.get_attribute('name')==f['name']]
+            expected=credentials['password'] if f['type']=='password' else credentials['email']
+            if len(matches)!=1 or matches[0].evaluate('(e)=>({type:e.type,disabled:e.disabled,value:e.value})')!={'type':f['type'],'disabled':False,'value':expected}:
+                raise Blocked('account_fields_changed','The employer form changed the email or password; inspect its field requirements before proceeding')
         if not form.evaluate('(f)=>f.checkValidity()'):
             raise Blocked('account_password_policy')
         pairs=form.evaluate('(f)=>Array.from(new FormData(f).entries())')
+        # The formdata event can change serialized values without changing DOM
+        # controls. Require one exact value per credential field in the payload.
+        for f in fields:
+            expected=credentials['password'] if f['type']=='password' else credentials['email']
+            if [pair for pair in pairs if pair[0]==f['name']]!=[[f['name'],expected]]:
+                raise Blocked('account_fields_changed','The employer form changed the serialized email or password; inspect the account flow before proceeding')
+        if store.facts().get('email',{}).get('value')!=credentials['email']:
+            raise Blocked('account_identity_unconfirmed','The confirmed applicant email changed; verify the employer identity before proceeding')
         # Submit-button values are intentionally unsupported; no extra hidden writes.
         if buttons.first.get_attribute('name'):
             raise Blocked('unsupported_account_form')

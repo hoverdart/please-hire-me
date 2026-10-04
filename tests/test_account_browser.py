@@ -27,7 +27,11 @@ def account_site(request):
                 extra='<label>Accept terms<input type="checkbox" name="terms" required></label>' if mode=='terms' else '<p>By creating an account you agree to the Terms of Service.</p>' if mode=='implicit-terms' else ''
                 action='http://attacker.invalid/register' if mode=='redirect' else '/register'
                 button='Sign in' if mode=='login' else 'Create account'
-                self.respond(f'<form method="post" action="{action}"><label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" required></label>{confirm}{extra}<button type="submit">{button}</button></form>')
+                document=f'<form method="post" action="{action}"><label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" required></label>{confirm}{extra}<button type="submit">{button}</button></form>'
+                if mode=='maxlength':document=document.replace('type="password"','type="password" maxlength="20"')
+                if mode=='replace-email':document+="<script>document.querySelector('[name=email]').addEventListener('input',event=>event.target.value='different@candidate.invalid')</script>"
+                if mode=='serialize-password':document+="<script>document.querySelector('form').addEventListener('formdata',event=>event.formData.set('password','Different-password-only42!'))</script>"
+                self.respond(document)
         def do_POST(self):
             data=self.rfile.read(int(self.headers['Content-Length']));writes.append((self.path,data))
             if self.path=='/register':
@@ -181,3 +185,40 @@ def test_secret_field_errors_are_sanitized_before_account_intent(store,account_s
     assert not writes and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
     assert not store.db.execute('SELECT 1 FROM applications').fetchone()
     assert secret.encode() not in store.path.read_bytes()
+
+
+@pytest.mark.parametrize('account_site',['maxlength','replace-email','serialize-password'],indirect=True)
+def test_transformed_credentials_stop_before_registration_intent(store,account_site):
+    base,job,writes=account_site
+    secret='Synthetic-user-chosen-password42!'
+    store.update_settings({'live_enabled':False})
+    vault=AccountVault(store)
+    vault.save_supplied('https://fixture.invalid',job['company'],store.facts()['email']['value'],secret,secret)
+    store.update_settings({'employer_accounts':True,'live_enabled':True})
+    with Browser(store,test_url=base) as browser:
+        with pytest.raises(Blocked,match='account_fields_changed') as error:browser.apply(job)
+        assert browser.auth_write is None
+    assert secret not in str(error.value)
+    assert not writes and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert vault.credentials('https://fixture.invalid',store.company(job['company']))['password']==secret
+    assert secret.encode() not in store.path.read_bytes()
+
+
+@pytest.mark.parametrize('account_site',['register'],indirect=True)
+def test_changed_applicant_identity_stops_before_creation_intent(store,account_site,monkeypatch):
+    base,job,writes=account_site
+    store.update_settings({'employer_accounts':True})
+    vault=AccountVault(store);origin='https://fixture.invalid';company=store.company(job['company'])
+    vault.credentials(origin,company,create=True)
+    original=AccountVault.credentials
+    def change_email(vault,*args,**kwargs):
+        value=original(vault,*args,**kwargs)
+        vault.store.put_facts({'email':'changed@candidate.invalid'})
+        return value
+    monkeypatch.setattr(AccountVault,'credentials',change_email)
+    with Browser(store,test_url=base) as browser:
+        with pytest.raises(Blocked,match='account_identity_unconfirmed'):browser.apply(job)
+    assert not writes and not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='account_creation_intent'").fetchone()
