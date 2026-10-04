@@ -1,0 +1,35 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "wide-tracking",
+        "value": "*",
+        "files": [
+          "hireme/static/index.html"
+        ],
+        "createdAt": "2026-10-04T09:53:46.014Z",
+        "reason": "Agent: flagged index.html tracking is exclusively hidden .eyebrow text and a short uppercase .footer-label; inspect style.css display:none and uppercase footer copy"
+      },
+      {
+        "rule": "kicker-above-heading",
+        "value": "*",
+        "files": [
+          "hireme/static/index.html"
+        ],
+        "createdAt": "2026-10-04T09:53:46.027Z",
+        "reason": "Agent: all index.html .eyebrow labels are display:none at every viewport and absent from rendered layout and accessibility tree"
+      },
+      {
+        "rule": "aphoristic-cadence",
+        "value": "*",
+        "files": [
+          "hireme/static/index.html"
+        ],
+        "createdAt": "2026-10-04T09:53:46.039Z",
+        "reason": "Agent: these separate operational sections explain approval requirements, provider credential isolation, and worker limits; factual safety copy is not marketing aphorism cadence"
+      }
+    ]
+  }
+}
