@@ -165,6 +165,15 @@ class Browser:
         if p.scheme!="https" or not host or p.port not in (None,443):return route.abort()
         if host not in self.host_cache:self.host_cache[host]=public_host(host)
         if not self.host_cache[host]:return route.abort()
+        # Workday's public shell loads its client from shard-specific vendor
+        # hosts. Permit static reads for configured tenants, never auth/draft
+        # endpoints or another tenant shard. This grants no account writes.
+        from .workday import TENANTS
+        if self.current_host in TENANTS:
+            shard=self.current_host.split('.')[1]
+            if host in {shard+'.myworkday.com',shard+'.myworkdaycdn.com'}:
+                static=bool(re.fullmatch(r'/wday/asset/[A-Za-z0-9._/-]+',p.path)) and '..' not in p.path.split('/')
+                return route.continue_() if route.request.method in ('GET','HEAD','OPTIONS') and static and not p.username and not p.password else route.abort()
         if host in UPLOAD_HOSTS:
             payload=getattr(route.request,'post_data_buffer',None) or b''
             approved=self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and route.request.method=='POST' and any(data in payload or h.encode() in payload for h,data in self.upload_payloads.items())
