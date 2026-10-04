@@ -136,12 +136,16 @@ def test_illegal_transitions(store,job,package):
     with pytest.raises(ValueError):store.finish(aid,'failed')
 
 
-def test_saved_fact_binding_goes_stale(store,job):
+def test_saved_fact_binding_uses_current_confirmation_and_blocks_revocation(store,job):
     f={'label':'Employer requested personal email','type':'text','required':True,'options':[]}
     q=store.ask(job['id'],job['host'],f['label'],[])
     store.answer_question(q,store.facts()['email']['value'],'email')
     # Other identity fields are editable, but an identity with submission history is protected.
     store.put_facts({'email':'another@candidate.invalid'})
+    answer=resolve(store,job['host'],f)
+    assert answer['value']=='another@candidate.invalid'
+    assert answer['provenance']=={'fact_key':'email','revision':store.facts()['email']['revision']}
+    store.put_facts({},clear_keys=['email'])
     with pytest.raises(Blocked,match='stale'):resolve(store,job['host'],f)
 
 

@@ -17,13 +17,25 @@ def select_combobox_exact(browser,control,field,label):
     if field.get('options',[]).count(label)!=1:raise Blocked('option_mismatch',field['label'])
     from playwright.sync_api import TimeoutError
     from .answers import field_key
-    control.click()
-    target=browser._menu(control).get_by_role('option',name=label,exact=True)
+    import re
+    def exact_target():
+        menu=browser._menu(control)
+        plain=menu.get_by_role('option',name=label,exact=True)
+        if field_key(field['label'])=='school':
+            canonical=menu.get_by_role('option').filter(has=browser.page.locator(
+                '[class*=canonicalSchoolResultName]',has_text=re.compile(r'^'+re.escape(label)+r'$')))
+            return canonical.or_(plain)
+        return plain
+    browser._open_combobox(control)
+    target=exact_target()
     if target.count()>1:raise Blocked('option_mismatch',field['label'])
     # Existing visible choices are authoritative. Typing an abbreviation can
     # erase a static menu even when its meaning was mapped correctly.
     if target.count()!=1 and control.evaluate('(e)=>e.tagName==="INPUT"'):
         control.fill(label.split(',')[0] if field_key(field['label'])=='location' else label)
-        target=browser._menu(control).get_by_role('option',name=label,exact=True)
-    try:target.click(timeout=5000)
+        target=exact_target()
+    try:
+        target.first.wait_for(state='visible',timeout=5000)
+        if target.count()!=1:raise Blocked('option_mismatch',field['label'])
+        target.click(timeout=5000)
     except TimeoutError:raise Blocked('unsupported_widget',field['label']+' — validated option did not become selectable') from None

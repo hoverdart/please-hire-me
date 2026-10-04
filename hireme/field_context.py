@@ -5,9 +5,10 @@ import json
 import re
 from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
+from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
-MAPPING_VERSION = 6
-ADAPTER_VERSION = 4
+MAPPING_VERSION = 7
+ADAPTER_VERSION = 5
 
 def field_context(host, field, context=None):
     context = context or {}
@@ -17,14 +18,21 @@ def field_context(host, field, context=None):
         raise Blocked('invalid_option_metadata', field['label'])
     constraints={key:field.get(key) for key in ('required','min','max','step','pattern','multiple')}
     if field.get('type')=='number':constraints['step_base']=field.get('step_base')
+    employment_country=selected_employment_country(context)
     return {'version': MAPPING_VERSION, 'ats': ats(host), 'scope': host,
             'employer': context.get('company', ''),
             'role': context.get('title',''), 'job_location': context.get('location',''), 'section': field.get('section', ''),
             **({'section_entry':field['section_entry']} if 'section_entry' in field else {}),
+            **({'employment_country':employment_country} if GENERIC_WORK_COUNTRY.search(field['label']) and employment_country else {}),
+            **({'employment_countries':sorted(context['employment_countries'])} if GENERIC_WORK_COUNTRY.search(field['label']) and context.get('employment_countries') else {}),
             'label': ' '.join(field['label'].casefold().split()).rstrip(' *?:'),
             'widget': field.get('type', ''), 'maxlength': field.get('maxlength', -1),
             'constraints': constraints,
             'options': sorted(zip(options, values))}
+
+def approval_context(metadata):
+    """Approval identity excludes display limits; resolve enforces current limits."""
+    return {k:v for k,v in metadata.items() if k not in {'version','maxlength'}}
 
 def ats(host):
     host = host.split('|', 1)[0]

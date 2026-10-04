@@ -80,6 +80,49 @@ def test_prepare_only_never_submits(store,ats):
     assert not ats[1]
 
 
+def test_report_question_variants_fill_and_submit_from_confirmed_sources(store, ats):
+    """Exercise snapshot -> resolution -> filling -> validation -> local receipt."""
+    job=local_job(store,ats)
+    store.put_facts({'phone':'+12025550123','school':'Confirmed University','country':'United States'})
+    store.update_settings({'contextual_preferences':True})
+    label='I understand that all employees for this position will be expected to be available during coordination hours (Mon-Fri, 9am-3pm Pacific Time).'
+    additions=f'''<label>Phone<input name="phone" type="tel" maxlength="10" required></label>
+    <label>School Name<input name="school" required></label>
+    <label>In which of the following employment eligible countries are you seeking to work, if hired?<select name="country" required><option value="">Choose</option><option>United States</option><option>Canada</option></select></label>
+    <label>Are you legally authorized to work in that country?<select name="auth" required><option value="">Choose</option><option>Yes</option><option>No</option></select></label>
+    <label>Are you legally authorized to work in the country for which you are applying?*<select name="generic_auth" required><option value="">Choose</option><option>Yes</option><option>No</option></select></label>
+    <label>What is your preferred programming language for your interviews (you can change this later)?<select name="language" required><option value="">Choose</option><option>Java</option><option>Python</option></select></label>
+    <label>{label}*<input type="checkbox" name="coordination" required></label>'''
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',additions+'</form>')
+    with Browser(store,test_url=ats[0]) as b:
+        b.context.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html') if route.request.method=='GET' else route.continue_())
+        b.page.goto(job['url'])
+        reviewed=next(f for f in b._snapshot() if 'coordination hours' in f['label'])
+        reviewed={**reviewed,'label':label}
+        qid=store.ask(job['id'],job['host']+'|'+store.company(job['company']),label,reviewed['options'],field=reviewed,context=job)
+        store.answer_question(qid,'Yes')
+        assert b.apply(job)=='confirmed'
+    assert len(ats[1])==1
+    app=store.db.execute('SELECT * FROM applications WHERE job_id=?',(job['id'],)).fetchone()
+    values={a['field']['label']:a['value'] for a in json.loads(app['package'])['answers']}
+    assert values['Phone']=='2025550123' and values['School Name']=='Confirmed University'
+    assert values['Are you legally authorized to work in that country?']=='Yes'
+    assert values['What is your preferred programming language for your interviews (you can change this later)?']=='Python'
+    assert store.db.execute('SELECT count(*) FROM model_requests').fetchone()[0]==0
+
+
+def test_false_required_graduation_confirmation_stops_as_eligibility(store, ats):
+    job=local_job(store,ats)
+    additions='<label>I confirm that my graduation date will be either Fall 2026 or Spring 2027*<select name="graduation" required><option value="">Choose</option><option>Yes</option><option>No</option></select></label>'
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',additions+'</form>')
+    with Browser(store,test_url=ats[0]) as b:
+        b.context.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html'))
+        with pytest.raises(Blocked,match='graduation_mismatch'):b.apply(job)
+    assert not ats[1]
+    assert store.db.execute('SELECT count(*) FROM questions').fetchone()[0]==0
+    assert store.db.execute('SELECT count(*) FROM applications').fetchone()[0]==0
+
+
 @pytest.mark.parametrize('ats',['processing-error'],indirect=True)
 def test_post_submit_generic_error_is_uncertain_with_tail_evidence_and_no_replay(store,ats):
     job=local_job(store,ats)
@@ -750,3 +793,91 @@ def test_controlled_number_value_updates_preserve_only_equivalent_constraints(st
         b.page.locator('#year').evaluate('(e)=>e.max="1"')
         with pytest.raises(Blocked,match='form_changed'):b._verify([],[],before)
     assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+def test_ashby_nested_sms_consent_is_distinct_from_phone(store,ats):
+    from hireme.answers import resolve
+    store.put_facts({'sms':'No'})
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('''<form><div class="ashby-application-form-field-entry">
+          <label class="ashby-application-form-question-title _required_">Phone</label>
+          <input type="tel" id="phone" aria-label="Phone">
+          <div class="ashby-application-form-texting-consent-description"><div class="_consentRadioGroup_">
+            <label><input type="radio" name="communicationConsent" value="yes">Yes - I consent to receiving text messages</label>
+            <label><input type="radio" name="communicationConsent" value="no">No - I do not consent to receiving text messages</label>
+          </div></div></div></form>''')
+        fields=b._snapshot()
+        assert [f['label'] for f in fields]==['Phone','Consent to receiving text messages']
+        answers=[resolve(store,'jobs.ashbyhq.com',f) for f in fields]
+        for a in answers:b._fill(a)
+        b._verify(answers,[],fields)
+        assert b.page.locator('#phone').input_value()==store.facts()['phone']['value']
+        assert b.page.locator('input[value=no]').is_checked()
+    assert not ats[1]
+
+
+@pytest.mark.parametrize('duplicate',[False,True])
+def test_ashby_rich_school_option_uses_exact_canonical_name(store,ats,duplicate):
+    from hireme.answers import resolve
+    store.put_facts({'school':'University of California, Berkeley'})
+    option='''<div role="option" onclick="document.querySelector('#school').value=this.querySelector('span').textContent">
+      <div><span class="_canonicalSchoolResultName_205">University of California, Berkeley</span><span>United States</span></div><span>berkeley.edu</span></div>'''
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('<label for="school">School Name</label><input id="school" role="combobox" aria-controls="schools"><div id="schools">'+option*(2 if duplicate else 1)+'</div>')
+        fields=b._snapshot();f=fields[0]
+        assert f['options']==['University of California, Berkeley']
+        a=resolve(store,'jobs.ashbyhq.com',f)
+        if duplicate:
+            with pytest.raises(Blocked,match='option_mismatch'):b._fill(a)
+        else:
+            b._fill(a);b._verify([a],[],fields)
+            assert b.page.locator('#school').input_value()==a['value']
+    assert not ats[1]
+
+
+def test_ashby_autocomplete_uses_fieldset_question_instead_of_placeholder(store,ats):
+    from hireme.answers import resolve
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('''<fieldset class="_fieldEntry_test"><div class="ashby-application-form-question-title _required_test">How did you hear about Gecko?</div>
+          <div><input role="combobox" placeholder="Start typing..." aria-controls="source-menu"></div></fieldset>
+          <div id="source-menu"><div role="option" onclick="document.querySelector('input').value=this.textContent">Company Website</div></div>''')
+        fields=b._snapshot();f=fields[0]
+        assert f['label']=='How did you hear about Gecko?' and f['required']
+        answer=resolve(store,'jobs.ashbyhq.com',f,context={'source':'ash:gecko-robotics'})
+        assert answer['value']=='Company Website'
+        b._fill(answer);b._verify([answer],[],fields)
+    assert not ats[1]
+
+
+def test_ashby_static_autocomplete_opens_adjacent_toggle_before_enumerating(store,ats):
+    from hireme.answers import resolve
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('''<fieldset><label class="ashby-application-form-question-title _required_test">How did you hear about Gecko?</label>
+          <div><input class="ashby-application-form-input-autocomplete" role="combobox" placeholder="Start typing..." aria-controls="sources" aria-expanded="false">
+          <button onclick="document.querySelector('#sources').hidden=false;document.querySelector('input').setAttribute('aria-expanded','true')">Open</button></div></fieldset>
+          <div id="sources" hidden><div role="option" aria-selected="true" onclick="document.querySelector('input').value=this.textContent;this.parentElement.hidden=true;document.querySelector('input').setAttribute('aria-expanded','false')">Other</div></div>
+          <script>document.querySelector('input').onkeydown=e=>{if(e.key==='Escape'){document.querySelector('#sources').hidden=true;e.target.setAttribute('aria-expanded','false')}}</script>''')
+        fields=b._snapshot();f=fields[0]
+        assert f['options']==['Other'] and f['value']==''
+        answer=resolve(store,'jobs.ashbyhq.com',f,context={'source':'ash:gecko-robotics'})
+        b._fill(answer);b._verify([answer],[],fields)
+        assert b.page.locator('input').input_value()=='Other'
+    assert not ats[1]
+
+
+def test_ashby_texting_draft_save_is_suppressed_without_granting_submission(store,monkeypatch):
+    monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
+    b=Browser(store);b.current_host='jobs.ashbyhq.com'
+    class Request:
+        url='https://jobs.ashbyhq.com/api/non-user-graphql';method='POST'
+        post_data=json.dumps({'operationName':'ApiSubmitCandidateTextingConsent','query':'mutation ApiSubmitCandidateTextingConsent { submitCandidateTextingConsent { id } }'})
+    class Route:
+        request=Request();action=None
+        def abort(self):self.action='abort'
+        def continue_(self):self.action='continue'
+    r=Route();b._route(r)
+    assert r.action=='abort' and not b.denied_write
+    assert not b.attempted and not store.db.execute('SELECT 1 FROM applications').fetchone()
+    r.request.post_data=json.dumps({'operationName':'ApiSubmitCandidateTextingConsent','query':'mutation SubmitApplication { submitApplication { id } }'})
+    b._route(r)
+    assert r.action=='abort' and b.denied_write

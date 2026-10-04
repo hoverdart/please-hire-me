@@ -100,3 +100,15 @@ def test_discovery_retry_cannot_send_after_deadline(monkeypatch):
     with pytest.raises(Blocked, match='discovery_deadline'):
         network.fetch('https://jobs.lever.co/acme')
     assert len(requests) == 1
+
+
+def test_ashby_preserves_structured_country_when_display_location_is_ambiguous():
+    from hireme.discovery import probe
+    class Net:
+        def json(self,url):
+            return {'jobs':[{'jobUrl':'https://jobs.ashbyhq.com/example/intern','title':'Engineering Intern','location':'SF',
+                'address':{'postalAddress':{'addressCountry':'US','addressRegion':'California'}},
+                'secondaryLocations':[{'location':'Remote','address':{'postalAddress':{'addressCountry':'Poland'}}}]}]}
+    j=probe(Net(),'ash','example')[0]
+    assert j['location']=='SF; California; United States; Remote; Poland'
+    assert j['employment_countries']==['United States','Poland']

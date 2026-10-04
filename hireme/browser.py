@@ -30,7 +30,7 @@ SNAPSHOT=r"""selector => {
   const ids=(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean);
   const aria=ids.map(id=>document.getElementById(id)?.innerText||'').join(' ').trim();
   const direct=Array.from(el.labels||[]).map(labelText).join(' ').trim();
-  const field=el.closest('fieldset'); const legend=field?.querySelector('legend')?.innerText;
+  const field=el.closest('fieldset'); const legend=field?.querySelector('legend')?.innerText||field?.querySelector('.ashby-application-form-question-title')?.innerText;
   const wrapper=el.closest('[class*=form-field],[class*=field-entry],[class*=application-question],.field');
   return (el.getAttribute('description')||el.getAttribute('aria-label')||aria||direct||legend||labelText(wrapper?.querySelector('label'))||el.getAttribute('placeholder')||'').trim();
  }
@@ -69,6 +69,9 @@ SNAPSHOT=r"""selector => {
    const parent=el.closest('fieldset');
    if(ashbyGroup)required=required||!!ashbyGroup.querySelector('label[class*=_required_]');
    question=ashbyGroup?.querySelector('.ashby-application-form-question-title')?.innerText||el.getAttribute('description')||parent?.querySelector('legend')?.innerText||el.closest('[class*=field],[class*=question]')?.querySelector('label')?.innerText||question;
+   // Ashby's SMS radios are nested inside the Phone field. The enclosing
+   // heading describes the phone input, not this separate consent control.
+   if(type==='radio'&&el.closest('.ashby-application-form-texting-consent-description'))question='Consent to receiving text messages';
    value=group.filter(x=>x.checked).map(x=>Array.from(x.labels||[]).map(l=>l.innerText).join(' ').trim()||x.value).join('; ');
   }else if(type==='select'){options=Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.textContent.trim())}
   else if(type==='checkbox'){options=['Yes','No'];value=el.checked?'Yes':'No'}
@@ -244,7 +247,8 @@ class Browser:
                 passive_check=p.path.startswith("/cdn-cgi/challenge-platform/")
                 uploading=bool(re.search(r'/(?:upload|uploads|files|attachments|documents)(?:/|\?|$)',p.path,re.I))
                 if not reading and not uploading and not passive_check:
-                    # Ashby autosaves even untouched/null fields on form hydration.
+                    # Ashby autosaves even untouched/null fields on form hydration,
+                    # and saves the texting selection in its form-render draft.
                     # Suppress the save without treating it as a submission attempt;
                     # local control values are still verified before final submit.
                     autosave=(host==self.current_host=='jobs.ashbyhq.com'
@@ -252,7 +256,8 @@ class Browser:
                               and bool(queries if isinstance(data,(dict,list)) else [])
                               and all(isinstance(q,dict) and (
                                   isinstance(q.get('query'),str) and re.match(r'^\s*query\b',q['query']) or
-                                  q.get('operationName')=='ApiSetFormValue' and isinstance(q.get('query'),str) and re.match(r'^\s*mutation\s+ApiSetFormValue\b',q['query'])
+                                  q.get('operationName') in {'ApiSetFormValue','ApiSubmitCandidateTextingConsent'} and isinstance(q.get('query'),str)
+                                  and re.match(r'^\s*mutation\s+'+re.escape(q['operationName'])+r'\b',q['query'])
                               ) for q in queries))
                     detail={'host':host,'path':p.path,'method':route.request.method}
                     if isinstance(data,dict):detail['operation']=str(data.get('operationName',''))[:100]
@@ -427,15 +432,18 @@ class Browser:
             if f['type']=='combobox':
                 el=self._control(f)
                 try:
-                    el.click(); self.page.wait_for_timeout(200)
+                    self._open_combobox(el); self.page.wait_for_timeout(200)
                     menu=self._menu(el)
                     if field_key(f['label']) not in ('school','location'):
                         # ATS dropdowns may hydrate after opening. An empty early
                         # read must not turn a choice into a free-text fact.
                         with contextlib.suppress(Exception):menu.get_by_role('option').first.wait_for(state='visible',timeout=5000)
-                    f['options']=[x.strip() for x in menu.get_by_role('option').all_text_contents() if x.strip()]
-                    selected=[x.strip() for x in menu.get_by_role('option',selected=True).all_text_contents() if x.strip()]
-                    if len(selected)==1:f['value']=selected[0]
+                    f['options']=self._option_labels(menu.get_by_role('option'),f)
+                    selected=self._option_labels(menu.get_by_role('option',selected=True),f)
+                    ashby_autocomplete='ashby-application-form-input-autocomplete' in (el.get_attribute('class') or '')
+                    # Ashby marks the keyboard-highlighted suggestion selected;
+                    # only the input value establishes a committed selection.
+                    if len(selected)==1 and not ashby_autocomplete:f['value']=selected[0]
                     elif not f['value']:
                         f['value']=el.evaluate("""e=>{
                           for(let n=e.parentElement,depth=0;n&&depth<5;n=n.parentElement,depth++){
@@ -460,13 +468,23 @@ class Browser:
                             found=list(f['options'])
                             for query in dict.fromkeys((fact['value'],fact['value'].split(',')[0] if key=='location' else 'Berkeley' if 'berkeley' in fact['value'].casefold() else fact['value'])):
                                 self.store.checkpoint();el.fill(query);self.page.wait_for_timeout(1200)
-                                found.extend(x.strip() for x in self._menu(el).get_by_role('option').all_text_contents() if x.strip())
+                                found.extend(self._option_labels(self._menu(el).get_by_role('option'),f))
                             el.fill(original)
                             f['options']=sorted(set(found))
                     el.press('Escape')
                 except Blocked:raise
                 except Exception:raise Blocked('unsupported_widget',f['label'])
         return fields
+
+    @staticmethod
+    def _option_labels(options,field):
+        # Canonical school names are distinct from country/domain annotations.
+        # Preserve exact names; never match a school by a substring of metadata.
+        school=field_key(field['label'])=='school'
+        return options.evaluate_all("""(nodes,school)=>nodes.map(n=>{
+          const name=school?n.querySelector('[class*=canonicalSchoolResultName]'):null;
+          return (name||n).textContent.trim();
+        }).filter(Boolean)""",school)
 
     @staticmethod
     def _shape(fields):
@@ -497,6 +515,15 @@ class Browser:
                 menu=self.page.locator('[id='+json.dumps(ident.split()[0])+']')
                 if menu.count()==1:return menu
         return self.page
+
+    @staticmethod
+    def _open_combobox(el):
+        el.click()
+        # Ashby's static autocomplete choices open through the adjacent toggle;
+        # focusing the search input alone can leave the popup empty.
+        if 'ashby-application-form-input-autocomplete' in (el.get_attribute('class') or '') and el.get_attribute('aria-expanded')=='false':
+            toggle=el.locator('xpath=..').locator('button')
+            if toggle.count()==1:toggle.click()
 
     def _control(self, field, option=None):
         ref=field.get('refs',[field.get('ref',{})])[option] if option is not None else field.get('ref',{})
@@ -657,18 +684,21 @@ class Browser:
                 try:
                     from .provider import LazyProvider
                     provider=None if budget_error else LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail))
-                    a=resolve(self.store,job['answer_scope'],f,provider,context={**job,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]})
+                    answer_context={**job,'previous_answers':answers,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]}
+                    a=resolve(self.store,job['answer_scope'],f,provider,context=answer_context)
                     if a:
+                        if f['required'] and a['value']=='No' and 'graduation_window_revision' in a['provenance'] and re.search(r'\bi confirm\b',f['label'],re.I):
+                            raise Blocked('graduation_mismatch',f['label'])
                         answers.append(a)
                         self.store.event('field_answered',job['id'],{'label':f['label'],'value':a['value'],'provenance':a['provenance']})
                     elif f['value']:raise Blocked('unknown_prefilled_value',f['label'])
                 except Blocked as e:
-                    if e.reason in ('human_work_sample','paused','cycle_timeout','provider_rate_limited'):raise
+                    if e.reason in ('human_work_sample','paused','cycle_timeout','provider_rate_limited','graduation_mismatch'):raise
                     if e.reason=='model_budget_exhausted':budget_error=e
                     self.store.event('field_blocked',job['id'],{'label':f['label'],'options':f['options'],'required':f['required'],'reason':e.reason})
                     if not f['required'] and not f['value']:
                         self.store.resolve_known_question(job['answer_scope'],f['label'],f['options'],field=f,context=job);continue
-                    self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],e.reason,field=f,context=job)
+                    self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],e.reason,field=f,context=answer_context)
                     pending.append((f,e.reason))
             if pending:
                 labels='; '.join(f['label'] for f,_ in pending)

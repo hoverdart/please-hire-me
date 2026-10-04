@@ -360,16 +360,16 @@ class Store:
 
     def saved_answer(self, host, label, options, *, field=None, context=None):
         if field is not None:
-            from .field_context import field_context
+            from .field_context import field_context, approval_context, MAPPING_VERSION
             scoped=digest(['approved_answer',field_context(host,field,context)])
             r=self.db.execute('SELECT * FROM answers WHERE id=?',(scoped,)).fetchone()
             if r:return dict(r)
             current=field_context(host,field,context)
-            comparison=digest({k:v for k,v in current.items() if k!='version'})
-            for candidate in self.db.execute('SELECT a.*,q.context FROM answers a JOIN question_contexts q ON q.id=a.id WHERE a.host=? AND a.question=?',(host,label)):
+            comparison=digest(approval_context(current))
+            for candidate in self.db.execute('SELECT a.*,q.context FROM answers a JOIN question_contexts q ON q.id=a.id WHERE a.host=? ORDER BY a.updated DESC,a.id',(host,)):
                 try:previous=json.loads(candidate['context'])
                 except (ValueError,TypeError):continue
-                if isinstance(previous,dict) and previous.get('version') in (3,4,5,6) and digest({k:v for k,v in previous.items() if k!='version'})==comparison:
+                if isinstance(previous,dict) and previous.get('version') in range(3,MAPPING_VERSION+1) and digest(approval_context(previous))==comparison:
                     # Rule updates invalidate model bindings, not an unchanged
                     # explicit user approval. Resolve still validates its value.
                     result=dict(candidate);result.pop('context');return result
@@ -404,8 +404,25 @@ class Store:
 
     def resolve_known_question(self, host, label, options=None, *, field=None, context=None):
         if field is not None:
-            from .field_context import field_context
-            identifiers=[digest(['approved_answer',field_context(host,field,context)])]
+            from .field_context import field_context, approval_context, MAPPING_VERSION
+            metadata=field_context(host,field,context)
+            identifiers=[digest(['approved_answer',metadata])]
+            comparison=digest(approval_context(metadata))
+            for row in self.db.execute('SELECT q.id,q.job_id,c.context FROM questions q JOIN question_contexts c ON c.id=q.id WHERE q.host=? AND q.resolved=0',(host,)):
+                try:previous=json.loads(row['context'])
+                except (ValueError,TypeError):continue
+                same_field=(isinstance(previous,dict) and row['job_id']==(context or {}).get('id')
+                            and previous.get('label')==metadata['label']
+                            and previous.get('section','')==metadata['section']
+                            and previous.get('section_entry',0)==metadata.get('section_entry',0))
+                corrected_sms=(isinstance(previous,dict) and row['job_id']==(context or {}).get('id')
+                               and metadata['label']=='consent to receiving text messages' and previous.get('label')=='phone'
+                               and previous.get('widget')==metadata['widget']=='radio'
+                               and previous.get('options')==[list(pair) for pair in metadata['options']])
+                if isinstance(previous,dict) and previous.get('version') in range(3,MAPPING_VERSION+1) and (same_field or corrected_sms or digest(approval_context(previous))==comparison):
+                    # A successfully resolved current field retires its obsolete
+                    # question for this job. Saved approvals retain strict scope.
+                    identifiers.append(row['id'])
             # Unscoped historical dates cannot establish which section was reviewed.
             if not field.get('section'):identifiers.append(self.question_key(host,label,options or []))
             self.db.execute('UPDATE questions SET resolved=1 WHERE id IN ('+','.join('?' for _ in identifiers)+') AND reason!=?',(*identifiers,'legacy_history_review'))

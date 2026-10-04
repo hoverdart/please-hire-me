@@ -41,11 +41,24 @@ def matches(value,bounds):
     if outcomes[0]!=outcomes[1]:raise Blocked('graduation_window_review','A month is required to compare this graduation cutoff')
     return outcomes[0]
 
+def qualifies(value, text):
+    """Compare discrete named graduation seasons without filling their gaps."""
+    seasonal=re.search(r'graduat\w*.{0,80}?\b(?:either\s+)?(Spring|Summer|Fall|Autumn)\s+(20\d{2})\s+or\s+(Spring|Summer|Fall|Autumn)\s+(20\d{2})\b',text,re.I)
+    if seasonal:
+        seasons={'spring':(3,5),'summer':(6,8),'fall':(9,12),'autumn':(9,12)}
+        outcomes=[]
+        for season,year in ((seasonal[1],seasonal[2]),(seasonal[3],seasonal[4])):
+            lo,hi=seasons[season.casefold()]
+            outcomes.append(matches(value,(int(year)*12+lo-1,int(year)*12+hi-1)))
+        return any(outcomes)
+    bounds=window(text)
+    return matches(value,bounds) if bounds is not None else None
+
 def required(text,value):
     for sentence in re.split(r'[\n.!?]+',text):
         if re.search(r'graduation date.{0,60}(?:indicated|included|listed|stated).{0,30}(?:resume|cv)',sentence,re.I):
             continue # Document-content requirement, not a graduation cutoff.
-        if not re.search(r'(?:must|required|eligible|between|before|after|by).{0,60}graduat|graduat.{0,60}(?:must|between|before|after|by)',sentence,re.I):continue
-        bounds=window(sentence)
-        if bounds is None:raise Blocked('graduation_window_review','An unparsed graduation requirement needs review')
-        if not matches(value,bounds):raise Blocked('graduation_mismatch')
+        if not re.search(r'(?:must|required|eligible|between|before|after|by).{0,60}graduat|graduat.{0,60}(?:must|between|before|after|by|either)',sentence,re.I):continue
+        result=qualifies(value,sentence)
+        if result is None:raise Blocked('graduation_window_review','An unparsed graduation requirement needs review')
+        if not result:raise Blocked('graduation_mismatch')

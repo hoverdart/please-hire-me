@@ -52,7 +52,16 @@ def probe(net,ats,slug):
         d=net.json(f"https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true")
         for j in d.get("jobs",[]):
             if not j.get("isListed",True): continue
-            out.append(posting(j["jobUrl"],slug,j["title"],j.get("location","")+"; "+"; ".join(x.get("location","") for x in j.get("secondaryLocations",[])),f"ash:{slug}",j.get("descriptionPlain", "")))
+            locations=[j,*j.get('secondaryLocations',[])]
+            parts=[];countries=[]
+            for location in locations:
+                address=(location.get('address') or {}).get('postalAddress') or {}
+                country=address.get('addressCountry','')
+                country={'US':'United States','CA':'Canada','GB':'United Kingdom'}.get(country,country)
+                parts.extend(x for x in (location.get('location',''),address.get('addressRegion',''),country) if isinstance(x,str) and x)
+                countries.append(country)
+            out.append(posting(j["jobUrl"],slug,j["title"],'; '.join(dict.fromkeys(parts)),f"ash:{slug}",j.get("descriptionPlain", ""),
+                               **({'employment_countries':list(dict.fromkeys(countries))} if all(countries) else {})))
     elif ats=="gh":
         d=net.json(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true")
         for j in d.get("jobs",[]):
