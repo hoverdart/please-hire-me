@@ -590,7 +590,7 @@ class Browser:
         elif job['host'] not in ATS_HOSTS|PORTAL_HOSTS:raise Blocked('unapproved_destination')
         from .ats_adapters import adapter_for
         adapter=adapter_for(job)
-        navigation,verified_posting=adapter.navigation(job) if not self.test_url else (job['url'],None)
+        navigation,verified_posting=adapter.navigation(job,checkpoint=self.store.checkpoint,deadline=getattr(self.store,'run_deadline',None)) if not self.test_url else (job['url'],None)
         try:self.page.goto(navigation,wait_until='domcontentloaded',timeout=45000)
         except Exception as error:
             # Only the initial read navigation is classified for delayed retry.
