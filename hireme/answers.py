@@ -36,6 +36,9 @@ REFUSE = re.compile(r"do not use (?:ai|artificial intelligence)|don.t use ai|wit
 
 
 def field_key(label):
+    if re.search(r'\b(?:hispanic|latino)\b',label,re.I):return 'hispanic_latino'
+    if re.search(r'currently.*(?:hold|have).*temporary.*(?:work|employment).*authoriz',label,re.I):return 'temporary_work_authorization'
+    if re.search(r'(?:programming|program analysis).*proficien|proficien.*(?:programming|program analysis)',label,re.I):return 'programming_proficiency'
     if re.search(r'currently own,? operate,? or provide services.*business or organization',label,re.I):return 'outside_business_activity'
     if re.search(r'describe the nature of the activity.*your role.*overlap',label,re.I):return 'business_activity_details'
     if (re.search(r'(?:store|process).*data.*(?:considering|consideration|eligibility).*application.*employment',label,re.I)
@@ -50,9 +53,11 @@ def field_key(label):
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
     if re.fullmatch(r'(?:what are your )?pronouns',label):return 'pronouns'
     if re.fullmatch(r'what is your gender(?: identity)?',label):return 'gender'
+    if re.fullmatch(r'how would you describe your gender identity',label):return 'gender'
     if re.fullmatch(r'what is your (?:cumulative )?gpa',label):return 'gpa'
     if re.fullmatch(r'what is your (?:race or ethnicity|race|ethnicity)',label):return 'race'
     if re.fullmatch(r'what is your disability status',label):return 'disability'
+    if re.fullmatch(r'(?:please indicate |what is )?your (?:desired )?hourly (?:rate|pay)(?: requirement| expectation)?',label):return 'salary'
     if re.search(r'(?:which|what|indicate|select|enter).*(?:\bstate\b|province).*(?:resid|live)',label):return 'state'
     if re.search(r'(?:zip|postal) code.*(?:primary residence|home|address)',label):return 'postal_code'
     if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
@@ -69,7 +74,7 @@ def field_key(label):
 
 
 def category(label):
-    if re.search(r"why (?:do you want|are you interested|this (?:role|company))|what interests you|what (?:excites|motivates) you|what excites you|why are you excited|what makes you (?:excited|interested)|why.{0,50}(?:work|join)|why.{0,30}(?:choose|chose)|(?:professional|career|short.term) goals",label,re.I):return "motivation"
+    if re.search(r"why (?:do you want|are you interested|this (?:role|company))|what interests you|what (?:excites|motivates) you|what excites you|why are you excited|what makes you (?:excited|interested)|why.{0,50}(?:work|join)|why.{0,30}(?:choose|chose)|(?:professional|career|short.term) (?:goals|plans|aspirations)",label,re.I):return "motivation"
     if re.search(r"(?:tell|describe|share).{0,25}(?:project|something you (?:built|created))",label,re.I):return "project"
     if re.search(r"(?:tell us about yourself|summarize your (?:background|experience)|describe your (?:background|experience)|describe your prior experience)",label,re.I):return "experience"
     return None
@@ -80,6 +85,10 @@ def _option_value(key, value, options):
         if options.count(value)!=1:raise Blocked('option_mismatch')
         return value
     normalize=lambda v:re.sub(r"[^a-z0-9]", "", v.casefold())
+    if key=='programming_proficiency' and value in {'Beginner','Intermediate','Advanced','Expert'}:
+        matches=[x for x in options if re.match(re.escape(value)+r'(?:\b|/)',x,re.I)]
+        if len(matches)!=1:raise Blocked('option_mismatch')
+        return matches[0]
     if key=='gpa' and re.fullmatch(r'\d+(?:\.\d+)?(?:\s*/\s*4(?:\.0+)?)?',value):
         from decimal import Decimal
         score=Decimal(value.split('/')[0].strip());matches=[]
@@ -117,13 +126,18 @@ def _option_value(key, value, options):
         'citizenship':{'unitedstates':{"us", "usa", "unitedstatesofamerica"}},
         'school':{'universityofcaliforniaberkeley':{"ucberkeley","universitycaliforniaberkeley"},'universitycaliforniaberkeley':{"ucberkeley","universityofcaliforniaberkeley"}},
         'disability':{'noidonothaveadisability':{"noidonothaveadisabilityandhavenothadoneinthepast"}},
+        'veteran':{'iamnotaveteran':{'iamnotaprotectedveteran'},'notaveteran':{'iamnotaprotectedveteran'}},
         'sms':{'yes':{'yesiconsenttoreceivingtextmessages'},'no':{'noidonotconsenttoreceivingtextmessages'}},
         'onsite':{'yes':{'yesiamableandwillingtoworkintheofficelocationlistedinthejobdescription'},
                   'no':{'noiamunableandorunwillingtoworkintheofficelocationlistedinthejobdescription'}},
     }
     if key=='graduation' and re.fullmatch(r'\d{4}-\d{2}',value):
+        import calendar
         year,month=value.split('-');season='Spring' if 3<=int(month)<=5 else 'Summer' if 6<=int(month)<=8 else 'Fall' if 9<=int(month)<=11 else 'Winter'
-        seasonal=[x for x in options if normalize(x) in {normalize(season+' '+year),year}]
+        names=(calendar.month_name[int(month)],calendar.month_abbr[int(month)])
+        supported={normalize(season+year),normalize(year+season),year,year+month,month+year,
+                   *(normalize(name+year) for name in names),*(normalize(year+name) for name in names)}
+        seasonal=[x for x in options if normalize(x) in supported]
         if len(seasonal)==1:return seasonal[0]
     allowed={normalize(value)}|aliases.get(key,{}).get(normalize(value),set())
     if value in ('Yes','No'):
@@ -132,6 +146,12 @@ def _option_value(key, value, options):
             matches=[x for x in options if re.fullmatch(r'i have not previously been employed(?: at .+)?',x,re.I)]
     else:matches=[x for x in options if normalize(x) in allowed]
     if not matches and key in {'school','major','degree'}:matches=[x for x in options if normalize(x)=='other']
+    if len(matches)>1 and key in {'school','degree'} and len(set(matches))==len(matches):
+        # The allowlist above establishes the same fact for every candidate.
+        # Prefer the literal value, then a stable rendering; don't send known
+        # synonyms to a model merely because the ATS lists several of them.
+        exact=[x for x in matches if x.strip().casefold()==value.strip().casefold()]
+        return exact[0] if len(exact)==1 else min(matches,key=lambda x:(len(x),x.casefold(),x))
     if len(matches)!=1:raise Blocked('option_mismatch')
     return matches[0]
 
@@ -160,17 +180,58 @@ def _resume_internship(store, label):
 
 
 def _discovery_answer(label, options, context):
-    if not re.search(r'how (?:did|have).*hear|how did.*(?:find|learn)|where did.*(?:find|hear|learn)|how did.*connect with',label,re.I) and not (len(options)>=3 and sum(bool(re.search(r'linkedin|indeed|search engine|social media|news article',x,re.I)) for x in options)>=3 and all(x.casefold() in label.casefold() for x in options)):return None
+    if not re.search(r'how (?:did|have).*hear|how did.*(?:find|learn)|where did.*(?:find|hear|learn)|how did.*connect with|what led you to apply for (?:this|the) opportunity',label,re.I) and not (len(options)>=3 and sum(bool(re.search(r'linkedin|indeed|search engine|social media|news article',x,re.I)) for x in options)>=3 and all(x.casefold() in label.casefold() for x in options)):return None
     source=context.get('source','')
     if not source or source=='user':return None
+    if not options:
+        names={'gh':'Your Greenhouse careers page.','ash':'Your Ashby careers page.',
+               'lv':'Your Lever careers page.','portal':'Your careers website.',
+               'simplify':'The SimplifyJobs internship listings.'}
+        answer=names.get(source.split(':',1)[0]) if ':' in source else None
+        return {'value':answer,'provenance':{'job_source':source}} if answer else None
     normal=lambda x:re.sub(r'[^a-z0-9]','',x.casefold())
     preferred=['companywebsite','companycareerssite','companycareerspage'] if source.startswith(('gh:','ash:','lv:','portal:')) else ['jobboard','onlinejobboard']
+    company=normal(context.get('company',''))
+    if company and source.startswith(('gh:','ash:','lv:','portal:')):
+        preferred=[company+'careerswebsite',company+'careerssite',company+'careerspage',*preferred]
     unions=[x for x in options if re.search(r'(?:/|\bor\b)\s*(?:online )?job board\s*$',x,re.I)]
     for candidate in preferred+['other']:
         matches=[x for x in options if normal(x)==candidate]
         if len(matches)==1:return {'value':matches[0],'provenance':{'job_source':source}}
     if len(unions)==1:return {'value':unions[0],'provenance':{'job_source':source}}
     return None
+
+
+def _local_campus_answer(store,label):
+    # UC Berkeley's official admissions brochure locates Berkeley 12 miles
+    # from San Francisco. This generous, named radius is a geographic fact,
+    # not a commute-time or relocation promise.
+    if not re.fullmatch(r'Do you currently attend a college or university within an 80[- ]mile radius of San Francisco(?:, CA)?[? *]*',label.strip(),re.I):return None
+    facts=store.facts();school=facts.get('school');start=facts.get('college_start');graduation=facts.get('graduation')
+    name=re.sub(r'[^a-z0-9]','',school['value'].casefold()) if school else ''
+    from .util import now
+    month=now()[:7]
+    if name not in {'universityofcaliforniaberkeley','universitycaliforniaberkeley','ucberkeley'} or not start or not graduation or not start['value']<=month<=graduation['value']:return None
+    return {'value':'Yes','provenance':{'campus_radius':{'school_revision':school['revision'],'college_start_revision':start['revision'],
+        'graduation_revision':graduation['revision'],'rule':'uc-berkeley-san-francisco-80-mile',
+        'source':'https://admissions.berkeley.edu/wp-content/uploads/OUA_Outreach2022_GeneralBrochure_web.pdf'}}}
+
+
+def _chronological_academic_year(store,label):
+    match=re.fullmatch(r'Please indicate your level of education during the Fall (\d{4}) Semester[ :?*]*',label.strip(),re.I)
+    if not match:return None
+    facts=store.facts();start=facts.get('college_start');graduation=facts.get('graduation');degree=facts.get('degree')
+    if not start or not graduation or not degree:return None
+    normalized=re.sub(r'[^a-z]','',degree['value'].casefold())
+    if normalized not in {'bs','bachelor','bachelors','bachelorsdegree','bachelorofscience'}:return None
+    # Fall matriculation establishes chronological year of study. It does not
+    # establish standing by credits, transfer credits, or an official class rank.
+    if not re.fullmatch(r'\d{4}-(?:07|08|09)',start['value']):return None
+    fall=f'{match[1]}-09';year=int(match[1])-int(start['value'][:4])+1
+    if not start['value']<=fall<=graduation['value'] or not 1<=year<=4:return None
+    return {'value':['Freshman','Sophomore','Junior','Senior'][year-1],
+            'provenance':{'chronological_academic_year':{'college_start_revision':start['revision'],
+                'graduation_revision':graduation['revision'],'degree_revision':degree['revision'],'fall':match[1]}}}
 
 
 def _context_preference(store, label, options, context):
@@ -190,7 +251,7 @@ def _context_preference(store, label, options, context):
                 try:value=_option_value('country','United States',options)
                 except Blocked:return None
                 evidence={'residence_location_revision':location['revision']}
-    elif re.search(r'preferred programming language.*interviews?',low):
+    elif re.search(r'preferred (?:programming|coding) language',low) and re.search(r'interviews?',low):
         # The opt-in permits routine preferences supported by confirmed skills.
         # Choose the first listed skill available as an exact language option.
         skills=facts.get('skills')
@@ -282,6 +343,9 @@ def _fits_writing_limits(value, field, context=None):
 
 def _compatible_binding(key, label):
     terms={
+        'hispanic_latino':r'hispanic|latino',
+        'temporary_work_authorization':r'currently.*(?:hold|have).*temporary.*(?:work|employment).*authoriz',
+        'programming_proficiency':r'(?:programming|program analysis).*proficien|proficien.*(?:programming|program analysis)',
         'full_name':r'\bname\b', 'first_name':r'\bfirst.*name\b', 'last_name':r'\blast.*name\b',
         'preferred_name':r'preferred.*name|nickname|(?:should|may|can) we call you', 'native_name':r'native.*name|name.*native',
         'email':r'\be.?mail\b', 'phone':r'phone|mobile|dial|calling code',
@@ -295,7 +359,7 @@ def _compatible_binding(key, label):
         'graduation':r'graduat', 'earliest_start':r'(?:earliest|available|availability).*start|start.*(?:earliest|available|availability)',
         'latest_start':r'latest.*start|start.*latest', 'skills':r'skills|technolog|languages',
         'race':r'race|ethnic', 'gender':r'gender', 'pronouns':r'pronoun',
-        'veteran':r'veteran|military', 'disability':r'disabil', 'salary':r'salary|compensation|pay expect',
+        'veteran':r'veteran|military', 'disability':r'disabil', 'salary':r'salary|compensation|pay expect|hourly (?:rate|pay)',
         'notice_period':r'notice', 'relocate':r'relocat',
         'summer_2027_relocate':r'relocat', 'summer_2027_available':r'availab|commit',
         'worked_outside_resume':r'work|employ', 'contacts_outside_resume':r'contact|know anyone|family|relative|spouse|partner',
@@ -319,6 +383,9 @@ def _compatible_binding(key, label):
 
 def _compatible_field(key, field, context=None):
     label=field['label']
+    if key=='degree' and any(re.fullmatch(r'Freshman|Sophomore|Junior|Senior',o,re.I) for o in field.get('options',[])):return False
+    if key=='race' and re.search(r'hispanic|latino',label,re.I):return False
+    if key in {'work_authorized_us','needs_sponsorship','unrestricted_authorization'} and re.search(r'temporary.*authoriz',label,re.I):return False
     if key=='recruitment_data_consent' and re.search(r'marketing|advertis|sell|sale|third.part',label,re.I):return False
     if key in {'summer_2027_available','summer_2027_relocate'} and not re.search(r'summer\s*2027',label+' '+(context or {}).get('title',''),re.I):return False
     if key in {'work_authorized_us','unrestricted_authorization'}:
@@ -401,11 +468,16 @@ def _approved_sentences(store, context):
 def _validate_writing(store, answer):
     templates={t['id']:t for t in store.templates()}
     parts=answer['provenance'].get('sample_parts',[])
+    if answer['provenance'].get('context_answer') and answer['provenance'].get('facts_hash')!=digest(store.facts()):raise Blocked('unsupported_or_stale_sample')
     if answer['provenance'].get('tailored'):
         if not store.settings()['tailored_writing'] or not parts or answer['provenance'].get('text_hash')!=digest(answer['value']):raise Blocked('unsupported_or_stale_sample')
     elif not parts or answer['value']!=' '.join(p['text'] for p in parts):raise Blocked('unsupported_or_stale_sample')
     resume=None
     for part in parts:
+        if 'fact_key' in part:
+            fact=store.facts().get(part['fact_key'])
+            if not fact or fact['revision']!=part['revision'] or fact['value']!=part['text']:raise Blocked('unsupported_or_stale_sample')
+            continue
         if 'resume_hash' in part:
             if not store.settings()['tailored_writing']:raise Blocked('unsupported_or_stale_sample')
             if resume is None:resume=_resume_evidence(store)
@@ -434,7 +506,9 @@ def resolve(store, host, field, provider=None, context=None):
             if context['single_line'] and re.search(r'[\r\n]',writing['value']):raise Blocked('writing_upgrade_needed')
             if store.settings()['tailored_writing'] and not writing['provenance'].get('tailored'):raise Blocked('writing_upgrade_needed')
             if writing['provenance'].get('tailored') and writing['provenance'].get('context_hash')!=writing_context_hash(store,context):raise Blocked('stale_writing_context')
+            if writing['provenance'].get('context_answer') and writing['provenance'].get('field_hash')!=digest(context['field_context']):raise Blocked('stale_writing_context')
             if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
+            validate_numeric(writing['value'],field)
         except Blocked:
             if not provider:raise
             store.db.execute('DELETE FROM writing_answers WHERE id=?',(store.question_key(host,label,options),))
@@ -518,7 +592,9 @@ def resolve(store, host, field, provider=None, context=None):
         if graduation_confirmation:
             key=None;template=None;derived=graduation_confirmation
         if not key and not derived:derived=_context_preference(store,label,options,context)
-        if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context)
+        if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label)
+        if key and key not in store.facts() and provider and store.settings()['tailored_writing'] and key in {'school','degree','major','skills','location','city','state'}:
+            key=None  # Approved context may state an ordinary fact not separately entered.
         if not key and not template and not derived and provider and field.get('required'):
             from .config import FACTS
             facts={k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items() if k not in {'worked_outside_resume','contacts_outside_resume'}}
@@ -553,6 +629,28 @@ def resolve(store, host, field, provider=None, context=None):
                 if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
                 store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)
                 return {'field':field,**writing}
+        # Ordinary structured fields need the factual source library too. Legal,
+        # consent, demographic and assessment questions remain explicit approvals.
+        sensitive=r'consent|agree|acknowledge|certif|arbitrat|privacy|authoriz|citizen|sponsor|visa|hispanic|latino|ethnic|race|gender|pronoun|veteran|military|disabil|criminal|government|procurement|proficien|assessment|work sample|18 years|\bage\b|full.time.*availab|availab.*full.time'
+        if (not key and not template and not derived and provider and field.get('required') and not is_writing
+                and store.settings()['tailored_writing'] and hasattr(provider,'context_answer')
+                and field.get('type') in {'text','textarea','number','select','radio','combobox','yesno'}
+                and not re.search(sensitive,label,re.I)):
+            from .config import FACTS
+            choices=_approved_sentences(store,{**context,'description':label+' '+context.get('description','')})
+            choices += [{'id':'fact:'+k,'text':v['value'],'fact_key':k,'revision':v['revision']}
+                        for k,v in store.facts().items() if k not in {'worked_outside_resume','contacts_outside_resume'}]
+            draft=provider.context_answer(field,choices,{k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()},context) if choices else {}
+            by_id={x['id']:x for x in choices};ids=draft.get('sentence_ids',[])
+            if (isinstance(draft.get('answer'),str) and draft['answer'] and ids and len(ids)==len(set(ids))
+                    and all(x in by_id for x in ids) and (not options or options.count(draft['answer'])==1)):
+                parts=[{k:v for k,v in by_id[x].items() if k!='id'} for x in ids]
+                writing={'value':draft['answer'],'provenance':{'tailored':True,'context_answer':True,'sample_parts':parts,
+                         'text_hash':digest(draft['answer']),'context_hash':writing_context_hash(store,context),'field_hash':digest(context['field_context']),'facts_hash':digest(store.facts())}}
+                _validate_writing(store,writing);validate_numeric(writing['value'],field)
+                if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
+                store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)
+                return {'field':field,**writing}
         if template:
             value=re.sub(r'[\r\n]+',' ',template['body']).strip() if field.get('type')=='text' else template['body'];provenance={'template_id':template['id'],'revision':template['revision']}
         elif derived:
@@ -564,6 +662,10 @@ def resolve(store, host, field, provider=None, context=None):
                 store.resolve_known_question(host,label,options,field=field,context=context)
                 return None
             value=fact['value']
+            if key=='salary' and re.search(r'\bhourly (?:rate|pay)\b',label,re.I):
+                hourly=re.fullmatch(r'\$?(\d+(?:\.\d+)?)\s*(?:/\s*(?:hr?|hours?)|per hour|hourly)',value,re.I)
+                if not hourly:raise Blocked('missing_fact','Confirm an hourly pay requirement; an annual amount cannot be converted without a confirmed schedule')
+                value=hourly[1]
             value=present(key,value,field)
             provenance={'fact_key':key,'revision':fact['revision']}
     if field.get('type') in ('radio','select','combobox','checkbox','checkbox-group','yesno') and options:
@@ -590,6 +692,8 @@ def validate_package(store, job, package):
         if 'sample_parts' in prov:
             _validate_writing(store,answer)
             if prov.get('tailored') and prov.get('context_hash')!=writing_context_hash(store,job):raise Blocked('stale_writing_context')
+            if prov.get('context_answer') and prov.get('field_hash')!=digest(field_context(job.get('answer_scope',job['host']),field,job)):raise Blocked('stale_writing_context')
+            validate_numeric(answer['value'],field)
             cached=store.writing_answer(job.get('answer_scope',job['host']),field['label'],field.get('options',[]))
             if cached!={'value':answer['value'],'provenance':prov}:raise Blocked('unsupported_or_stale_sample')
             continue

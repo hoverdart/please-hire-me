@@ -630,7 +630,11 @@ class Browser:
             if isinstance(error,NavigationError):
                 raise Blocked('posting_navigation_review','Initial posting read failed ('+(code[1] if code else 'browser navigation error')+'); review the job link before retrying') from error
             raise
-        self._wait_ready()
+        from playwright.sync_api import TimeoutError as RenderingTimeout
+        try:self._wait_ready()
+        except RenderingTimeout:
+            self.store.checkpoint()
+            raise Blocked('posting_fetch_failed','Initial posting did not render application or sign-in controls before timeout; no fields were filled') from None
         text=self._guard(job)
         # Screening must inspect the posting, not questions in its application.
         # For example HP IQ asks about graduating before September; that is a

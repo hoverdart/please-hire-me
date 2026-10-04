@@ -26,17 +26,39 @@ def summary(store, at=None):
         WHERE state='confirmed' AND attempted>=? AND attempted<?""", bounds).fetchone()[0]
     model_requests = store.db.execute('SELECT COUNT(*) FROM model_requests WHERE timestamp>=? AND timestamp<?', bounds).fetchone()[0]
     condition, parameters = attention_sql('j')
+    from .presentation import actionable_question_sql
+    question_condition,question_parameters=actionable_question_sql('q')
     attention = store.db.execute(f"""SELECT COUNT(*) FROM (
-        SELECT job_id FROM questions WHERE resolved=0 AND job_id NOT IN (SELECT job_id FROM job_decisions)
+        SELECT q.job_id FROM questions q WHERE {question_condition}
         UNION SELECT j.id FROM jobs j WHERE {condition}
         UNION SELECT job_id FROM applications WHERE state IN ('unknown','awaiting_verification')
-    )""", parameters).fetchone()[0]
+    )""", (*question_parameters,*parameters)).fetchone()[0]
     accounts = store.db.execute("SELECT COUNT(*) FROM employer_accounts WHERE state='uncertain'").fetchone()[0]
-    questions = store.db.execute('SELECT COUNT(*) FROM questions WHERE resolved=0 AND job_id NOT IN (SELECT job_id FROM job_decisions)').fetchone()[0]
+    questions = store.db.execute('SELECT COUNT(*) FROM questions q WHERE '+question_condition,question_parameters).fetchone()[0]
     held = store.db.execute(f"SELECT COUNT(*) FROM jobs j WHERE j.status='blocked' AND {condition}", parameters).fetchone()[0]
     return {'job_count': sum(counts.values()), 'status_counts': counts, 'submitted_today': submitted,
             'attention_count': attention + accounts, 'question_count': questions, 'held_count': held,
-            'model_requests_today': model_requests, 'local_date': local.date().isoformat()}
+            'model_requests_today': model_requests, 'model_usage':model_usage(store,bounds), 'local_date': local.date().isoformat()}
+
+
+def model_usage(store,bounds):
+    """Only provider-reported tokens; missing metadata is not a zero-cost call."""
+    groups={}
+    for row in store.db.execute('''SELECT r.provider,m.model,m.success,m.usage FROM model_requests r
+        LEFT JOIN model_request_metadata m ON m.request_id=r.id
+        WHERE r.timestamp>=? AND r.timestamp<? ORDER BY r.provider,m.model''',bounds):
+        key=(row['provider'],row['model'] or '')
+        g=groups.setdefault(key,{'provider':key[0],'model':key[1],'requests':0,'successful':0,
+            'failed':0,'outcome_unavailable':0,'measured_requests':0,'usage_unavailable':0,'tokens':{}})
+        g['requests']+=1
+        g['successful' if row['success']==1 else 'failed' if row['success']==0 else 'outcome_unavailable']+=1
+        try:usage=json.loads(row['usage'] or '{}')
+        except (ValueError,TypeError):usage={}
+        valid={k:v for k,v in usage.items() if k in {'input_tokens','output_tokens','cache_creation_input_tokens','cache_read_input_tokens'} and type(v) is int and v>=0} if isinstance(usage,dict) else {}
+        for k,v in valid.items():g['tokens'][k]=g['tokens'].get(k,0)+v
+        measured='input_tokens' in valid and 'output_tokens' in valid
+        g['measured_requests']+=int(measured);g['usage_unavailable']+=int(not measured)
+    return list(groups.values())
 
 
 def spreadsheet_text(value):

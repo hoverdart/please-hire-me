@@ -334,6 +334,10 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                     elif path=='/api/remove-provider-key':
                         from .connections import key_path
                         key_path(store).unlink(missing_ok=True);result={'removed':True}
+                    elif path=='/api/basic-context':
+                        from .materials import save_basic_context
+                        if data.get('confirmed') is not True:raise ValueError('Confirm your factual context before saving')
+                        result=save_basic_context(store,data.get('text'),data.get('revision'))
                     elif path=='/api/context-text':
                         from .materials import import_material,review_material
                         text=data['text'];role=data['role']

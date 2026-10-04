@@ -168,6 +168,27 @@ def writing_context(store):
     return result
 
 
+def basic_context(store):
+    row=store.db.execute("SELECT id,text,revision,confirmed,role FROM materials WHERE original_name='Basic context.txt' ORDER BY updated DESC LIMIT 1").fetchone()
+    return dict(row) if row else {'text':'','revision':0,'confirmed':False,'role':'personal'}
+
+
+def save_basic_context(store, text, revision):
+    """One editable approved source; keep normal material revision/withdrawal rules."""
+    if not isinstance(text,str) or not 20<=len(text.strip())<=12000:
+        raise ValueError('Provide 20–12,000 characters of factual context')
+    if type(revision) is not int:raise ValueError('Provide the saved context revision')
+    with store.transaction():
+        previous=basic_context(store)
+        if revision!=previous['revision']:
+            raise ValueError('Basic context changed elsewhere. Reload before replacing it.')
+        if previous.get('id'):
+            mid=previous['id']
+        else:
+            mid=import_material(store,text.strip().encode(),'Basic context.txt','context')['id']
+        return review_material(store,mid,text,'personal',True)
+
+
 def writing_context_hash(store, context):
     revisions = [tuple(r) for r in store.db.execute(
         'SELECT id,revision,role,kind FROM materials WHERE confirmed=1 ORDER BY id')]

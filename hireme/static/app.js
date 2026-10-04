@@ -100,7 +100,7 @@ function updateDraftControls() {
   }
 }
 window.addEventListener("beforeunload", (event) => {
-  const unfinished = [$("#facts-form"), $("#settings-form"), $("#account-credentials-form")].some(
+  const unfinished = [$("#facts-form"), $("#settings-form"), $("#account-credentials-form"), $("#basic-context-form"), $("#context-form")].some(
     (form) => dirtyForms.has(form) || form.dataset.saving === "true",
   );
   if (!unfinished && !opportunityNotes.hasDrafts()) return;
@@ -308,6 +308,7 @@ async function api(path, data, raw = false, extraHeaders = {}) {
     "/api/facts": "#facts-form",
     "/api/template": "#template-form",
     "/api/context-text": "#context-form",
+    "/api/basic-context": "#basic-context-form",
   };
   if (forms[path]) saved($(forms[path]));
   return value;
@@ -2219,6 +2220,7 @@ const groups = {
     "gpa",
     "professional_years",
     "skills",
+    "programming_proficiency",
   ],
   "Authorization & availability": [
     "work_authorized_us",
@@ -2226,6 +2228,7 @@ const groups = {
     "citizenship",
     "us_person",
     "unrestricted_authorization",
+    "temporary_work_authorization",
     "earliest_start",
     "latest_start",
     "salary",
@@ -2238,6 +2241,7 @@ const groups = {
   ],
   "Optional disclosures & consent": [
     "race",
+    "hispanic_latino",
     "gender",
     "veteran",
     "disability",
@@ -2248,6 +2252,7 @@ const groups = {
   ],
 };
 const yesNoFacts = new Set([
+  "temporary_work_authorization",
   "work_authorized_us",
   "needs_sponsorship",
   "us_person",
@@ -2268,6 +2273,8 @@ const monthFacts = new Set([
   "latest_start",
 ]);
 const factHelp = {
+  hispanic_latino: "Hispanic / Latino ethnicity is separate from race. Use your chosen response; an Asian race answer does not determine it.",
+  programming_proficiency: "Your own assessment: Beginner, Intermediate, Advanced or Expert. Experience does not set this rating automatically.",
   skills:
     "Separate skills with commas. Include only skills you can honestly support.",
   professional_years:
@@ -3088,6 +3095,16 @@ function render() {
   renderMail();
   renderDocumentStatus();
   if (!editing("#facts-form")) renderFacts();
+  if (!editing("#basic-context-form")) {
+    const context = state.basic_context || { text: "", revision: 0 };
+    $("#basic-context-form textarea").value = context.text;
+    $("#basic-context-form").dataset.revision = context.revision;
+    $("#basic-context-status").textContent = context.text
+      ? context.confirmed && context.role === "personal"
+        ? "Saved and approved. Used alongside your resume and confirmed facts."
+        : "Saved, but not approved as factual context. Review and save to use it."
+      : "Your saved context will stay here so you can update it.";
+  }
   if (!editing("#settings-form")) renderSettings();
   updateDraftControls();
   renderRuns();
@@ -4371,6 +4388,25 @@ function renderSetup() {
     $("#model-request-usage").textContent = usage;
   $("#model-request-reset").textContent =
     `Resets at midnight in ${state.settings.timezone}. Per-batch cap: ${state.settings.max_model_requests_per_cycle} requests.`;
+  const tokenUsage = $("#model-token-usage"),
+    usageRows = state.summary?.model_usage ?? [],
+    tokenSignature = JSON.stringify(usageRows);
+  if (tokenUsage.dataset.signature !== tokenSignature) {
+    tokenUsage.replaceChildren();
+    const names = {"claude-cli": "Claude subscription", "codex-cli": "Codex subscription", "anthropic-api": "Anthropic API", "openai-api": "OpenAI API"};
+    for (const row of usageRows) {
+      const item = document.createElement("li"),
+        counts = Object.entries(row.tokens).map(([key, value]) => `${Number(value).toLocaleString()} ${key.replaceAll("_", " ")}`).join(" · ");
+      item.textContent = `${names[row.provider] ?? row.provider}${row.model ? ` / ${row.model}` : " / model unavailable"}: ${row.requests} requests · ${row.successful} successful · ${row.failed} failed${row.outcome_unavailable ? ` · ${row.outcome_unavailable} outcomes unavailable` : ""}. ${counts || "Token counts unavailable"}${row.usage_unavailable ? ` · ${row.usage_unavailable} requests with incomplete token counts` : ""}.`;
+      tokenUsage.append(item);
+    }
+    if (!usageRows.length) {
+      const item = document.createElement("li");
+      item.textContent = "No model requests recorded today.";
+      tokenUsage.append(item);
+    }
+    tokenUsage.dataset.signature = tokenSignature;
+  }
   $("#provider-instructions").textContent =
     state.settings.provider === "claude-cli"
       ? "claude auth login"
@@ -4495,6 +4531,24 @@ $("#context-form").onsubmit = async (event) => {
     event.target.reset();
     await refresh();
     note("Approved context saved.");
+  } catch (error) {
+    note(error.message, true);
+  }
+};
+
+$("#basic-context-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  try {
+    await api("/api/basic-context", {
+      text: form.elements.text.value,
+      revision: Number(form.dataset.revision || 0),
+      confirmed: form.elements.confirmed.checked,
+    });
+    form.elements.confirmed.checked = false;
+    blurForm(form);
+    await refresh();
+    note("Basic context saved. Application answers can use your approved text.");
   } catch (error) {
     note(error.message, true);
   }

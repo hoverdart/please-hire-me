@@ -4,6 +4,9 @@ import re
 
 from .util import Blocked, company_normalizer
 
+# Bump when eligibility semantics change, independently of form/answer mapping.
+ELIGIBILITY_VERSION = 2
+
 LOCATIONS = {
  "San Francisco Bay Area": r"san francisco|\bsf\b|bay area|palo alto|mountain view|menlo park|redwood city|san mateo|sunnyvale|santa clara|san jose|oakland|berkeley|cupertino|foster city|emeryville|burlingame",
  "United States":r"united states|\busa?\b|,\s*(?:CA|WA|NY|IL|TX|MA|VA|AZ|CO|NC|GA|PA|OR|FL|MI|OH|MD|NJ|CT|UT|MN|WI)\b|san francisco|new york|seattle|boston|chicago|austin|palo alto|mountain view|berkeley|san jose|redwood city|sunnyvale|santa clara|bellevue|redmond|kirkland|menlo park|san mateo|oakland",
@@ -28,16 +31,43 @@ def fit_score(job,facts):
     return min(100,score),matches
 
 
+def employment_kind(job):
+    """Classify the advertised job, never the applicant's past experience.
+
+    Explicit title signals take precedence over board metadata and narrowly
+    phrased descriptions. An incidental mention of interns is not a role type.
+    """
+    title=job.get('title','')
+    intern=r'\bintern(?:ship)?\b|\bco[- ]?op\b'
+    part=r'\bpart[- ]?time\b'
+    graduate=r'\bnew[- ]?grad(?:uate)?\b|\bearly[- ]career\b'
+    if re.search(graduate,title,re.I):return 'new-grad'
+    if re.search(intern,title,re.I):return 'internship'
+    if re.search(part,title,re.I):return 'part-time'
+    metadata=str(job.get('employment_type') or '')
+    if re.fullmatch(r'intern(?:ship)?|co[- ]?op',metadata,re.I):return 'internship'
+    if re.fullmatch(r'part[- ]?time',metadata,re.I):return 'part-time'
+    if re.fullmatch(r'full[- ]?time',metadata,re.I):return 'new-grad'
+    if job.get('source')=='simplify:internships':return 'internship'
+    desc=job.get('description','')
+    if re.search(r'\b(?:this|the) (?:role|position|opportunity) (?:is|will be) (?:an? )?(?:'+intern+r')',desc,re.I):return 'internship'
+    if re.search(r'\b(?:this|the) (?:role|position|opportunity) (?:is|will be) (?:a )?(?:'+part+r')',desc,re.I):return 'part-time'
+    return 'new-grad'
+
+
 def eligible(job,s,facts):
     title=job.get("title",""); desc=job.get("description",""); location=job.get("location","")
     text=title+"\n"+desc
     clean=re.sub(r"member of technical staff|technical staff", "",title,flags=re.I)
     if SENIOR.search(clean): raise Blocked("seniority_mismatch")
-    if not any(re.search(re.escape(r),title,re.I) for r in s["roles"]): raise Blocked("role_mismatch")
-    internship=bool(re.search(r"\bintern\b|internship",text,re.I))
-    if internship and "internship" not in s["seniority"]: raise Blocked("internship_out_of_scope")
-    if not internship and "new-grad" not in s["seniority"]: raise Blocked("fulltime_out_of_scope")
-    summer=bool(re.search(r"summer\s*2027",text,re.I))
+    role_patterns={'software':r'software|\bswe\b|\b(?:front[- ]?end|back[- ]?end|full[- ]?stack|platform) (?:software )?(?:engineer|developer)',
+                   'machine learning':r'machine learning|\bml (?:engineer|research|intern)\b'}
+    if not any(re.search(role_patterns.get(r.casefold(),re.escape(r)),title,re.I) for r in s["roles"]): raise Blocked("role_mismatch")
+    kind=employment_kind(job);internship=kind=='internship'
+    summer=bool(re.search(r"\bsummer\s*2027\b|\b2027\s*summer\b",text,re.I))
+    accepted=kind in s['seniority'] or internship and summer and 'summer-internship' in s['seniority']
+    if not accepted:
+        raise Blocked({'internship':'internship_out_of_scope','part-time':'parttime_out_of_scope','new-grad':'fulltime_out_of_scope'}[kind])
     seasonal=facts.get("summer_2027_relocate",{}).get("value")=="Yes"
     locations=(s["summer_2027_locations"] if summer else s["school_locations"]) if seasonal else s["locations"]
     patterns=[LOCATIONS.get(l,re.escape(l)) for l in locations]
@@ -61,15 +91,19 @@ def eligible(job,s,facts):
     from .graduation import required
     required(desc,grad)
     start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",title,re.I)
+    reverse_start=re.search(r"(\d{4})\s*(winter|spring|summer|fall|autumn)",title,re.I) if not start else None
+    if reverse_start:
+        start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",reverse_start[2]+' '+reverse_start[1],re.I)
     if start:
         span={"winter":(1,3),"spring":(3,5),"summer":(5,8),"fall":(8,11),"autumn":(8,11)}[start.group(1).lower()]
         lo=f"{start[2]}-{span[0]:02d}"; hi=f"{start[2]}-{span[1]:02d}"
         earliest=facts.get("earliest_start",{}).get("value"); latest=facts.get("latest_start",{}).get("value")
         if earliest and earliest>hi or latest and latest<lo: raise Blocked("start_window_mismatch")
     pay=job.get("compensation") or {}
-    floor=s["min_hourly_usd"] if internship else s["min_annual_usd"]
+    hourly=kind in {'internship','part-time'}
+    floor=s["min_hourly_usd"] if hourly else s["min_annual_usd"]
     if floor:
-        if pay.get("currency")!="USD" or pay.get("period")!=("hour" if internship else "year") or pay.get("min") is None:
+        if pay.get("currency")!="USD" or pay.get("period")!=("hour" if hourly else "year") or pay.get("min") is None:
             raise Blocked("compensation_unknown")
         if pay["min"]<floor: raise Blocked("compensation_mismatch")
     # Every pipeline uses the same exact/alias company policy.

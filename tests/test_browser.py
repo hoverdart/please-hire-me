@@ -881,3 +881,15 @@ def test_ashby_texting_draft_save_is_suppressed_without_granting_submission(stor
     r.request.post_data=json.dumps({'operationName':'ApiSubmitCandidateTextingConsent','query':'mutation SubmitApplication { submitApplication { id } }'})
     b._route(r)
     assert r.action=='abort' and b.denied_write
+
+
+def test_initial_render_timeout_gets_bounded_read_retry_without_any_write(store,ats,monkeypatch):
+    from playwright.sync_api import TimeoutError
+    job=local_job(store,ats)
+    def fail_ready(self):raise TimeoutError('Synthetic render timeout')
+    monkeypatch.setattr(Browser,'_wait_ready',fail_ready)
+    with Browser(store,test_url=ats[0]) as browser:
+        with pytest.raises(Blocked,match='posting_fetch_failed'):browser.apply(job)
+        assert not browser.attempted and not browser.aid
+    assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()

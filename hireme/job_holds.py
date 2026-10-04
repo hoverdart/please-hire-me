@@ -15,6 +15,26 @@ ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','acco
 TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
 
+# Each exclusion is already a proven blocker. Other profile/preferences edits
+# cannot make that blocker pass and must not release it for another browser run.
+ELIGIBILITY_INPUTS = {
+    'seniority_mismatch': (set(),set()),
+    'role_mismatch': (set(),{'roles'}),
+    'internship_out_of_scope': (set(),{'seniority'}),
+    'fulltime_out_of_scope': (set(),{'seniority'}),
+    'parttime_out_of_scope': (set(),{'seniority'}),
+    'location_mismatch': ({'summer_2027_relocate'},{'locations','summer_2027_locations','school_locations'}),
+    'experience_mismatch': ({'professional_years'},{'max_years_required'}),
+    'sponsorship_mismatch': ({'needs_sponsorship'},set()),
+    'citizenship_mismatch': ({'us_person'},set()),
+    'graduation_mismatch': ({'graduation'},set()),
+    'start_window_mismatch': ({'earliest_start','latest_start'},set()),
+    'compensation_mismatch': (set(),{'min_annual_usd','min_hourly_usd'}),
+    'company_blocked': (set(),{'skip_companies','interview_companies','company_aliases'}),
+    'low_fit': ({'skills'},{'min_fit_score'}),
+    'expired_posting': (set(),set()),
+}
+
 def category(reason):
     if reason in NOT_MATCH_REASONS:return 'eligibility'
     if reason in FACT_REASONS:return 'information'
@@ -23,12 +43,25 @@ def category(reason):
     if reason in ACCOUNT_REASONS or reason=='account_agreement_review':return 'account'
     if reason=='multi_step_requires_adapter':return 'unsupported'
     if reason in TRANSIENT:return 'transient'
-    if reason in WAIT_REASONS:return 'limits'
+    if reason in WAIT_REASONS|{'company_uncertain','company_verification_pending','company_submission_rejected'}:return 'limits'
     return 'review'
 
-def dependency(store, job, kind):
+def dependency(store, job, kind, reason=None):
     saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
     posting=json.loads(saved['payload']) if saved else job
+    if kind=='eligibility':
+        from .policy import ELIGIBILITY_VERSION
+        fact_keys,setting_keys=ELIGIBILITY_INPUTS.get(reason,(
+            set().union(*(v[0] for v in ELIGIBILITY_INPUTS.values())),
+            set().union(*(v[1] for v in ELIGIBILITY_INPUTS.values()))))
+        facts=store.facts();settings=store.settings()
+        data={'version':2,'policy':ELIGIBILITY_VERSION,'reason':reason,
+            'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),
+            'posting_constraints':{k:posting.get(k) for k in ('min_years','compensation','employment_type','source')},
+            'facts':{k:facts[k]['value'] for k in sorted(fact_keys) if k in facts},
+            'settings':{k:settings[k] for k in sorted(setting_keys) if k in settings}}
+        if reason=='expired_posting':data['adapter']=ADAPTER_VERSION
+        return digest(data)
     data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION}
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})
     if kind in {'information','mapping','documents','eligibility','account'}:
@@ -62,7 +95,7 @@ def ready(store, job, at=None):
     if row['category']=='limits':return True # Existing policy checks the current day/company limits.
     if row['category']=='transient':return row['retry_at'] is not None and (at or time.time())>=row['retry_at']
     if row['category']=='review':return False
-    return row['dependency']!=dependency(store,job,row['category'])
+    return row['dependency']!=dependency(store,job,row['category'],row['reason'])
 
 def model_available(store,at=None):
     settings=store.settings();moment=datetime.fromtimestamp(time.time() if at is None else at,timezone.utc)
@@ -80,7 +113,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
     fields=[dict(row) for row in store.db.execute('SELECT label,reason,options FROM questions WHERE job_id=? AND resolved=0',(job['id'],))]
     if reason=='missing_answers' and any(f['reason'] in MAPPING_REASONS for f in fields):kind='mapping'
     previous=store.db.execute('SELECT retry_count,dependency FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
-    fingerprint=dependency(store,job,kind)
+    fingerprint=dependency(store,job,kind,reason)
     retries=previous['retry_count']+1 if previous and previous['dependency']==fingerprint else 0
     retry_at=(at or time.time())+(1800 if retries==0 else 7200) if kind=='transient' and retries<2 else None
     guidance={'eligibility':'Change relevant preferences or wait for a posting update.',

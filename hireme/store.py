@@ -518,6 +518,9 @@ class Store:
             raise Blocked("company_verification_pending","Complete the earlier application verification first")
         if any(r["state"] in ("submitting","unknown") for r in active):
             raise Blocked("company_uncertain","Reconcile the earlier attempt first")
+        spam_ids={row[0] for row in self.db.execute("SELECT id FROM applications WHERE state='not_submitted' AND LOWER(confirmation) LIKE '%possible spam%'")}
+        if any(row['id'] in spam_ids and ck in row['company_keys'] for row in self.application_history(s,('not_submitted',))):
+            raise Blocked('company_submission_rejected','An earlier submission was rejected as possible spam; complete manually or explicitly review the earlier attempt')
         if len(active)>=s["max_per_company"]:
             raise Blocked("company_limit")
         local_day=datetime.now(ZoneInfo(s["timezone"])).date()
@@ -638,19 +641,21 @@ class Store:
         return dict(row) if row else None
 
     def snapshot(self,material_offset=0,include_packages=True,question_limit=None,*,material_search='',material_status='all'):
+        from .materials import basic_context
         if type(material_offset) is not int or not 0<=material_offset<=1000000:raise ValueError("Invalid material page")
         if question_limit is not None and (type(question_limit) is not int or not 1<=question_limit<=100):raise ValueError('Invalid question limit')
         from .material_ledger import search_materials
         material_page=search_materials(self,search=material_search,status=material_status,offset=material_offset)
         def rows(q,parameters=()): return [dict(x) for x in self.db.execute(q,parameters)]
-        from .presentation import attention_sql
+        from .presentation import attention_sql,actionable_question_sql
         condition,parameters=attention_sql('j')
-        priority=f"({condition} OR EXISTS(SELECT 1 FROM questions q WHERE q.job_id=j.id AND q.resolved=0))"
+        question_condition,question_parameters=actionable_question_sql('q')
+        priority=f"({condition} OR EXISTS(SELECT 1 FROM questions q WHERE q.job_id=j.id AND {question_condition}))"
         from .saved_views import list_views
-        return {"saved_views":list_views(self),"settings":self.settings(),"templates":self.templates(),"facts":self.facts(False),"missing_setup":self.missing_setup(),
-                "jobs":rows(f"SELECT j.* FROM jobs j ORDER BY {priority} DESC,j.score DESC,j.first_seen DESC LIMIT 500",parameters),
+        return {"basic_context":basic_context(self),"saved_views":list_views(self),"settings":self.settings(),"templates":self.templates(),"facts":self.facts(False),"missing_setup":self.missing_setup(),
+                "jobs":rows(f"SELECT j.* FROM jobs j ORDER BY {priority} DESC,j.score DESC,j.first_seen DESC LIMIT 500",(*parameters,*question_parameters)),
                 "applications":rows(f"SELECT {'*' if include_packages else APPLICATION_METADATA} FROM applications ORDER BY (state IN ('unknown','awaiting_verification')) DESC,created DESC LIMIT 500"),
-                "questions":rows("SELECT * FROM questions WHERE resolved=0 AND job_id NOT IN (SELECT job_id FROM job_decisions) ORDER BY rowid" + (" LIMIT ?" if question_limit is not None else ''), (question_limit,) if question_limit is not None else ()),
+                "questions":rows("SELECT q.* FROM questions q WHERE "+question_condition+" ORDER BY q.rowid" + (" LIMIT ?" if question_limit is not None else ''), (*question_parameters,question_limit) if question_limit is not None else question_parameters),
                 "runs":rows("SELECT * FROM runs ORDER BY started DESC LIMIT 30"),
                 "sources":rows("SELECT * FROM sources ORDER BY (error!='') DESC,checked DESC,id LIMIT 100"),
                 "employer_accounts":rows("SELECT * FROM employer_accounts ORDER BY (state IN ('uncertain','creating','signing_in')) DESC,updated DESC,id LIMIT 100"),

@@ -519,7 +519,9 @@ def test_model_request_budget_counts_all_providers_without_replacing_connection_
     stamp = datetime.now(timezone.utc).isoformat(timespec='seconds')
     store.update_settings({'max_model_requests_per_day': 2, 'max_model_requests_per_cycle': 2})
     for provider in ('claude-cli', 'openai-api'):
-        store.db.execute('INSERT INTO model_requests(timestamp,run_id,provider) VALUES(?,?,?)', (stamp, 'fixture-run', provider))
+        request_id=store.db.execute('INSERT INTO model_requests(timestamp,run_id,provider) VALUES(?,?,?)', (stamp, 'fixture-run', provider)).lastrowid
+        if provider=='claude-cli':
+            store.db.execute('INSERT INTO model_request_metadata VALUES(?,?,?,?,?,?)',(request_id,'sonnet','medium',1,1,json.dumps({'input_tokens':1234,'output_tokens':34})))
     store.db.execute('INSERT INTO model_requests(timestamp,run_id,provider) VALUES(?,?,?)',
                      ((datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec='seconds'), 'old-run', 'codex-cli'))
     sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
@@ -533,6 +535,9 @@ def test_model_request_budget_counts_all_providers_without_replacing_connection_
             page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=providers]').click()
             expect(page.locator('#model-request-usage')).to_contain_text('2 of 2 requests used today · 0 remaining · Daily cap reached')
             expect(page.locator('#model-request-reset')).to_contain_text(store.settings()['timezone'])
+            expect(page.locator('#model-token-usage')).to_contain_text('Claude subscription / sonnet: 1 requests · 1 successful · 0 failed. 1,234 input tokens · 34 output tokens')
+            expect(page.locator('#model-token-usage')).to_contain_text('OpenAI API / model unavailable')
+            expect(page.locator('#model-token-usage')).to_contain_text('Token counts unavailable')
             page.locator('#provider-form [name=provider]').select_option('openai-api')
             page.locator('#provider-form [name=provider_model]').fill('Synthetic unsaved model')
             page.locator('#provider-form [name=key]').fill('synthetic-unsaved-key')
@@ -542,6 +547,11 @@ def test_model_request_budget_counts_all_providers_without_replacing_connection_
             expect(page.locator('#model-request-usage')).to_contain_text('3 of 2 requests used today · 0 remaining')
             expect(page.locator('#provider-form [name=provider_model]')).to_have_value('Synthetic unsaved model')
             expect(page.locator('#provider-form [name=key]')).to_have_value('synthetic-unsaved-key')
+            expect(page.locator('#model-token-usage')).to_contain_text('Codex subscription / model unavailable')
+            for width in (320,1440):
+                page.set_viewport_size({'width':width,'height':1000})
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                page.screenshot(path=f'/tmp/hireme-model-usage-{width}.png',full_page=True)
             assert not errors and page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             browser.close()
     finally: process.terminate(); process.join(5)

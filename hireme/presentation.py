@@ -3,7 +3,7 @@ from __future__ import annotations
 
 # Ordinary eligibility decisions stay in the ledger, rather than becoming tasks for the applicant.
 NOT_MATCH_REASONS = frozenset({
-    'seniority_mismatch', 'role_mismatch', 'internship_out_of_scope', 'fulltime_out_of_scope',
+    'seniority_mismatch', 'role_mismatch', 'internship_out_of_scope', 'fulltime_out_of_scope', 'parttime_out_of_scope',
     'location_mismatch', 'experience_mismatch', 'sponsorship_mismatch', 'citizenship_mismatch',
     'graduation_mismatch', 'start_window_mismatch', 'compensation_mismatch', 'company_blocked', 'low_fit',
     'expired_posting',
@@ -17,6 +17,7 @@ REASON_GUIDANCE = {
     'role_mismatch': ('Outside your chosen roles', 'Your desk will keep looking for your role keywords.'),
     'internship_out_of_scope': ('Internships are outside your search', 'Change seniority in Preferences if you want to include internships.'),
     'fulltime_out_of_scope': ('Full-time roles are outside your search', 'Change seniority in Preferences if you want to include new-grad roles.'),
+    'parttime_out_of_scope': ('Part-time roles are outside your search', 'Add part-time in Preferences if you want to include these roles.'),
     'location_mismatch': ('Outside your chosen locations', 'Review your location preferences if your search has changed.'),
     'experience_mismatch': ('Requires more experience', 'Your desk will keep looking within your confirmed experience and search limits.'),
     'sponsorship_mismatch': ('Sponsorship requirement does not match', 'This opportunity is held based on the posting and your confirmed authorization facts.'),
@@ -54,6 +55,7 @@ REASON_GUIDANCE = {
     'provider_unavailable': ('The model connection needs attention', 'Open Model connection and check installation, login, or the saved API key.'),
     'cover_letter_not_enabled': ('A cover letter is required', 'Add reviewed writing sources and enable tailored writing and cover letters in Preferences, or apply manually.'),
     'company_uncertain': ('An earlier company submission is uncertain', 'Verify the earlier outcome before submitting another application to this company.'),
+    'company_submission_rejected': ('An earlier company submission was rejected', 'Complete manually or review the earlier rejected submission before another application to this company.'),
     'company_verification_pending': ('An earlier company application needs verification', 'Complete the earlier email verification before another application to this company.'),
 }
 STATUS_LABELS = {'manually_applied': 'Applied manually', 'skipped': 'Don’t apply', 'confirmed': 'Submitted', 'discovered': 'Ready to evaluate', 'blocked': 'Needs action',
@@ -83,3 +85,11 @@ def attention_sql(alias='j'):
     reasons = tuple(sorted(QUIET_REASONS))
     placeholders = ','.join('?' for _ in reasons)
     return (f"({alias}.status IN ('unknown','awaiting_verification') OR ({alias}.status='blocked' AND {code} NOT IN ({placeholders})))", reasons)
+
+
+def actionable_question_sql(alias='q'):
+    """Retain evidence but hide questions for roles outside the chosen scope."""
+    code="TRIM(SUBSTR(excluded.reason,1,CASE WHEN INSTR(excluded.reason,':')>0 THEN INSTR(excluded.reason,':')-1 ELSE LENGTH(excluded.reason) END))"
+    reasons=tuple(sorted({'seniority_mismatch','role_mismatch','internship_out_of_scope','fulltime_out_of_scope','parttime_out_of_scope'}))
+    placeholders=','.join('?' for _ in reasons)
+    return (f"{alias}.resolved=0 AND {alias}.job_id NOT IN (SELECT job_id FROM job_decisions) AND NOT EXISTS(SELECT 1 FROM jobs excluded WHERE excluded.id={alias}.job_id AND excluded.status='blocked' AND {code} IN ({placeholders}))",reasons)

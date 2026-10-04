@@ -132,11 +132,14 @@ FACTS = {
     "outside_business_activity": "Currently provide services to another business or organization (Yes / No)",
     "business_activity_details": "Approved current business/contract activity and potential overlap disclosure",
     "recruitment_data_consent": "Consent to storing/processing data for employment application consideration (Yes / No)",
+    "temporary_work_authorization": "Currently hold temporary US work authorization, such as F-1/OPT/CPT/H-1B (Yes / No)",
+    "programming_proficiency": "Self-assessed programming proficiency (Beginner / Intermediate / Advanced / Expert)",
+    "hispanic_latino": "Hispanic / Latino response (separate from race)",
 }
 REQUIRED = {"full_name", "first_name", "last_name", "email", "phone", "location", "graduation",
             "work_authorized_us", "needs_sponsorship", "us_person", "professional_years", "skills"}
 BOOLEANS = {"work_authorized_us", "needs_sponsorship", "us_person", "unrestricted_authorization",
-            "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent"}
+            "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent", "temporary_work_authorization"}
 
 
 def validate_fact(key: str, value: str) -> str:

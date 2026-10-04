@@ -944,6 +944,18 @@
           </div>
           <div class="section-head">
             <div>
+              <h2>Basic context</h2>
+              <p class="help">Tell us what you’re doing now, your work history, interests and constraints. Approved factual context helps answer questions and tailor writing. Saved facts take precedence when the two conflict.</p>
+            </div>
+          </div>
+          <form id="basic-context-form" class="form-grid">
+            <label class="wide">About you<textarea name="text" rows="7" minlength="20" maxlength="12000" required placeholder="Current work, school, projects, goals and anything an application should know"></textarea></label>
+            <p id="basic-context-status" class="help wide" aria-live="polite"></p>
+            <label class="confirmation wide"><input type="checkbox" name="confirmed" required /> I reviewed this text and approve using it as factual application context.</label>
+            <button type="submit">Save basic context</button>
+          </form>
+          <div class="section-head section">
+            <div>
               <h2>The essentials</h2>
               <p id="fact-completion" class="help"></p>
             </div>
@@ -1604,6 +1616,8 @@ claude auth login</pre
               <h3>Daily worker request budget</h3>
               <p id="model-request-usage" role="status"></p>
               <p id="model-request-reset" class="help"></p>
+              <ul id="model-token-usage" aria-label="Today’s usage by provider and model"></ul>
+              <p class="help">Tokens are reported by the provider for this desk’s requests. Missing counts are unavailable. Remaining subscription credits and billed costs are not supplied by this ledger.</p>
               <p class="help">
                 Counts successful and failed model requests across providers in
                 this private ledger. Change the daily and per-batch caps in

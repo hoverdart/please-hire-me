@@ -777,6 +777,9 @@ textarea {
   margin-top: 3px;
   accent-color: var(--action);
 }
+#basic-context-form label.confirmation {
+  flex-direction: row;
+}
 .form-footer {
   padding: 24px;
   margin-top: 24px;

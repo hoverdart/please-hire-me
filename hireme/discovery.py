@@ -61,7 +61,8 @@ def probe(net,ats,slug):
                 parts.extend(x for x in (location.get('location',''),address.get('addressRegion',''),country) if isinstance(x,str) and x)
                 countries.append(country)
             out.append(posting(j["jobUrl"],slug,j["title"],'; '.join(dict.fromkeys(parts)),f"ash:{slug}",j.get("descriptionPlain", ""),
-                               **({'employment_countries':list(dict.fromkeys(countries))} if all(countries) else {})))
+                               **({'employment_countries':list(dict.fromkeys(countries))} if all(countries) else {}),
+                               **({'employment_type':j['employmentType']} if isinstance(j.get('employmentType'),str) else {})))
     elif ats=="gh":
         d=net.json(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true")
         for j in d.get("jobs",[]):
@@ -78,7 +79,8 @@ def probe(net,ats,slug):
         for j in d:
             sr=j.get("salaryRange") or {}
             comp={"min":sr.get("min"),"max":sr.get("max"),"currency":sr.get("currency"),"period":sr.get("interval")}
-            out.append(posting(j.get("hostedUrl") or j["applyUrl"],slug,j["text"],j.get("categories",{}).get("location", ""),f"lv:{slug}",j.get("descriptionPlain", "")+" "+" ".join(x.get("content", "") for x in j.get("lists",[])),compensation=comp))
+            out.append(posting(j.get("hostedUrl") or j["applyUrl"],slug,j["text"],j.get("categories",{}).get("location", ""),f"lv:{slug}",j.get("descriptionPlain", "")+" "+" ".join(x.get("content", "") for x in j.get("lists",[])),compensation=comp,
+                               **({'employment_type':j['categories']['commitment']} if isinstance(j.get('categories',{}).get('commitment'),str) else {})))
     elif ats=="sr":
         offset=0
         while offset<1000:

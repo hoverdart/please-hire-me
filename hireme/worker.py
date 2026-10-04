@@ -41,17 +41,29 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             if selected:query+=' AND id IN ('+','.join('?' for _ in selected)+')'
             rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
             ranked=[]
-            for row in rows:
-                store.checkpoint()
-                job=json.loads(row['payload'])
-                if not ready(store,job):continue
-                try:
-                    score,evidence=eligible(job,s,store.facts())
-                    store.db.execute("UPDATE jobs SET score=?,reason='' WHERE id=?",(score,job['id']))
-                    ranked.append((score,job))
-                except Blocked as e:
-                    store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail,'screening');reasons[e.reason]=reasons.get(e.reason,0)+1
-                    store.event('job_screening_blocked',job['id'],{'run_id':rid,'outcome':'blocked','reason':e.reason,'detail':e.detail})
+            # Screening only makes local decisions. Small bounded transactions
+            # group their related writes, avoiding several SD-card fsyncs per
+            # excluded job. Browser/model work remains outside transactions.
+            pending=iter(rows);screening_done=False
+            while not screening_done:
+                batch_started=time.monotonic()
+                with store.transaction():
+                    for _ in range(100):
+                        store.checkpoint()
+                        try:row=next(pending)
+                        except StopIteration:
+                            screening_done=True;break
+                        job=json.loads(row['payload'])
+                        if ready(store,job):
+                            try:
+                                score,evidence=eligible(job,s,store.facts())
+                                store._check_budget(job,s)
+                                store.db.execute("UPDATE jobs SET score=?,reason='' WHERE id=?",(score,job['id']))
+                                ranked.append((score,job))
+                            except Blocked as e:
+                                store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail,'screening');reasons[e.reason]=reasons.get(e.reason,0)+1
+                                store.event('job_screening_blocked',job['id'],{'run_id':rid,'outcome':'blocked','reason':e.reason,'detail':e.detail})
+                        if time.monotonic()-batch_started>=.25:break
             eligible_count=len(ranked)
             today=datetime.now(ZoneInfo(s['timezone'])).date()
             sent_today=sum(1 for r in store.db.execute("SELECT attempted FROM applications WHERE state='confirmed'")
@@ -68,6 +80,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                             store.checkpoint()
                             try:
                                 store.check_job_decision(job['id'])
+                                store._check_budget(job,store.settings())
                                 attempts+=1
                                 store.event('application_started',job['id'],{'run_id':rid,'attempt':attempts,'company':job['company'],'title':job['title']})
                                 outcome=browser.apply(job,live=live)
