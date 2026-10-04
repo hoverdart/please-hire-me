@@ -46,7 +46,12 @@ def install(store,repo):
     if 24%hours:raise ValueError('Cron requires a schedule dividing 24 hours')
     r=subprocess.run(['crontab','-l'],capture_output=True,text=True)
     lines=[l for l in r.stdout.splitlines() if not l.endswith('# '+LABEL)]
-    command='cd '+shlex.quote(str(repo.resolve()))+' && '+shlex.join([sys.executable,'-m','hireme','--data-dir',str(store.root.resolve()),'run'])
+    # Cron does not load the interactive shell's PATH; user-installed CLIs must
+    # remain discoverable. Forward connection directories, never credentials.
+    environment=['PATH='+os.environ.get('PATH','/usr/local/bin:/usr/bin:/bin')]
+    environment.extend(k+'='+os.environ[k] for k in ('CLAUDE_CONFIG_DIR','CODEX_HOME','XDG_CONFIG_HOME') if os.environ.get(k))
+    if any(c in value for value in environment for c in ('\n','\r','\x00')):raise ValueError('Scheduled worker environment paths cannot contain control characters')
+    command='cd '+shlex.quote(str(repo.resolve()))+' && '+shlex.join(['env',*environment,sys.executable,'-m','hireme','--data-dir',str(store.root.resolve()),'run'])
     command=command.replace('%',r'\%')
     lines.append(f'0 */{hours} * * * {command} # {LABEL}')
     subprocess.run(['crontab','-'],input='\n'.join(lines)+'\n',text=True,check=True)

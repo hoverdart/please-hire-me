@@ -127,3 +127,28 @@ def test_unresponsive_scheduler_is_reported_without_changing_settings(store, mon
     previous = store.settings()
     with pytest.raises(ValueError, match='could not be checked'): apply_saved_interval(store, store.root)
     assert store.settings() == previous
+
+
+def test_cron_worker_finds_user_cli_from_minimal_environment_without_forwarding_secrets(store,tmp_path,monkeypatch):
+    import subprocess
+    tools=tmp_path/'CLI % with spaces';tools.mkdir()
+    cli=tools/'claude';cli.write_text('#!/bin/sh\nexit 0\n');cli.chmod(0o700)
+    launcher=tmp_path/'worker-python';launcher.write_text('#!/bin/sh\ncommand -v claude\n');launcher.chmod(0o700)
+    repo=tmp_path/'repo with spaces';repo.mkdir()
+    monkeypatch.setattr('hireme.scheduler.sys.platform','freebsd')
+    monkeypatch.setattr('hireme.scheduler.sys.executable',str(launcher))
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/crontab' if name=='crontab' else None)
+    monkeypatch.setenv('PATH',str(tools)+':/usr/bin:/bin')
+    monkeypatch.setenv('ANTHROPIC_API_KEY','synthetic-key-must-not-forward')
+    monkeypatch.setenv('CLAUDE_CODE_OAUTH_TOKEN','synthetic-token-must-not-forward')
+    lines=[];real_run=subprocess.run
+    def capture(args,**kwargs):
+        if args==['crontab','-']:lines.append(kwargs['input'])
+        return SimpleNamespace(returncode=0,stdout='')
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',capture)
+    assert install(store,repo)=='cron'
+    line=lines[0].strip()
+    assert line.startswith('0 */6 * * * ') and 'synthetic-' not in line
+    command=line.split(' * * * ',1)[1].replace(r'\%','%')
+    result=real_run(command,shell=True,env={'PATH':'/usr/bin:/bin','HOME':str(tmp_path),'USER':'fixture'},capture_output=True,text=True,check=True)
+    assert result.stdout.strip()==str(cli)
