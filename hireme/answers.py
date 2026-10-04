@@ -48,6 +48,7 @@ def field_key(label):
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
     if re.fullmatch(r'(?:what are your )?pronouns',label):return 'pronouns'
     if re.fullmatch(r'what is your gender(?: identity)?',label):return 'gender'
+    if re.fullmatch(r'what is your (?:cumulative )?gpa',label):return 'gpa'
     if re.fullmatch(r'what is your (?:race or ethnicity|race|ethnicity)',label):return 'race'
     if re.fullmatch(r'what is your disability status',label):return 'disability'
     if re.search(r'(?:which|what|indicate|select|enter).*(?:\bstate\b|province).*(?:resid|live)',label):return 'state'
@@ -74,6 +75,24 @@ def category(label):
 
 def _option_value(key, value, options):
     normalize=lambda v:re.sub(r"[^a-z0-9]", "", v.casefold())
+    if key=='gpa' and re.fullmatch(r'\d+(?:\.\d+)?(?:\s*/\s*4(?:\.0+)?)?',value):
+        from decimal import Decimal
+        score=Decimal(value.split('/')[0].strip());matches=[]
+        if not 0<=score<=4:raise Blocked('option_mismatch')
+        for option in options:
+            text=option.strip().casefold()
+            if re.fullmatch(r'\d+(?:\.\d+)?',text) and Decimal(text)==score:matches.append(option)
+            interval=re.fullmatch(r'(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)',text)
+            cutoff=re.fullmatch(r'(\d+(?:\.\d+)?)\s+or\s+(higher|below|lower)',text)
+            if interval:
+                lo,hi=sorted(Decimal(x) for x in interval.groups())
+                if lo<=score<=hi:matches.append(option)
+            elif cutoff:
+                point=Decimal(cutoff[1])
+                if (score>=point if cutoff[2]=='higher' else score<=point):matches.append(option)
+        if matches:
+            if len(matches)!=1:raise Blocked('option_mismatch')
+            return matches[0]
     if key in {'college_start','graduation'}:
         import calendar
         months={normalize(name):i for i,name in enumerate(calendar.month_name) if i}
@@ -448,7 +467,7 @@ def resolve(store, host, field, provider=None, context=None):
             choices=[t for t in store.templates() if t['category']==cat]
             selected=choices[0]['id'] if len(choices)==1 else provider.choose_answer(label,choices) if choices and provider else None
             template=next((t for t in choices if t['id']==selected),None)
-        if options and re.search(r'will you.*graduat|(?:do you|are you).*graduat',label,re.I):
+        if options and re.search(r'will you.*graduat|(?:do you|are you).*graduat|is your (?:expected |anticipated )?graduation date',label,re.I):
             from .graduation import window, matches
             bounds=window(label); graduation=store.facts().get('graduation')
             if bounds and graduation:

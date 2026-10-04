@@ -22,6 +22,10 @@ def window(text):
     if match:
         first,last=endpoint(match[1]),endpoint(match[2])
         return (first[0],last[1]) if first and last and first[0]<=last[1] else None
+    match=re.search(r'graduat\w*.{0,60}?\b(20\d{2})\s+or\s+(later|earlier)\b',text,re.I)
+    if match:
+        point=endpoint(match[1])
+        return (point[0],None) if match[2].lower()=='later' else (None,point[1])
     match=re.search(r'graduat\w*.{0,40}?\b(before|after|by|on or before|on or after)\s+('+DATE+r')',text,re.I)
     if not match:return None
     point=endpoint(match[2])

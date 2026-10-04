@@ -46,6 +46,30 @@ def test_hp_iq_cutoff_question_is_answered_from_confirmed_date(store,job):
     store.put_facts({'graduation':'2027-08'})
     assert resolve(store,job['host'],f,context=job)['value']=='Yes'
 
+
+@pytest.mark.parametrize('date,result',[('2028-01','Yes'),('2028-12','Yes'),('2027-12','No')])
+def test_idme_graduation_year_cutoff_uses_confirmed_fact_without_model(store,job,date,result):
+    store.put_facts({'graduation':date})
+    f={'label':'Is your expected graduation date in 2028 or later?*','type':'select','options':['No','Yes'],'required':True,'maxlength':-1}
+    answer=resolve(store,job['host'],f,context=job)
+    assert answer['value']==result and answer['provenance']['graduation_window_revision']==store.facts()['graduation']['revision']
+
+
+@pytest.mark.parametrize('score,result',[('3.8/4.0','3.5 - 3.99'),('3.49/4.0','3.49 - 3.0'),('4.0/4.0','4.0 or higher'),('2.99/4.0','2.99 or below')])
+def test_idme_gpa_ranges_use_confirmed_fact_without_model(store,job,score,result):
+    store.put_facts({'gpa':score})
+    f={'label':'What is your cumulative GPA?*','type':'select','options':['2.99 or below','3.49 - 3.0','4.0 or higher','3.5 - 3.99'],'required':True,'maxlength':-1}
+    answer=resolve(store,job['host'],f,context=job)
+    assert answer['value']==result and answer['provenance']['fact_key']=='gpa'
+
+
+@pytest.mark.parametrize('score,options',[('3.8/5.0',['3.5 - 3.99']),('3.8/4.0',['3.5 - 4.0','3.0 - 4.0']),('3.495/4.0',['3.0 - 3.49','3.5 - 3.99'])])
+def test_gpa_range_ambiguity_and_unsupported_scale_do_not_cache(store,job,score,options):
+    store.put_facts({'gpa':score})
+    f={'label':'What is your cumulative GPA?*','type':'select','options':options,'required':True,'maxlength':-1}
+    with pytest.raises(Blocked):resolve(store,job['host'],f,context=job)
+    assert not store.db.execute('SELECT 1 FROM field_bindings_v2').fetchone()
+
 def test_model_selection_and_durable_metadata(store,monkeypatch):
     monkeypatch.setattr('hireme.provider.shutil.which',lambda _:'/fixture/claude')
     calls=[]

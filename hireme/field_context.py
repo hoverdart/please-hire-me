@@ -6,7 +6,7 @@ import re
 from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 
-MAPPING_VERSION = 5
+MAPPING_VERSION = 6
 ADAPTER_VERSION = 4
 
 def field_context(host, field, context=None):
