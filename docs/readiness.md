@@ -1,4 +1,8 @@
-> Operational status for this merged release is recorded in [the Pi cycle report](pi-cycle-2026-10-03.md). The upstream observations below are historical development evidence. Their statements about disconnected Gmail, unavailable Pi hardware, and a paused worker do not describe the commissioned Pi; the report records the later confirmed Figma submission. Test counts below belong to their respective upstream revisions.
+> **October 4: public release remains blocked.** The answer-reliability fix at `1103b28` is deployed on the Pi. It corrects country-authorization wording and posting metadata, stale fact-linked answers, saved approval reuse, graduation confirmations, Ashby SMS labeling/draft suppression, canonical school choices, and autocomplete labels/opening. [The verification report](answer-resolution-2026-10-04.md) records the exact checks and remaining limits.
+
+> Final verification: **861 tests passed on a clean source export**, excluding unrelated working-tree changes; **187 focused tests passed on the physical Pi**. Live form/control checks reused the active Pi's confirmed facts with zero application submissions and zero additional model reservations. The dashboard was restarted, authenticated/unauthenticated access checked, and the original six-hour schedule and 300/day, 100/cycle limits restored. Application outcomes, facts and approved answers were preserved. Fixture/control evidence does not establish employer acceptance.
+
+> Prior operational status is recorded in [the Pi cycle report](pi-cycle-2026-10-03.md). The upstream observations below are historical development evidence. Their statements about disconnected Gmail, unavailable Pi hardware, and a paused worker do not describe the commissioned Pi; the report records the later confirmed Figma submission. Test counts below belong to their respective upstream revisions.
 
 # Readiness audit — October 3, 2026
 

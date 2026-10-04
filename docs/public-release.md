@@ -1,5 +1,7 @@
 # v0.5.0 release candidate
 
+> **October 4 update: release remains blocked.** Answer-reliability runtime `1103b28` is deployed and verified on the Pi; this supersedes older runtime-revision and deployment-pending statements below. The clean source passed 861 local tests and 187 focused Pi tests. Original scheduling, request caps, facts, approvals and application outcomes were preserved. See [the answer-resolution report](answer-resolution-2026-10-04.md). No release was published and no employer application was submitted during this repair; authenticated Workday and remaining supervised-release gates still require evidence.
+
 This document tracks current release gates. It is not a public readiness certificate.
 
 Baseline: `5c864cb`; candidate version: `0.5.0rc1`. Existing application outcomes remain authoritative. The release target is a self-hosted installation for one applicant, with a private loopback dashboard.
