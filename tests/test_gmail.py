@@ -87,3 +87,31 @@ def test_greenhouse_current_email_template_preserves_case_and_requires_authentic
     assert verification_code(m,'test@candidate.invalid','Neuralink',since)=='Ab12Cd34'
     m['payload']['headers'][3]['value']='mx.google.com; dkim=fail header.i=@us.greenhouse-mail.io'
     assert verification_code(m,'test@candidate.invalid','Neuralink',since) is None
+
+
+def test_company_slug_matches_only_complete_contiguous_employer_words():
+    since=time.time();m=message(company='Tower Research Capital',since=since)
+    assert verification_code(m,'test@candidate.invalid','towerresearchcapital',since)=='ABC12345'
+    assert verification_code(m,'test@candidate.invalid','towerresearch',since)=='ABC12345'
+    assert verification_code(m,'test@candidate.invalid','towerresearchcap',since) is None
+    m=message(company='Tower Other Research Capital',since=since)
+    assert verification_code(m,'test@candidate.invalid','towerresearchcapital',since) is None
+    m=message(company='Research Tower Capital',since=since)
+    assert verification_code(m,'test@candidate.invalid','towerresearchcapital',since) is None
+
+
+def test_greenhouse_acronym_comes_from_this_verified_board_url(monkeypatch):
+    from hireme.gmail import greenhouse_employer_name
+    calls=[]
+    class Net:
+        def __init__(self,**kwargs):pass
+        def json(self,url):calls.append(url);return {'name':'HPR'}
+    monkeypatch.setattr('hireme.net.Network',Net)
+    j={'host':'job-boards.greenhouse.io','url':'https://job-boards.greenhouse.io/hyannisportresearch/jobs/7822989003','company':'hyannisportresearch'}
+    assert greenhouse_employer_name(j)=='HPR'
+    assert calls==['https://boards-api.greenhouse.io/v1/boards/hyannisportresearch']
+    for url in ('https://evil.invalid/hyannisportresearch/jobs/7822989003','https://job-boards.greenhouse.io/../../private','https://user@job-boards.greenhouse.io/hyannisportresearch/jobs/7822989003'):
+        assert greenhouse_employer_name({**j,'url':url}) is None
+    m=message(company='HPR')
+    assert verification_code(m,'test@candidate.invalid','hyannisportresearch',time.time()) is None
+    assert verification_code(m,'test@candidate.invalid','HPR',time.time())=='ABC12345'

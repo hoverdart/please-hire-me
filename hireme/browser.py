@@ -369,7 +369,17 @@ class Browser:
             return 'awaiting_verification'
         greenhouse={'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}
         if not self.test_url and job['host'] not in greenhouse:return 'awaiting_verification'
-        from .gmail import GmailClient
+        from .gmail import GmailClient,greenhouse_employer_name
+        mail_company=job['company']
+        if not self.test_url:
+            try:
+                name=greenhouse_employer_name(job,self.store.checkpoint,time.monotonic()+15)
+                if name:
+                    mail_company=name
+                    self.store.event('verification_employer_resolved',self.aid,{'company':name,'job_id':job['id']})
+            except Exception as e:
+                if isinstance(e,Blocked) and e.reason=='paused':raise
+                self.store.event('verification_employer_lookup_failed',self.aid,{'reason':getattr(e,'reason',type(e).__name__)})
         challenge=self.store.db.execute('SELECT * FROM verification_challenges WHERE application_id=?',(self.aid,)).fetchone()
         try:client=GmailClient(self.store)
         except Blocked as e:
@@ -381,7 +391,7 @@ class Browser:
         code=None
         while time.monotonic()<deadline:
             self.store.checkpoint()
-            try:code=client.find_code(job['company'],challenge['requested'],self.aid,challenge['code_length'])
+            try:code=client.find_code(mail_company,challenge['requested'],self.aid,challenge['code_length'])
             except Blocked as e:
                 if e.reason=='paused':raise
                 self.store.event('verification_held',self.aid,{'reason':e.reason});return 'awaiting_verification'

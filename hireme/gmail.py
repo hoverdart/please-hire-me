@@ -17,6 +17,21 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
 GREENHOUSE_SENDERS = {'greenhouse.io', 'greenhouse-mail.io', 'us.greenhouse-mail.io', 'eu.greenhouse-mail.io'}
 
 
+def greenhouse_employer_name(job, checkpoint=None, deadline=None):
+    """Use this board's public employer name, not an acronym guessed from mail."""
+    from urllib.parse import urlsplit
+    from .net import Network
+    parsed=urlsplit(job.get('url',''))
+    if (parsed.scheme!='https' or parsed.hostname!=job.get('host') or parsed.username or parsed.password
+            or parsed.port not in (None,443) or parsed.hostname not in {
+                'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}):return None
+    match=re.fullmatch(r'/([A-Za-z0-9_-]{1,100})/jobs/\d+',parsed.path)
+    if not match:return None
+    data=Network(checkpoint=checkpoint,deadline=deadline).json('https://boards-api.greenhouse.io/v1/boards/'+match[1])
+    name=data.get('name') if isinstance(data,dict) else None
+    return name.strip() if isinstance(name,str) and 1<=len(name.strip())<=200 and not re.search(r'[\r\n\x00]',name) else None
+
+
 def owner_email(store):
     value = store.facts().get('email', {}).get('value', '')
     if not value:
@@ -213,8 +228,12 @@ def verification_code(message, recipient, company, since, length=8):
             r'dkim=pass\b[^;]*(?:header\.d=|header\.i=@)' + re.escape(domain) + r'(?:\s|;|$)', auth, re.I):
         return None
     text = headers.get('subject', '') + '\n' + _body(message.get('payload', {}))
-    company_words = re.findall(r'[a-z0-9]+', company.casefold())
-    if not company_words or not all(re.search(r'\b' + re.escape(w) + r'\b', text, re.I) for w in company_words):
+    company_compact=''.join(re.findall(r'[a-z0-9]+',company.casefold()))
+    words=re.findall(r'[a-z0-9]+',text.casefold())
+    # Board slugs can omit spaces/punctuation. Match complete contiguous words,
+    # never a substring of another employer name or disconnected text fragments.
+    if not company_compact or not any(''.join(words[start:end])==company_compact
+            for start in range(len(words)) for end in range(start+1,min(start+11,len(words)+1))):
         return None
     if not re.search(r'application', text, re.I) or length not in (6, 8):
         return None
