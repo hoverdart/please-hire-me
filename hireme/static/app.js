@@ -22,6 +22,7 @@ let savedViewBusy = false,
 let postingImportBusy = false,
   postingImportPreview = null;
 let accountTransferBusy = false;
+let accountCredentialBusy = false;
 let transcriptWithdrawalBusy = false;
 const selectedDownloadBusy = new Set();
 const selectedDownloadHashes = {};
@@ -99,7 +100,7 @@ function updateDraftControls() {
   }
 }
 window.addEventListener("beforeunload", (event) => {
-  const unfinished = [$("#facts-form"), $("#settings-form")].some(
+  const unfinished = [$("#facts-form"), $("#settings-form"), $("#account-credentials-form")].some(
     (form) => dirtyForms.has(form) || form.dataset.saving === "true",
   );
   if (!unfinished && !opportunityNotes.hasDrafts()) return;
@@ -130,9 +131,9 @@ function updateAccountTransferControls() {
     hasEmail &&
     hasHistory;
   for (const form of [$("#account-export-form"), $("#account-import-form")]) {
-    form.querySelector("button").disabled = accountTransferBusy || !ready;
+    form.querySelector("button").disabled = accountTransferBusy || accountCredentialBusy || !ready;
     for (const input of form.querySelectorAll("input"))
-      input.disabled = accountTransferBusy || state.demo;
+      input.disabled = accountTransferBusy || accountCredentialBusy || state.demo;
   }
   const message = state.demo
     ? "Encrypted password transfers are available in your own workspace."
@@ -153,6 +154,22 @@ function transferFeedback(id, message, error = false) {
   feedback.textContent = message;
   feedback.setAttribute("role", error ? "alert" : "status");
 }
+
+function updateAccountCredentialControls() {
+  if (!state) return;
+  const form = $("#account-credentials-form");
+  const email = state.facts.email?.confirmed ? state.facts.email.value : "";
+  form.elements.email.value = email;
+  for (const input of form.querySelectorAll("input")) input.disabled = state.demo || accountCredentialBusy;
+  form.querySelector("button").disabled = state.demo || accountCredentialBusy || accountTransferBusy || state.worker_running || state.settings.live_enabled || !email;
+  $("#account-credentials-readiness").textContent = state.demo
+    ? "Credential entry is available in your own workspace."
+    : accountCredentialBusy ? "Saving private employer credentials…"
+    : state.worker_running || state.settings.live_enabled ? "Pause submissions and wait for active work to finish before saving credentials."
+    : !email ? "Confirm your applicant email in Your facts first."
+    : "Ready to save locally. No employer account will be created by this action.";
+}
+
 
 function renderAccounts() {
   const parent = document.querySelector("#employer-accounts");
@@ -295,6 +312,28 @@ async function api(path, data, raw = false, extraHeaders = {}) {
   if (forms[path]) saved($(forms[path]));
   return value;
 }
+$("#account-credentials-form").onsubmit = async (event) => {
+  event.preventDefault();
+  if (accountCredentialBusy || accountTransferBusy) return;
+  const form = event.target;
+  const data = Object.fromEntries(new FormData(form));
+  accountCredentialBusy = true;
+  form.dataset.saving = "true";
+  render();
+  try {
+    await api("/api/account-credentials", data);
+    form.reset();
+    saved(form);
+    transferFeedback("#account-credentials-feedback", "Credentials saved privately for this employer. No account has been created. Existing account automation can use them on supported signup forms.");
+  } catch (error) {
+    transferFeedback("#account-credentials-feedback", error.message, true);
+  } finally {
+    delete form.dataset.saving;
+    accountCredentialBusy = false;
+    render();
+  }
+};
+
 $("#account-export-form").onsubmit = async (event) => {
   event.preventDefault();
   if (!state)
@@ -1396,6 +1435,13 @@ function jobActions(job, cell, app) {
 }
 
 function table(jobs, parent, filtered = false) {
+  // A refresh can arrive before the browser dispatches a details toggle event.
+  // Capture the live DOM first so an opened answer package survives that race.
+  for (const detail of parent.querySelectorAll('details[data-evidence-id]')) {
+    const key = `${parent.id}:${detail.dataset.evidenceId}`;
+    if (detail.open) expandedEvidence.add(key);
+    else expandedEvidence.delete(key);
+  }
   const focusedEvidence =
     parent.contains(document.activeElement) &&
     document.activeElement.tagName === "SUMMARY"
@@ -1519,6 +1565,7 @@ function table(jobs, parent, filtered = false) {
       detail.append(evidence);
       const expansionKey = `${parent.id}:${app.id}`;
       detail.ontoggle = () => {
+        if (!detail.isConnected) return;
         if (detail.open) {
           expandedEvidence.add(expansionKey);
           loadEvidence(app, evidence);
@@ -2925,19 +2972,19 @@ function render() {
         : "Resume";
   $("#pause").disabled =
     state.demo ||
-    (accountTransferBusy && !state.settings.live_enabled) ||
+    ((accountTransferBusy || accountCredentialBusy) && !state.settings.live_enabled) ||
     (!finding &&
       !preparing &&
       !state.settings.live_enabled &&
       (!state.settings.onboarding_complete || state.missing_setup.length > 0));
   $("#discover").disabled =
     state.demo ||
-    accountTransferBusy ||
+    accountTransferBusy || accountCredentialBusy ||
     state.worker_running ||
     state.worker_recovery?.recovery_needed;
   $("#run").disabled =
     state.demo ||
-    accountTransferBusy ||
+    accountTransferBusy || accountCredentialBusy ||
     state.worker_recovery?.recovery_needed ||
     state.worker_running ||
     !state.settings.onboarding_complete ||
@@ -2945,7 +2992,7 @@ function render() {
     state.missing_setup.length > 0;
   $("#prepare").disabled =
     state.demo ||
-    accountTransferBusy ||
+    accountTransferBusy || accountCredentialBusy ||
     state.worker_running ||
     state.worker_recovery?.recovery_needed ||
     !state.settings.onboarding_complete ||
@@ -2990,6 +3037,7 @@ function render() {
   renderQuestions();
   renderAccounts();
   updateAccountTransferControls();
+  updateAccountCredentialControls();
   renderTemplates();
   renderMaterials();
   renderMail();

@@ -295,6 +295,15 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                         result=preview_postings(store,raw) if path.endswith('-preview') else import_postings(store,raw,self.headers.get('X-Import-Hash',''))
                         return self.send(200,result)
                     data=json.loads(raw)
+                    if path=='/api/account-credentials':
+                        from .accounts import AccountVault
+                        from .util import Blocked
+                        if not isinstance(data,dict):raise ValueError('Provide employer-scoped credentials')
+                        try:
+                            result=AccountVault(store).save_supplied(data.get('origin'),data.get('company'),data.get('email'),data.get('password'),data.get('confirmation'))
+                        except Blocked:return self.send(409,{'error':'Wait for active work to finish before saving employer credentials'})
+                        except OSError:return self.send(400,{'error':'Credentials could not be saved in private local storage'})
+                        return self.send(200,result)
                     if path=='/api/job-note':
                         from .job_notes import save_note,NoteConflict
                         try:return self.send(200,save_note(store,data))

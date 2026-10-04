@@ -41,7 +41,13 @@ def dependency(store, job, kind):
         data['documents']=[tuple(r) for r in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')]
         data['document_files']=[(r['filename'], (store.root/'documents'/r['filename']).stat().st_mtime_ns if (store.root/'documents'/r['filename']).is_file() else None) for r in store.db.execute('SELECT filename FROM documents ORDER BY kind')]
         data['materials']=[tuple(r) for r in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
-    if kind=='account':data['accounts']=[tuple(r) for r in store.db.execute('SELECT id,state,updated FROM employer_accounts ORDER BY id')]
+    if kind=='account':
+        data['accounts']=[tuple(r) for r in store.db.execute('SELECT id,state,updated FROM employer_accounts ORDER BY id')]
+        from .accounts import account_key
+        key=account_key('https://'+job['host'],store.company(job['company']))
+        row=store.db.execute("SELECT seq FROM events WHERE kind='account_credentials_saved' AND subject=? ORDER BY seq DESC LIMIT 1",(key,)).fetchone()
+        # A scoped revision, never a password or a hash of password contents.
+        if row:data['supplied_credentials_revision']=row['seq']
     return digest(data)
 
 def safe_state(store, job_id):

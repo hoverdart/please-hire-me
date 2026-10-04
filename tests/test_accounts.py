@@ -10,6 +10,60 @@ from hireme.util import Blocked
 ORIGIN = 'https://careers.example.com'
 
 
+def test_supplied_credentials_are_reused_without_account_creation_or_secret_logging(store,tmp_path):
+    store.update_settings({'live_enabled':False})
+    vault=AccountVault(store);email=store.facts()['email']['value'];password='User-chosen-only-test-password42!'
+    assert vault.save_supplied(ORIGIN,'Acme',email,password,password)=={'saved':True,'account_created':False}
+    assert vault.credentials(ORIGIN,'Acme',create=True)=={'email':email,'password':password}
+    assert not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
+    assert password not in json.dumps(store.snapshot()) and password.encode() not in store.path.read_bytes()
+    path=vault.directory/(account_key(ORIGIN,'Acme')+'.json');assert path.stat().st_mode & 0o777==0o600
+    before=path.read_bytes()
+    changes=store.db.total_changes
+    assert vault.save_supplied(ORIGIN,'Acme',email,password,password)=={'saved':True,'account_created':False}
+    assert path.read_bytes()==before and store.db.total_changes==changes
+    with pytest.raises(ValueError,match='already exist'):vault.save_supplied(ORIGIN,'Acme',email,'Another-long-password-only42!','Another-long-password-only42!')
+    assert path.read_bytes()==before
+    archive=tmp_path/'history.zip';create_backup(store,archive)
+    import zipfile
+    with zipfile.ZipFile(archive) as z:
+        assert all(password.encode() not in z.read(n) for n in z.namelist())
+
+
+@pytest.mark.parametrize('field,value',[
+    ('origin',None),('origin','https://careers.example.com/register'),('email','different@candidate.invalid'),
+    ('password','too-short'),('password','x'*20+'\n'),('confirmation','mismatch'),('company',''),
+])
+def test_supplied_credential_validation_never_writes_secrets(store,field,value):
+    store.update_settings({'live_enabled':False})
+    vault=AccountVault(store);data=dict(origin=ORIGIN,company='Acme',email=store.facts()['email']['value'],password='User-chosen-only-test-password42!',confirmation='User-chosen-only-test-password42!');data[field]=value
+    with pytest.raises(ValueError):vault.save_supplied(**data)
+    assert not list(vault.directory.iterdir()) and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
+
+
+def test_supplied_credentials_require_pause_and_worker_lock(store):
+    from hireme.store import worker_lock
+    vault=AccountVault(store);args=(ORIGIN,'Acme',store.facts()['email']['value'],'User-chosen-only-test-password42!','User-chosen-only-test-password42!')
+    with pytest.raises(ValueError,match='Pause'):vault.save_supplied(*args)
+    store.update_settings({'live_enabled':False})
+    with worker_lock(store.root):
+        with pytest.raises(Blocked,match='worker_busy'):vault.save_supplied(*args)
+    assert not list(vault.directory.iterdir())
+
+
+def test_supplied_credentials_release_only_the_matching_employer_hold(store,job):
+    from hireme.job_holds import hold,ready
+    from hireme.util import digest
+    other={**job,'id':digest('other-account-job'),'company':'Another Employer'};store.upsert_job(other)
+    hold(store,job,'account_credentials_unavailable');hold(store,other,'account_credentials_unavailable')
+    assert not ready(store,job) and not ready(store,other)
+    store.update_settings({'live_enabled':False})
+    password='User-chosen-only-test-password42!'
+    AccountVault(store).save_supplied('https://'+job['host'],job['company'],store.facts()['email']['value'],password,password)
+    assert ready(store,job) and not ready(store,other)
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
 def test_credentials_are_private_scoped_and_not_logged(store):
     vault = AccountVault(store)
     value = vault.credentials(ORIGIN, 'Acme', create=True)

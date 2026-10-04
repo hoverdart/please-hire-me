@@ -725,6 +725,21 @@
             </div>
           </div>
           <h2 class="section">Employer accounts</h2>
+          <details class="section" id="account-credentials-panel">
+            <summary>Supply credentials for an employer</summary>
+            <p class="help">Save your chosen password locally for one employer. Saving does not create an account. Supported signup forms can use these credentials when employer account automation is enabled. Workday signup still requires manual setup until its flow is verified.</p>
+            <form id="account-credentials-form">
+              <label>Employer name<input name="company" required maxlength="200" autocomplete="off" /></label>
+              <label>Employer account website<input name="origin" type="url" required placeholder="https://careers.example.com" autocomplete="off" /></label>
+              <label>Confirmed applicant email<input name="email" type="email" readonly required /></label>
+              <label>Your chosen password<input name="password" type="password" required minlength="20" maxlength="128" autocomplete="new-password" /></label>
+              <label>Confirm password<input name="confirmation" type="password" required minlength="20" maxlength="128" autocomplete="new-password" /></label>
+              <p class="help">Use 20–128 characters. Passwords stay in private local credential files; they are excluded from models, application history, and normal backups. Existing credentials cannot be replaced here.</p>
+              <p id="account-credentials-readiness" class="help"></p>
+              <button type="submit" disabled>Save employer credentials</button>
+              <p id="account-credentials-feedback" role="status" class="help" aria-live="polite"></p>
+            </form>
+          </details>
           <p>
             Complete held verification in the dedicated browser, then record
             evidence that the account exists and you can sign in. Passwords are

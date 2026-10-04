@@ -244,7 +244,7 @@ def test_dashboard_prepares_reviewable_drafts_while_staying_paused(store,job):
             expect(page.locator('#prepare')).to_be_enabled()
             page.locator('#status-filter').select_option('prepared')
             expect(page.locator('#jobs')).to_contain_text('Prepared')
-            page.locator('#jobs details[data-evidence-id]').first.evaluate('(element)=>element.open=true')
+            page.locator('#jobs details[data-evidence-id]').first.evaluate('(element)=>{element.open=true;table(ledgerState.jobs,document.querySelector("#jobs"));}')
             expect(page.locator('#jobs .answer-log')).to_contain_text('test@candidate.invalid')
             assert row['submitted']==0 and json.loads(row['detail'])['prepared']==1
             assert store.db.execute('SELECT state FROM applications').fetchone()[0]=='prepared'
@@ -2572,5 +2572,46 @@ def test_pending_note_save_and_closed_dialog_keep_other_opportunity_drafts_separ
             page.locator('#opportunity-notes summary').click();expect(field).to_have_value('Second opportunity unsaved draft')
             page.get_by_role('button',name='Discard edits and reload',exact=True).click();expect(field).to_have_value('')
             assert not page.evaluate('()=>opportunityNotes.hasDrafts()') and not errors
+            browser.close()
+    finally:process.terminate();process.join(5)
+
+
+def test_supplied_employer_credentials_auth_retry_duplicate_save_and_secret_cleanup(store):
+    from playwright.sync_api import sync_playwright,expect
+    from hireme.accounts import AccountVault
+    store.update_settings({'live_enabled':False})
+    sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+    process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port));process.start()
+    base=f'http://127.0.0.1:{port}';secret='Synthetic-user-chosen-password42!'
+    try:
+        for _ in range(50):
+            try:urllib.request.urlopen(base).close();break
+            except OSError:time.sleep(.1)
+        with sync_playwright() as p:
+            browser=p.chromium.launch();page=browser.new_page(viewport={'width':390,'height':844});errors=[]
+            page.on('pageerror',lambda e:errors.append(str(e)));page.goto(base+'/#token=fixture-capability')
+            page.locator('[data-view=questions]').click();page.locator('#account-credentials-panel > summary').click()
+            form=page.locator('#account-credentials-form');expect(form.locator('[name=email]')).to_have_value('test@candidate.invalid')
+            assert form.locator('[name=email]').evaluate('(e)=>e.readOnly')
+            form.locator('[name=company]').fill('Synthetic Employer');form.locator('[name=origin]').fill('https://careers.example.com')
+            form.locator('[name=password]').fill(secret);form.locator('[name=confirmation]').fill(secret)
+            data={'company':'Synthetic Employer','origin':'https://careers.example.com','email':'test@candidate.invalid','password':secret,'confirmation':secret}
+            assert page.request.post(base+'/api/account-credentials',data=data).status==403
+            pending=[];pause_first_request(page,'**/api/account-credentials',pending)
+            form.locator('button').click()
+            expect(form.locator('button')).to_be_disabled();expect(page.locator('#pause')).to_be_disabled()
+            page.evaluate('document.querySelector("#account-credentials-form").requestSubmit()')
+            assert len(pending)==1
+            pending[0].fulfill(status=400,content_type='application/json',body=json.dumps({'error':'Synthetic storage failure; try again'}))
+            expect(page.locator('#account-credentials-feedback')).to_contain_text('Synthetic storage failure')
+            expect(form.locator('[name=password]')).to_have_value(secret)
+            page.evaluate('refresh()');expect(form.locator('[name=password]')).to_have_value(secret)
+            form.locator('button').click()
+            expect(page.locator('#account-credentials-feedback')).to_contain_text('Credentials saved privately')
+            expect(form.locator('[name=password]')).to_have_value('');expect(form.locator('[name=confirmation]')).to_have_value('')
+            assert AccountVault(store).credentials('https://careers.example.com',store.company('Synthetic Employer'))['password']==secret
+            assert secret.encode() not in store.path.read_bytes() and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
+            assert not store.db.execute('SELECT 1 FROM model_requests').fetchone() and not errors
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             browser.close()
     finally:process.terminate();process.join(5)

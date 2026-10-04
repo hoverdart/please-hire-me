@@ -67,6 +67,19 @@ def test_disabled_and_prepare_modes_do_not_create_accounts(store,account_site,en
     assert not writes
 
 
+def test_native_registration_uses_owner_supplied_password_exactly(store,account_site):
+    base,job,writes=account_site
+    store.update_settings({'live_enabled':False})
+    secret='Synthetic-user-chosen-password42!'
+    AccountVault(store).save_supplied('https://fixture.invalid',job['company'],store.facts()['email']['value'],secret,secret)
+    store.update_settings({'employer_accounts':True,'live_enabled':True})
+    with Browser(store,test_url=base) as browser:assert browser.apply(job)=='confirmed'
+    registration=next(body for path,body in writes if 'register' in path)
+    assert parse_qs(registration.decode())['password']==[secret]
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
+    assert secret.encode() not in store.path.read_bytes()
+
+
 @pytest.mark.parametrize('account_site',['terms','redirect'],indirect=True)
 def test_unsupported_forms_never_send_credentials(store,account_site):
     base,job,writes=account_site

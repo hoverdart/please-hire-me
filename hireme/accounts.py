@@ -28,6 +28,46 @@ class AccountVault:
         self.store = store
         self.directory = private_dir(store.root / 'integrations' / 'accounts')
 
+    def save_supplied(self, origin, company, email, password, confirmation):
+        """Store owner-supplied credentials without creating an employer account.
+
+        Existing credentials and auth histories are immutable through this path;
+        password changes and recovery remain separate, manual operations.
+        """
+        from .store import worker_lock
+        if not isinstance(origin,str) or len(origin)>2048 or any(c in origin for c in ('\x00','\r','\n')):
+            raise ValueError('Provide an exact HTTPS employer account website')
+        if not isinstance(company,str) or not 1<=len(company.strip())<=200:
+            raise ValueError('Provide the employer name, up to 200 characters')
+        company=self.store.company(company)
+        key=account_key(origin,company)
+        if (not isinstance(password,str) or not 20<=len(password)<=128
+                or any(c in password for c in ('\x00','\r','\n'))):
+            raise ValueError('Use a password of 20–128 characters without line breaks')
+        try:password.encode('utf-8')
+        except UnicodeError:raise ValueError('Use readable characters in the password') from None
+        if confirmation!=password:raise ValueError('The passwords must match')
+        with worker_lock(self.store.root):
+            fact=self.store.facts().get('email',{})
+            if not fact.get('confirmed') or email!=fact.get('value'):
+                raise ValueError('Use your confirmed applicant email from Your facts')
+            if self.store.settings()['live_enabled']:
+                raise ValueError('Pause submissions before saving employer credentials')
+            path=self.directory/(key+'.json')
+            if path.is_symlink() or self.store.db.execute('SELECT 1 FROM employer_accounts WHERE id=?',(key,)).fetchone():
+                raise ValueError('Credentials or account history already exist for this employer; use manual account recovery')
+            if path.exists():
+                existing=self.credentials(origin,company)
+                if not secrets.compare_digest(existing['password'].encode('utf-8'),password.encode('utf-8')):
+                    raise ValueError('Credentials or account history already exist for this employer; use manual account recovery')
+                # A lost local acknowledgement can be retried with the same
+                # payload. Never replace a password or repeat an employer write.
+                if self.store.db.execute("SELECT 1 FROM events WHERE kind='account_credentials_saved' AND subject=? LIMIT 1",(key,)).fetchone():
+                    return {'saved':True,'account_created':False}
+            else:atomic_json(path,{'email':email,'password':password})
+            self.store.event('account_credentials_saved',key,{'source':'user','account_created':False})
+        return {'saved':True,'account_created':False}
+
     def credentials(self, origin, company, *, create=False):
         key = account_key(origin, company)
         path = self.directory / (key + '.json')
