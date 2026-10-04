@@ -408,7 +408,16 @@ class Store:
             metadata=field_context(host,field,context)
             identifiers=[digest(['approved_answer',metadata])]
             comparison=digest(approval_context(metadata))
-            for row in self.db.execute('SELECT q.id,q.job_id,c.context FROM questions q JOIN question_contexts c ON c.id=q.id WHERE q.host=? AND q.resolved=0',(host,)):
+            for row in self.db.execute('SELECT q.id,q.job_id,q.label,c.context FROM questions q LEFT JOIN question_contexts c ON c.id=q.id WHERE (q.host=? OR q.job_id=?) AND q.resolved=0',(host,(context or {}).get('id'))):
+                if row['context'] is None:
+                    legacy_label=' '.join(row['label'].casefold().split()).rstrip(' *?:')
+                    # These unique profile controls had dynamic option lists in
+                    # old forms. Retire their obsolete queue entries only after
+                    # the current control resolves; never import an approval.
+                    if (row['job_id']==(context or {}).get('id') and legacy_label==metadata['label']
+                            and legacy_label in {'school','degree'} and not metadata.get('section_entry',0)):
+                        identifiers.append(row['id'])
+                    continue
                 try:previous=json.loads(row['context'])
                 except (ValueError,TypeError):continue
                 same_field=(isinstance(previous,dict) and row['job_id']==(context or {}).get('id')

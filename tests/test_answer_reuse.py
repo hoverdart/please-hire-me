@@ -29,7 +29,7 @@ def test_confirmed_values_match_actual_greenhouse_options(store,job):
     assert resolve(store,host,state)['value']=='California'
     assert resolve(store,host,field('Pronouns *','combobox',['He/him/his','She/her/hers']))['value']=='He/him/his'
     employment=field('Have you previously been employed at Acme for any length of time?*','combobox',['I have not previously been employed at Acme','I have been employed at Acme as an intern'])
-    assert resolve(store,host,employment)['value']=='I have not previously been employed at Acme'
+    assert resolve(store,host,employment,context=job)['value']=='I have not previously been employed at Acme'
     availability=field('I confirm my availability for a Summer 2027 (May/June starts) internship*','checkbox',['Yes','No'])
     store.put_facts({'earliest_start':'2027-05'})
     store.bind_field(host,availability['label'],availability['options'],fact_key='earliest_start')

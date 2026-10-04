@@ -12,7 +12,7 @@ FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stal
 MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer','invalid_fields','invalid_single_line_answer','numeric_answer_out_of_range','repeated_entry_review','unsupported_widget'}
 DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed'}
 ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','account_fields_unavailable','captcha_blocked','account_or_verification_blocked','account_automation_disabled','account_result_uncertain','account_creation_held','account_credentials_unavailable','company_verification_pending','account_blocked','account_required','company_uncertain','email_verification_required','captcha','email_verification_failed'}
-TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed'}
+TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
 
 # Each exclusion is already a proven blocker. Other profile/preferences edits

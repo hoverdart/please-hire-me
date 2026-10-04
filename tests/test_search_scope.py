@@ -199,3 +199,49 @@ def test_free_text_discovery_uses_recorded_board_without_model(store,job):
     a=resolve(store,job['host'],f,context={**job,'source':'gh:acme'})
     assert a['value']=='Your Greenhouse careers page.' and a['provenance']=={'job_source':'gh:acme'}
     with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],f,context={**job,'source':'user'})
+
+
+def test_completed_resume_history_maps_never_worked_only_to_the_named_employer(store,job):
+    from hireme.answers import resolve
+    store.put_facts({'worked_outside_resume':'No'})
+    f={'label':'Have you ever worked for Acme as an employee, intern or contractor?','type':'combobox','required':True,
+       'options':['I currently work at Acme','I have never worked at Acme'],'maxlength':-1}
+    assert resolve(store,job['host'],f,context=job)['value']=='I have never worked at Acme'
+    with pytest.raises(Blocked):resolve(store,job['host'],{**f,'options':['I have never worked at Another Company']},context=job)
+    with pytest.raises(Blocked):resolve(store,job['host'],{**f,'options':['I have never worked at Acme and have no family relationships']},context=job)
+
+
+def test_disability_scope_is_never_broadened_to_unconfirmed_past_history(store,job):
+    from hireme.answers import resolve
+    f={'label':'Disability status','type':'select','required':True,'options':["No, I don't have a disability"],'maxlength':-1}
+    store.put_facts({'disability':'No, I do not have a disability and have not had one in the past'})
+    assert resolve(store,job['host'],f,context=job)['value']==f['options'][0]
+    store.put_facts({'disability':'No, I do not have a disability or have had one in the past'})
+    assert resolve(store,job['host'],f,context=job)['value']==f['options'][0]
+    with pytest.raises(Blocked):resolve(store,job['host'],{**f,'options':['No, I do not have a disability and have not had one in the past']},context=job)
+    store.put_facts({'disability':'No, I do not have a disability'})
+    with pytest.raises(Blocked):resolve(store,job['host'],{**f,'options':['No, I do not have a disability and have not had one in the past']},context=job)
+
+
+def test_current_field_retires_old_question_scope_for_same_requisition_without_reusing_approval(store,job):
+    from hireme.answers import resolve
+    store.put_facts({'school':'UC Berkeley'})
+    f={'label':'School','type':'combobox','required':True,'options':['UC Berkeley'],'maxlength':-1}
+    store.ask(job['id'],job['host']+'|acme-old',f['label'],f['options'],'missing_fact',field=f,context=job)
+    assert store.db.execute('SELECT resolved FROM questions').fetchone()[0]==0
+    assert resolve(store,job['host']+'|acme',f,context=job)['value']=='UC Berkeley'
+    assert store.db.execute('SELECT resolved FROM questions').fetchone()[0]==1
+    assert store.db.execute('SELECT count(*) FROM answers').fetchone()[0]==0
+
+
+def test_current_school_retires_legacy_dynamic_choices_but_preserves_other_jobs_and_dates(store,job):
+    from hireme.answers import resolve
+    store.put_facts({'school':'UC Berkeley'})
+    legacy=store.ask(job['id'],job['host'],'School*',['Old lookup choice'],'option_mismatch')
+    other=store.ask('another-job',job['host'],'School*',['Other lookup choice'],'option_mismatch')
+    date=store.ask(job['id'],job['host'],'End date year',[],'mapping_review')
+    f={'label':'School*','type':'combobox','required':True,'options':['UC Berkeley'],'maxlength':-1,'section':'education'}
+    assert resolve(store,job['host'],f,context=job)['value']=='UC Berkeley'
+    assert store.db.execute('SELECT resolved FROM questions WHERE id=?',(legacy,)).fetchone()[0]==1
+    assert all(store.db.execute('SELECT resolved FROM questions WHERE id=?',(qid,)).fetchone()[0]==0 for qid in (other,date))
+    assert store.db.execute('SELECT count(*) FROM answers').fetchone()[0]==0

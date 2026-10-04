@@ -80,11 +80,11 @@ def category(label):
     return None
 
 
-def _option_value(key, value, options):
+def _option_value(key, value, options, context=None):
     if key is None and value in options:
         if options.count(value)!=1:raise Blocked('option_mismatch')
         return value
-    normalize=lambda v:re.sub(r"[^a-z0-9]", "", v.casefold())
+    normalize=lambda v:re.sub(r"[^a-z0-9]", "", re.sub(r"\bdon['’]t\b",'do not',v.casefold()))
     if key=='programming_proficiency' and value in {'Beginner','Intermediate','Advanced','Expert'}:
         matches=[x for x in options if re.match(re.escape(value)+r'(?:\b|/)',x,re.I)]
         if len(matches)!=1:raise Blocked('option_mismatch')
@@ -125,7 +125,8 @@ def _option_value(key, value, options):
         'location':{'berkeleyca':{'berkeleycaliforniaunitedstates','berkeleycaunitedstates','berkeleycalifornia'}},
         'citizenship':{'unitedstates':{"us", "usa", "unitedstatesofamerica"}},
         'school':{'universityofcaliforniaberkeley':{"ucberkeley","universitycaliforniaberkeley"},'universitycaliforniaberkeley':{"ucberkeley","universityofcaliforniaberkeley"}},
-        'disability':{'noidonothaveadisability':{"noidonothaveadisabilityandhavenothadoneinthepast"}},
+        'disability':{'noidonothaveadisabilityandhavenothadoneinthepast':{'noidonothaveadisability'},
+                      'noidonothaveadisabilityorhavehadoneinthepast':{'noidonothaveadisability'}},
         'veteran':{'iamnotaveteran':{'iamnotaprotectedveteran'},'notaveteran':{'iamnotaprotectedveteran'}},
         'sms':{'yes':{'yesiconsenttoreceivingtextmessages'},'no':{'noidonotconsenttoreceivingtextmessages'}},
         'onsite':{'yes':{'yesiamableandwillingtoworkintheofficelocationlistedinthejobdescription'},
@@ -143,7 +144,13 @@ def _option_value(key, value, options):
     if value in ('Yes','No'):
         matches=[x for x in options if normalize(x) in allowed]
         if not matches and key=='worked_outside_resume' and value=='No':
-            matches=[x for x in options if re.fullmatch(r'i have not previously been employed(?: at .+)?',x,re.I)]
+            from .util import company_normalizer
+            company=company_normalizer({})((context or {}).get('company',''))
+            matches=[]
+            for option in options:
+                statement=re.fullmatch(r'I have (?:not previously been employed|never worked)(?: (?:at|for) (.+))?',option,re.I)
+                if statement and (not statement[1] or statement[1].casefold() in {'here','this company'}
+                                  or company and company_normalizer({})(statement[1])==company):matches.append(option)
     else:matches=[x for x in options if normalize(x) in allowed]
     if not matches and key in {'school','major','degree'}:matches=[x for x in options if normalize(x)=='other']
     if len(matches)>1 and key in {'school','degree'} and len(set(matches))==len(matches):
@@ -532,7 +539,7 @@ def resolve(store, host, field, provider=None, context=None):
             if not fact or not _compatible_field(exact,field,context):raise Blocked('stale_answer',label)
             expected=present(exact,fact['value'],field)
             if options:
-                try:expected=_option_value(exact,expected,options)
+                try:expected=_option_value(exact,expected,options,context)
                 except Blocked:raise Blocked('stale_answer',label)
             if saved['value']!=expected:raise Blocked('stale_answer',label)
         if saved['fact_key'] and (not _compatible_field(saved['fact_key'],field,context) or exact and exact!=saved['fact_key']):
@@ -669,7 +676,7 @@ def resolve(store, host, field, provider=None, context=None):
             value=present(key,value,field)
             provenance={'fact_key':key,'revision':fact['revision']}
     if field.get('type') in ('radio','select','combobox','checkbox','checkbox-group','yesno') and options:
-        try:value=_option_value(key,value,options)
+        try:value=_option_value(key,value,options,context)
         except Blocked:raise Blocked('option_mismatch',label)
     if field.get('maxlength',-1)>0 and len(value)>field['maxlength']:raise Blocked('answer_too_long',label)
     validate_numeric(value,field)

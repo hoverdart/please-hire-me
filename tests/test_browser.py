@@ -80,6 +80,27 @@ def test_prepare_only_never_submits(store,ats):
     assert not ats[1]
 
 
+@pytest.mark.parametrize('missing_fact',[False,True])
+def test_required_field_timeouts_retry_only_without_genuinely_missing_answers(store,ats,monkeypatch,missing_fact):
+    from hireme.answers import resolve as real_resolve
+    def resolve_field(store,host,field,*args,**kwargs):
+        if field['label']=='Describe your project':raise Blocked('provider_timeout')
+        if field['label']=='Unconfirmed fact':raise Blocked('missing_fact')
+        return real_resolve(store,host,field,*args,**kwargs)
+    monkeypatch.setattr('hireme.browser.resolve',resolve_field)
+    html=(Path(__file__).parent/'fixtures/application.html').read_text()
+    extra='<label>Describe your project<textarea name="project" required></textarea></label>'
+    if missing_fact:extra+='<label>Unconfirmed fact<input name="unknown" required></label>'
+    html=html.replace('</form>',extra+'</form>')
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
+        with pytest.raises(Blocked,match='missing_answers' if missing_fact else 'provider_timeout'):b.apply(job,live=False)
+    assert not ats[1]
+    assert not store.db.execute('SELECT 1 FROM applications WHERE attempted IS NOT NULL').fetchone()
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 def test_report_question_variants_fill_and_submit_from_confirmed_sources(store, ats):
     """Exercise snapshot -> resolution -> filling -> validation -> local receipt."""
     job=local_job(store,ats)

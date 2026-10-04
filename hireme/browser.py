@@ -717,6 +717,7 @@ class Browser:
             if pending:
                 labels='; '.join(f['label'] for f,_ in pending)
                 if budget_error:raise Blocked('model_budget_exhausted',labels+' — '+budget_error.detail)
+                if all(reason=='provider_timeout' for _,reason in pending):raise Blocked('provider_timeout',labels)
                 raise Blocked('missing_answers',labels)
             for d in documents:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
