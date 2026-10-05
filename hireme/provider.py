@@ -12,6 +12,27 @@ import signal
 from .util import Blocked
 
 
+def _claude_output_schema(schema):
+    # Keep the decoder grammar stable as the source library changes. Full
+    # source membership, uniqueness and array limits are enforced locally.
+    result=json.loads(json.dumps(schema))
+    def visit(node):
+        if not isinstance(node,dict):return
+        if node.get('type')=='array':
+            for key in ('uniqueItems','maxItems'):node.pop(key,None)
+            if node.get('minItems') not in (None,0,1):node.pop('minItems',None)
+            if isinstance(node.get('items'),dict) and node['items'].get('type')=='string':
+                node['items'].pop('enum',None)
+        for child in node.get('properties',{}).values():visit(child)
+        visit(node.get('items'))
+        for key in ('anyOf','allOf','oneOf'):
+            for child in node.get(key,[]):visit(child)
+        for key in ('$defs','definitions'):
+            for child in node.get(key,{}).values():visit(child)
+    visit(result)
+    return result
+
+
 class ClaudeProvider:
     """Subscription-backed inference, no tools, MCP, browser, project files or customizations.
 
@@ -58,7 +79,7 @@ class ClaudeProvider:
         args=[self.binary,"-p","--safe-mode","--tools","","--no-chrome",
               "--disable-slash-commands","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
               "--setting-sources","","--no-session-persistence","--permission-mode","dontAsk",
-              "--output-format","json","--json-schema",json.dumps(schema),"--system-prompt",instruction]
+              "--output-format","json","--json-schema",json.dumps(_claude_output_schema(schema)),"--system-prompt",instruction]
         if self.model:args.extend(['--model',self.model])
         args.extend(['--effort',self.effort])
         # stdin prevents personal facts appearing in process-list arguments.
@@ -93,7 +114,11 @@ class ClaudeProvider:
                 if re.search(r'rate limit|usage limit|limit reached|quota exceeded',str(result.get('result','')),re.I):
                     raise Blocked('provider_rate_limited','Claude subscription allowance is unavailable; wait for the vendor reset')
                 raise ValueError("error result")
-            return result.get("structured_output") or json.loads(result["result"])
+            answer=result.get("structured_output") or json.loads(result["result"])
+            from jsonschema import validate,ValidationError
+            try:validate(answer,schema)
+            except ValidationError:raise Blocked('provider_invalid_output') from None
+            return answer
         except (ValueError,KeyError,TypeError): raise Blocked("provider_invalid_output")
 
     def extract_resume(self,text):

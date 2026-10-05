@@ -74,6 +74,7 @@ def field_key(label):
 
 
 def category(label):
+    if re.search(r'what (?:are you )?(?:most )?excited (?:to|about)',label,re.I):return 'motivation'
     if re.search(r"why (?:do you want|are you interested|this (?:role|company))|what interests you|what (?:excites|motivates) you|what excites you|why are you excited|what makes you (?:excited|interested)|why.{0,50}(?:work|join)|why.{0,30}(?:choose|chose)|(?:professional|career|short.term) (?:goals|plans|aspirations)",label,re.I):return "motivation"
     if re.search(r"(?:tell|describe|share).{0,25}(?:project|something you (?:built|created))",label,re.I):return "project"
     if re.search(r"(?:tell us about yourself|summarize your (?:background|experience)|describe your (?:background|experience)|describe your prior experience)",label,re.I):return "experience"

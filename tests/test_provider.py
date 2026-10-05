@@ -3,6 +3,39 @@ from types import SimpleNamespace
 from hireme.provider import ClaudeProvider
 
 
+def test_source_array_wire_schema_is_stable_without_weakening_local_schema():
+    from hireme.provider import _claude_output_schema
+    schema={'type':'object','properties':{'sentence_ids':{'type':'array','uniqueItems':True,'maxItems':2,
+        'items':{'type':'string','enum':['source:one','source:two']}},'uniqueItems':{'type':'boolean'}},
+        'required':['sentence_ids','uniqueItems'],'additionalProperties':False}
+    original=json.loads(json.dumps(schema));wire=_claude_output_schema(schema)
+    assert schema==original
+    assert wire['properties']['sentence_ids']=={'type':'array','items':{'type':'string'}}
+    assert wire['properties']['uniqueItems']=={'type':'boolean'}
+    other=json.loads(json.dumps(schema));other['properties']['sentence_ids']['items']['enum']=['another:source']
+    assert _claude_output_schema(other)==wire
+
+
+def test_claude_locally_rejects_invalid_source_ids_duplicates_and_excess_items(monkeypatch):
+    import pytest
+    from hireme.util import Blocked
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda x:'/fixture/claude')
+    schema={'type':'object','properties':{'sentence_ids':{'type':'array','uniqueItems':True,'maxItems':1,
+        'items':{'type':'string','enum':['allowed:one','allowed:two']}}},'required':['sentence_ids'],'additionalProperties':False}
+    response={'sentence_ids':[]}
+    def run(args,**kwargs):
+        if args[1:]==['auth','status']:
+            return SimpleNamespace(returncode=0,stdout=json.dumps({'loggedIn':True,'authMethod':'claude.ai','subscriptionType':'pro'}))
+        wire=json.loads(args[args.index('--json-schema')+1]);assert 'enum' not in wire['properties']['sentence_ids']['items']
+        return SimpleNamespace(returncode=0,stdout=json.dumps({'structured_output':response}))
+    monkeypatch.setattr('hireme.provider.subprocess.run',run)
+    provider=ClaudeProvider()
+    for ids in (['unknown:source'],['allowed:one','allowed:one'],['allowed:one','allowed:two']):
+        response['sentence_ids']=ids
+        with pytest.raises(Blocked,match='provider_invalid_output'):provider.request('Synthetic test',{},schema)
+    response['sentence_ids']=['allowed:one'];assert provider.request('Synthetic test',{},schema)==response
+
+
 def test_cli_has_no_tools_browser_hooks_or_prompt_argv(monkeypatch):
     monkeypatch.setattr('hireme.provider.shutil.which',lambda x:'/usr/local/bin/claude')
     captured={}

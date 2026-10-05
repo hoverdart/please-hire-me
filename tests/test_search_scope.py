@@ -261,3 +261,18 @@ def test_summer_search_question_uses_explicit_filters_without_model_or_availabil
     with pytest.raises(Blocked):resolve(store,job['host'],field,context=context)
     store.update_settings({'seniority':['summer-internship'],'contextual_preferences':False})
     with pytest.raises(Blocked):resolve(store,job['host'],field,context=context)
+
+
+def test_next_internship_motivation_uses_writing_sources_not_fact_matching(store,job):
+    from hireme.answers import resolve,category
+    store.update_settings({'tailored_writing':True})
+    tid=store.put_template('project','I built an operational dashboard using Python.')
+    class Model:
+        def match_field(self,*args):raise AssertionError('Motivation went through fact matching')
+        def context_answer(self,*args):raise AssertionError('Motivation went through factual extraction')
+        def draft_answer(self,label,choices,context,maxlength):
+            source=next(x for x in choices if x.get('template_id')==tid)
+            return {'answer':source['text'],'sentence_ids':[source['id']]}
+    field={'label':'What are you most excited to work on in your next internship?','type':'textarea','required':True,'options':[],'maxlength':-1}
+    assert category(field['label'])=='motivation'
+    assert resolve(store,job['host'],field,Model(),context=job)['provenance']['tailored']
