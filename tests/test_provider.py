@@ -96,6 +96,28 @@ def test_pause_cancels_real_inference_subprocess(monkeypatch):
     assert time.monotonic()-started<3
 
 
+def test_checkpointed_inference_delivers_entire_large_prompt_to_delayed_reader(monkeypatch):
+    import sys,hashlib
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _: '/fixture/claude')
+    provider=ClaudeProvider(timeout=2,checkpoint=lambda:None)
+    payload='synthetic context '*100000+'END_OF_CONTEXT'
+    result=provider._run([sys.executable,'-c','import sys,time,hashlib;time.sleep(.5);print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'],input=payload)
+    assert result.returncode==0 and result.stdout.strip()==hashlib.sha256(payload.encode()).hexdigest()
+
+
+def test_pause_cancels_inference_while_large_prompt_is_still_being_written(monkeypatch):
+    import sys,time,pytest
+    from hireme.util import Blocked
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _: '/fixture/claude')
+    started=time.monotonic()
+    def checkpoint():
+        if time.monotonic()-started>.3:raise Blocked('paused')
+    provider=ClaudeProvider(timeout=5,checkpoint=checkpoint)
+    with pytest.raises(Blocked,match='paused'):
+        provider._run([sys.executable,'-c','import time;time.sleep(30)'],input='synthetic context '*100000)
+    assert time.monotonic()-started<3
+
+
 def test_team_subscription_is_accepted(monkeypatch):
     monkeypatch.setattr('hireme.provider.shutil.which',lambda x:'/usr/local/bin/claude')
     def run(args,**kwargs):

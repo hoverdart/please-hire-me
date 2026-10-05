@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import signal
+import threading
 
 from .util import Blocked
 
@@ -58,20 +59,32 @@ class ClaudeProvider:
         payload=kwargs.pop('input',None)
         process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                                  text=True,start_new_session=True,**kwargs)
+        finished=threading.Event();result={}
+        def communicate():
+            try:result['output']=process.communicate(input=payload)
+            except BaseException as error:result['error']=error
+            finally:finished.set()
+        # Older Python versions do not resume a partly written stdin when a
+        # timed-out communicate(input=...) is retried with input=None. One
+        # continuous I/O operation preserves the entire prompt and its EOF.
+        thread=threading.Thread(target=communicate,daemon=True);thread.start()
         try:
             while True:
                 self.checkpoint()
                 if time.monotonic()-started>self.timeout:raise subprocess.TimeoutExpired(args,self.timeout)
-                try:
-                    stdout,stderr=process.communicate(input=payload,timeout=.25)
+                if finished.wait(.25):
+                    self.checkpoint()
+                    if 'error' in result:raise result['error']
+                    stdout,stderr=result['output']
                     return subprocess.CompletedProcess(args,process.returncode,stdout,stderr)
-                except subprocess.TimeoutExpired:payload=None
         except BaseException:
             if process.poll() is None:
-                os.killpg(process.pid,signal.SIGTERM)
-                try:process.communicate(timeout=2)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid,signal.SIGKILL);process.communicate()
+                try:os.killpg(process.pid,signal.SIGTERM)
+                except ProcessLookupError:pass
+            if not finished.wait(2):
+                try:os.killpg(process.pid,signal.SIGKILL)
+                except ProcessLookupError:pass
+                finished.wait(2)
             raise
 
     def request(self, instruction, data, schema):
