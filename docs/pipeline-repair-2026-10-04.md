@@ -1,0 +1,49 @@
+# Application pipeline repair, October 4, 2026
+
+The pipeline had confirmed defects in model input delivery, job classification, answer reuse, contextual inference and email verification. They have been repaired and exercised on the physical Pi. A stable public release remains gated on employer acceptance evidence and the unfinished authenticated Workday transport.
+
+## Causes and resulting behavior
+
+| Defect | Repair |
+| --- | --- |
+| Large context prompts stalled on the Pi although short prompts and newer Python versions worked | On Python 3.13, repeated timed `communicate()` calls stopped writing stdin after the first timeout. One continuous I/O thread now delivers the complete prompt and EOF while the foreground retains timeout and cancellation checks. A delayed-reader regression verifies the full payload digest. |
+| Internship search admitted new-graduate/full-time roles through incidental description matches | Explicit title employment type takes precedence; ATS employment metadata is retained; internship, part-time and summer-year rules are evaluated separately. Role aliases include common software and ML titles. |
+| Eligibility holds were coupled to unrelated source edits; per-row writes made large cached queues slow | Holds track the dependencies of their specific decision, with a separate eligibility version. Screening writes use bounded transactions. |
+| Source context was available for essays but not ordinary required fields | Approved personal sources, resume evidence and confirmed facts now supply ordinary structured and short factual answers, with exact-option validation, citations and a separate grounding review. |
+| Essay review accepted claims of lacking experience based on missing resume entries | Drafting and review now require explicit support for negative personal claims. Review receives only cited factual samples; a grounding-version change invalidates earlier cached writing. |
+| Applicants had no simple place to maintain current personal context | **Basic context** in Your facts is an approved, editable personal source. Revision conflicts are rejected and source edits invalidate unattempted drafts. |
+| Wording/format differences blocked established facts | School/degree synonyms, graduation season/year order, hourly numeric salary, coding-language choices, temporary authorization and proficiency have bounded mappings. Current-versus-past disability scope is preserved. |
+| Previously blocked fields remained visible after their current controls resolved | Successful current resolution retires obsolete questions for the same requisition. Legacy school/degree lookup questions are retired narrowly; saved approvals retain their original scope. |
+| Board slug did not match the employer name in an authentic Greenhouse verification email | A validated official board API read establishes the employer name used by the existing sender, recipient, DKIM, timestamp, unique-code and one-use checks. The code is never exposed to a model or report. |
+| Usage counters could reuse a preceding call's tokens after failure | Per-call usage resets before each request. The dashboard groups today's requests and available input/output/cache tokens by provider and model, retaining unreported values. |
+| A required field's model timeout became a permanent missing-information hold | Timeout-only forms now use the existing delayed, bounded transient retry. A form with an unconfirmed required answer remains held for information; ambiguous submissions are never released. |
+| Re-screened matching jobs retained a blocked status | Jobs that pass revalidation return to Ready to evaluate; prepared and attempted outcomes retain their own states. |
+| An explicit summer search preference triggered inference for a simple intent question | The exact summer-internship search question now reads the saved opt-in search preference. This does not infer availability, relocation or another commitment. |
+
+Legal declarations, agreements, demographic categories, proficiency and future commitments still require explicit facts or scoped answers. Routine derivations are narrowly bounded: the implemented chronological academic-year rule uses confirmed enrollment dates and does not claim official credit standing. Generic context inference does not turn missing information into a negative answer.
+
+## Physical-Pi evidence
+
+A read-only audit screened **88,171 cached postings** in **37.05 seconds**, finding 319 eligible records under the saved preferences. It excluded 7,227 full-time roles and 42,749 seniority mismatches. This audit measured policy evaluation; the deployed screening cycle is recorded separately below.
+
+Real Greenhouse preparation exercised university/degree dropdowns, graduation choices, salary input, programming proficiency, employer history, work authorization, discovery-source questions, ordinary context answers and grounded writing. Robinhood's obsolete school/degree questions were removed by a fresh form check. Required questions not established by the applicant's sources stayed held. Posting render failures were classified before form side effects, and model/time ceilings remained bounded.
+
+One new live application filled and verified all 14 controls plus the resume upload, then entered `awaiting_verification`. Its authentic email was rejected by the old employer-name matcher. The parser defect was reproduced, fixed and regression-tested; reopening the posting did not restore its verification widget. The recorded application therefore remains pending, with no automatic retry and no employer confirmation claimed for that attempt. Earlier outcomes—three confirmed, seven explicitly not submitted and five unknown—were preserved.
+
+The Pi uses the explicitly selected Claude subscription workflow. No paid API fallback was used. Temporary model ceilings and reporting changes were restored after each supervised probe. The private database and source backup remain outside the repository. Applicant context, personal facts, codes, capability URLs and credentials are excluded from release artifacts.
+
+One intended model-free Robinhood probe patched the wrong import location and made three subscription calls before its deadline. It made no submission and preserved prior outcomes. Sage's grounded project answer timed out with both 90-second and supervised 180-second limits; the original setting was restored. Its timeout-only hold now has the existing bounded delayed retry rather than requiring an applicant fact edit; a fresh Sage preparation has not been tested after the stdin repair.
+
+HP IQ originally stalled while drafting its two essays. A 1.7 MB delayed-reader reproduction failed on the Pi's Python 3.13 with the previous transport and passed with the repair; the earlier behavior happened to pass on local Python 3.14. With complete stdin delivery, HP IQ prepared all 21 answers and its resume. Four real writing/review requests succeeded in 14–17 seconds each. Final manual review then caught unsupported negative-experience disclaimers, prompting the stricter cited-source review and a fresh preparation before submission. The stricter final preparation took eight bounded requests, including repairs of incomplete citations, and resolved every required question. The subsequent live run reused the prepared answers with **zero additional model requests** and reached HP IQ’s employer-rendered “Your application has been received” page. The receipt screenshot was inspected. The ledger now records **four confirmed**, seven explicitly not submitted, five unknown and one awaiting verification; all earlier outcomes were unchanged.
+
+The initial full cached-queue write refresh was interrupted cooperatively after partial screening. Its committed decisions remain, and every application still passes the repaired policy before browser work. The 88,171-row audit above is not a claim that every cached dashboard row has been refreshed.
+
+## Verification and release boundary
+
+Transport revision `6825eaa` passed **968 local tests in 269.13 seconds**, **286 focused Pi tests in 22.42 seconds**, and [all four CI platforms](https://github.com/hoverdart/please-hire-me/actions/runs/37246871756). Final runtime `1642ac6` passed **969 local tests in 269.40 seconds**, **125 focused Pi tests in 9.76 seconds**, and [all four CI platforms](https://github.com/hoverdart/please-hire-me/actions/runs/37248047986), including isolated artifact installation and private-file/path audits. Five full-suite local warnings came from third-party PyMuPDF bindings. Basic context and usage UI checks include mobile and desktop layout, private authenticated APIs, source revision conflicts and draft invalidation.
+
+Wheel, source distribution and source archive private-file/path audits passed for the final tested runtime; installation in an isolated environment verified dependencies, bundled discovery data, dashboard resources, empty private onboarding and paused defaults. CI independently built and checked artifacts on all four platforms. Subsequent report edits do not change runtime files.
+
+The deployed Pi matched all 65 tested runtime files. Post-deployment checks returned dashboard/authenticated API 200 and unauthenticated API 403, verified Basic context and model usage availability, and passed SQLite quick check. The original six-hour cron and live mode are restored, with 300 requests/day, 100/cycle, 90-second model timeout and the original reporting settings. Private backups and the final operational record remain outside the repo.
+
+This remains `0.5.0rc1`. Workday public posting inspection and protocol fixtures do not implement authenticated application transport. Existing Ashby spam rejections and ambiguous submission outcomes remain held. Prepared forms, filled controls and a verification challenge are not counted as submitted applications. Do not publish a stable release on the strength of these checks alone.

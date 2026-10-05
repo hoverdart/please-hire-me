@@ -23,12 +23,12 @@ This is a personal automation tool, not a hosted multi-tenant service. Each pers
 
 ## Get started
 
-The current workspace improvements are on the **codex/application-workspace-integration** branch of this repository.
+The current application workspace is on the **main** branch of this repository.
 
 Requires **Python 3.11+**, Git, and macOS or Linux. On Windows use a supported Linux environment such as WSL2; the worker uses POSIX file locks. Model inference runs remotely through your selected provider, not on a local GPU.
 
 ```bash
-git clone --branch codex/application-workspace-integration https://github.com/Abdullah-Waris/please-hire-me.git
+git clone https://github.com/hoverdart/please-hire-me.git
 cd please-hire-me
 ./setup.sh
 ```
@@ -53,7 +53,7 @@ The setup page checks the machine and guides you through:
 
    The optional terminal command `hireme resume-candidates` extracts only from the selected hash-verified resume PDF. It ignores the compatibility text cache, keeps exact existing confirmations, and discards suggestions if the selected PDF or its bytes change during inference. New suggestions remain unconfirmed. Any request already made still counts against the model budget.
 2. **Key information:** review extracted values, confirm them, and supply information the resume does not establish. Work authorization, sponsorship, and other legal facts require your answers.
-3. **Additional context:** paste or upload your experience, interests, project notes, or research. Approve each source as personal factual work, background reference, or style only.
+3. **Additional context:** save **Basic context** in Your facts for your current work, education, experience and preferences. Confirm its contents before reuse. You can also paste or upload project notes, research and other sources in Writing & context, approving each as personal factual work, background reference, or style only.
 4. **Writing samples:** upload essays, cover-letter examples, or other writing as DOCX, PDF, PPTX, TXT, or Markdown. Review an excerpt before approving its use. Optional sources may be skipped and added later.
 5. **Job preferences:** choose roles, locations, seniority, compensation floors, exclusions, and company limits. Defaults are early-career US software searches; change them to fit you.
 6. **Schedule and limits:** choose batch frequency and daily/cycle ceilings. Save preferences before continuing.
@@ -62,6 +62,8 @@ The setup page checks the machine and guides you through:
 Clearing a saved optional fact and saving removes it from confirmed use. Fact revisions are preserved, and removing a required fact through the API pauses the worker and cancels its active generation. Your application history and uncertain outcomes remain recorded.
 
 Your facts initially shows the required essentials; use the optional-facts toggle to add availability, education details, or disclosures. Yes/No suggestions and month pickers help with exact formats. Setup is resumable: saved documents, facts, and preferences remain in the local database after you close the browser. The steps use the same editing screens you can revisit later. Choosing Pi does not transfer your files or provision another machine.
+
+Basic context and approved personal sources supply ordinary factual answers as well as tailored writing when contextual choices are enabled. Generated answers cite their sources and pass a separate grounding review. Editing or withdrawing a source invalidates unattempted drafts. Legal declarations, consent and demographic choices require explicit facts or scoped answers; one demographic category does not establish another.
 
 ### Try a sample workspace
 
@@ -167,6 +169,8 @@ The first command checks installed prerequisites and saved setup. The second als
 | OpenAI API | An API key and accessible model ID in Model connection | Separate API billing |
 
 Subscription modes reject API-only authentication and omit inherited API keys. API keys are stored in a private file under your data directory, never echoed to the dashboard or included in backups. Changing vendors requires a matching key. API connectivity is checked on the first request; key presence alone does not prove billing/model access. Never put keys in the repository.
+
+Model connection shows today's requests and available input, output and cache token counts by provider and model, including failed calls. Missing usage is shown as unreported. These are recorded worker measurements; they do not show remaining vendor credits, subscription allowance or a billing balance.
 
 CLI versions must support the required isolation flags. Claude inference disables tools, MCP and project customizations. Codex inference ignores user configuration, uses an ephemeral read-only session, and disables shell, plugins, browser, apps and delegation. API requests include no tools and use fixed vendor endpoints. The model proposes answers; deterministic code owns the browser and submission policy. These CLI restrictions are not a complete operating-system isolation boundary.
 

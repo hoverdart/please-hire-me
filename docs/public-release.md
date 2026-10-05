@@ -1,6 +1,6 @@
 # v0.5.0 release candidate
 
-> **October 4 update: release remains blocked.** Answer-reliability runtime `1103b28` is deployed and verified on the Pi; this supersedes older runtime-revision and deployment-pending statements below. The clean source passed 861 local tests and 187 focused Pi tests. Original scheduling, request caps, facts, approvals and application outcomes were preserved. See [the answer-resolution report](answer-resolution-2026-10-04.md). No release was published and no employer application was submitted during this repair; authenticated Workday and remaining supervised-release gates still require evidence.
+> **October 4 pipeline update: release remains blocked.** The context, filtering and verification repairs supersede the earlier `1103b28` runtime report below. Basic context, source-grounded ordinary fields, separate eligibility holds and provider/model usage are implemented. HP IQ now has a new employer-confirmed application after all 21 answers and the resume were prepared; its live submission made zero further model calls. Another application remains pending email verification. The original six-hour live schedule and 300/day, 100/cycle model limits are restored. See [the pipeline repair report](pipeline-repair-2026-10-04.md) for the causes, tests, deployed checks and remaining boundaries. No stable release was published. The [earlier answer-resolution report](answer-resolution-2026-10-04.md) remains historical evidence.
 
 This document tracks current release gates. It is not a public readiness certificate.
 
@@ -93,8 +93,8 @@ A read-only probe of the dedicated browser found no verified applicant session a
 ## Release gates still pending
 
 1. Finish authenticated Workday adapter inspection and browser fixtures. NVIDIA account setup still needs a verified JavaScript registration/login flow or manual setup; remote draft saves require separate owner opt-in. Unknown agreements remain review items.
-2. Obtain the remaining new Workday confirmation within the six remaining supervised attempts. Both distinct Greenhouse confirmations have been obtained. Never retry prior uncertain outcomes or count draft saves/preparation as submissions.
-3. Observe the next two scheduled cycles (October 4 at 06:00 and 12:00 Pacific), confirm unchanged blockers/uncertainty exclusions and attempted-only emails. Permanent model caps are already restored.
+2. Obtain the remaining new Workday confirmation within the four remaining supervised attempts. Both distinct Greenhouse confirmations have been obtained. Never retry prior uncertain outcomes or count draft saves/preparation as submissions.
+3. Observe two scheduled cycles after the latest pipeline repair, confirm unchanged blockers/uncertainty exclusions and attempted-only emails. Permanent model caps are already restored.
 4. Publish v0.5.0 only if every gate passes. Otherwise retain a clearly marked candidate and exact outstanding blockers.
 
 Versioned source archive, wheel and source distribution at `0.5.0rc1` pass private-file/path audits. CI retains all three as downloadable candidate artifacts for 30 days. No v0.5.0 release has been published.
