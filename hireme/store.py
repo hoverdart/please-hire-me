@@ -88,6 +88,7 @@ CREATE INDEX IF NOT EXISTS applications_state_attempted ON applications(state,at
 CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(first_seen DESC,id);
 CREATE INDEX IF NOT EXISTS jobs_fit ON jobs(score DESC,first_seen DESC,id);
 CREATE INDEX IF NOT EXISTS questions_unresolved_job ON questions(resolved,job_id);
+CREATE INDEX IF NOT EXISTS events_kind_subject_seq ON events(kind,subject,seq DESC);
 CREATE INDEX IF NOT EXISTS employer_accounts_state ON employer_accounts(state);
 CREATE INDEX IF NOT EXISTS runs_status_started ON runs(status,started);
 """
