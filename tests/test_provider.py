@@ -139,3 +139,26 @@ def test_grounding_rejection_repairs_with_specific_feedback(monkeypatch):
     assert result['answer']=='I want to build useful tools.'
     assert calls[2]['repair_feedback']=='Unsupported metric'
     assert len(events)==2 and events[0]['supported'] is False
+
+
+def test_writing_review_uses_only_cited_facts_and_rejects_absence_inferences(monkeypatch):
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _: '/fixture/claude')
+    p=ClaudeProvider();calls=[]
+    replies=iter([
+        {'answer':"I have never used quantization.",'sentence_ids':['s1']},
+        {'supported':False,'reason':'Silence does not establish absence of experience'},
+        {'answer':'I built an audio classifier.','sentence_ids':['s1']},
+        {'supported':True,'reason':'Explicit source support'},
+    ])
+    def request(instruction,data,schema):
+        calls.append((instruction,data));return next(replies)
+    p.request=request
+    result=p.draft_answer('Why this role?',[
+        {'id':'s1','text':'I built an audio classifier.'},
+        {'id':'s2','text':'Unrelated approved context.'},
+    ])
+    assert result['answer']=='I built an audio classifier.'
+    assert 'Negative personal claims require explicit source support' in calls[0][0]
+    assert 'Silence is not evidence of absence' in calls[1][0]
+    assert [x['id'] for x in calls[1][1]['samples']]==['s1']
+    assert calls[2][1]['repair_feedback']=='Silence does not establish absence of experience'
