@@ -2,7 +2,7 @@
 
 The pipeline had confirmed defects in model input delivery, job classification, answer reuse, contextual inference and email verification. They have been repaired and exercised on the physical Pi. A stable public release remains gated on employer acceptance evidence and the unfinished authenticated Workday transport.
 
-**Current handoff:** runtime `d125649` is pushed and passed all four CI platforms, but has not yet been deployed to the Pi. At the last device check, the Pi still ran `9c9e7f6`, live mode and the six-hour cron were temporarily paused for deployment, and a private current-history backup was running. Network access changed before backup completion was verified. Device access, backup verification, deployment, dashboard checks and schedule restoration remain outstanding; earlier restoration evidence below is historical.
+**Current deployment:** runtime `d125649` is deployed on the Pi and matches all 65 tested runtime files. After local-network access ended, the owner supplied the output of the prepared maintenance commands through Raspberry Pi Connect's remote shell. The current-history backup passed SQLite quick check and document-reference validation, preserving all 17 application outcomes. Deployment and dashboard restart succeeded; dashboard and authenticated API checks returned 200, unauthenticated access returned 403, Basic context and usage were available, and database integrity passed. Live mode and the original six-hour cron are restored, with 300 requests/day and 100/cycle. The Pi checkout was clean. Full-queue performance, authenticated Workday transport and two final-runtime scheduled cycles remain outstanding.
 
 ## Causes and resulting behavior
 
