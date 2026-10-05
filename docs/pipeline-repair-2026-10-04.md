@@ -2,6 +2,8 @@
 
 The pipeline had confirmed defects in model input delivery, job classification, answer reuse, contextual inference and email verification. They have been repaired and exercised on the physical Pi. A stable public release remains gated on employer acceptance evidence and the unfinished authenticated Workday transport.
 
+**Current handoff:** runtime `d125649` is pushed and passed all four CI platforms, but has not yet been deployed to the Pi. At the last device check, the Pi still ran `9c9e7f6`, live mode and the six-hour cron were temporarily paused for deployment, and a private current-history backup was running. Network access changed before backup completion was verified. Device access, backup verification, deployment, dashboard checks and schedule restoration remain outstanding; earlier restoration evidence below is historical.
+
 ## Causes and resulting behavior
 
 | Defect | Repair |
@@ -19,6 +21,10 @@ The pipeline had confirmed defects in model input delivery, job classification, 
 | A required field's model timeout became a permanent missing-information hold | Timeout-only forms now use the existing delayed, bounded transient retry. A form with an unconfirmed required answer remains held for information; ambiguous submissions are never released. |
 | Re-screened matching jobs retained a blocked status | Jobs that pass revalidation return to Ready to evaluate; prepared and attempted outcomes retain their own states. |
 | An explicit summer search preference triggered inference for a simple intent question | The exact summer-internship search question now reads the saved opt-in search preference. This does not infer availability, relocation or another commitment. |
+| New discoveries appeared in Ready before employment filters were applied | Discovery now applies the same title/type/role rules before queue admission, preserving recorded outcomes and manual decisions. Bounded transactions retain cooperative cancellation. |
+| Filling a parent field revealed additional required controls and stopped preparation | A bounded local refresh resolves strictly added controls before preparation or submission. Replaced controls, missing facts and continuously changing forms remain held. |
+| Dashboard reads requested schema writes while the worker held a write transaction | A schema fingerprint and SQLite structural version let initialized readers avoid DDL and inserts. Legacy migration and missing-table repair preserve existing data. |
+| Citizenship-only postings remained held despite confirmed US citizenship | Explicit US citizenship requirements use the confirmed citizenship fact, including spelled-out United States wording. US-person status alone does not establish citizenship; clearance requirements remain held. |
 
 Legal declarations, agreements, demographic categories, proficiency and future commitments still require explicit facts or scoped answers. Routine derivations are narrowly bounded: the implemented chronological academic-year rule uses confirmed enrollment dates and does not claim official credit standing. Generic context inference does not turn missing information into a negative answer.
 
@@ -45,5 +51,13 @@ Transport revision `6825eaa` passed **968 local tests in 269.13 seconds**, **286
 Wheel, source distribution and source archive private-file/path audits passed for the final tested runtime; installation in an isolated environment verified dependencies, bundled discovery data, dashboard resources, empty private onboarding and paused defaults. CI independently built and checked artifacts on all four platforms. Subsequent report edits do not change runtime files.
 
 The deployed Pi matched all 65 tested runtime files. Post-deployment checks returned dashboard/authenticated API 200 and unauthenticated API 403, verified Basic context and model usage availability, and passed SQLite quick check. The original six-hour cron and live mode are restored, with 300 requests/day, 100/cycle, 90-second model timeout and the original reporting settings. Private backups and the final operational record remain outside the repo.
+
+The later discovery, conditional-field, database-reader and citizenship repairs passed **998 local tests in 276.64 seconds** at `df643f2`; a subsequent spelled-out citizenship correction at `d125649` passed **77 focused local tests** and **77 focused physical-Pi tests**. The final runtime passed **1,010 tests on each of all four CI platforms**, plus artifact installation and audits ([CI evidence](https://github.com/hoverdart/please-hire-me/actions/runs/37254669986)). The physical Pi also passed **120 storage, backup, filtering and citizenship checks** and **five conditional-field browser checks**. The broader repeated Pi browser run was interrupted to reduce resource contention; it is not a completed suite. A preliminary database-readiness implementation failed the legacy missing-table upgrade regression; structural-version checking fixed that defect before deployment. The original regression remains intact.
+
+On the Pi's actual private-data filesystem, importing 300 synthetic matching listings took **36.612 seconds** with individual commits and **0.938 seconds** with bounded batches. A separate active-writer reproduction blocked the original reader, while the repaired reader returned committed facts within the test window. These measurements are synthetic storage tests, not employer submission rates.
+
+The real 18:00 scheduled run started on the preceding runtime. It was cooperatively paused for deployment maintenance after discovering 304 additional postings, with **zero application attempts and zero model requests**. All recorded outcomes were unchanged. This interrupted run does not satisfy the two final-runtime scheduled-cycle release gate.
+
+A subsequent preparation-only queue refresh reached its **600-second ceiling** before completing. Temporary settings were restored, all application outcomes were preserved, and no model requests or application attempts occurred. Its completed screening decisions remain committed. A concurrent repeated browser regression run was stopped; the separate five conditional-field checks passed. Full cached-queue write performance remains an operational gap and is not covered by the faster synthetic listing-import benchmark.
 
 This remains `0.5.0rc1`. Workday public posting inspection and protocol fixtures do not implement authenticated application transport. Existing Ashby spam rejections and ambiguous submission outcomes remain held. Prepared forms, filled controls and a verification challenge are not counted as submitted applications. Do not publish a stable release on the strength of these checks alone.
