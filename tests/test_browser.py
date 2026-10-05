@@ -914,3 +914,54 @@ def test_initial_render_timeout_gets_bounded_read_retry_without_any_write(store,
         assert not browser.attempted and not browser.aid
     assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
     assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
+
+
+def conditional_html(label='City',unstable=False,change_existing=False):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text()
+    script='''<script>let revealed=0;document.getElementById('name').addEventListener('input',()=>{
+      if(!UNSTABLE && revealed)return;
+      revealed++;let l=document.createElement('label');let c=document.createElement('input');
+      c.id='revealed-'+revealed;c.name='revealed-'+revealed;c.required=true;l.htmlFor=c.id;l.textContent=LABEL;
+      document.getElementById('application').insertBefore(l,document.querySelector('button[type=submit]'));
+      l.after(c);
+      CHANGE
+    });</script>'''.replace('UNSTABLE',str(unstable).lower()).replace('LABEL',json.dumps(label)).replace('CHANGE',
+        "document.querySelector('label[for=email]').textContent='Changed email question';" if change_existing else '')
+    return html.replace('</body>',script+'</body>')
+
+
+@pytest.mark.parametrize('live',[False,True])
+def test_conditional_required_fields_resolve_before_preparation_or_submission(store,ats,live):
+    store.put_facts({'city':'Berkeley'})
+    job=local_job(store,ats);html=conditional_html()
+    with Browser(store,test_url=ats[0]) as b:
+        b.context.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html') if route.request.method=='GET' else route.continue_())
+        assert b.apply(job,live=live)==('confirmed' if live else 'prepared')
+    app=store.db.execute('SELECT * FROM applications WHERE job_id=?',(job['id'],)).fetchone()
+    package=json.loads(app['package'])
+    assert len(package['answers'])==4 and len(package['documents'])==1
+    assert next(a['value'] for a in package['answers'] if a['field']['label']=='City')=='Berkeley'
+    assert len(ats[1])==int(live)
+    if live:assert b'Berkeley' in ats[1][0]
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='conditional_fields_revealed'").fetchone()[0]==1
+
+
+def test_conditional_unconfirmed_high_school_gpa_remains_held(store,ats):
+    store.put_facts({'gpa':'3.76/4.0'})
+    job=local_job(store,ats);html=conditional_html('High school GPA')
+    with Browser(store,test_url=ats[0]) as b:
+        b.context.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html'))
+        with pytest.raises(Blocked,match='missing_answers'):b.apply(job)
+    assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert store.db.execute('SELECT label FROM questions WHERE resolved=0').fetchone()[0]=='High school GPA'
+
+
+@pytest.mark.parametrize('unstable,change_existing',[(True,False),(False,True)])
+def test_unstable_or_replaced_controls_never_reach_submit(store,ats,unstable,change_existing):
+    store.put_facts({'city':'Berkeley'})
+    job=local_job(store,ats);html=conditional_html(unstable=unstable,change_existing=change_existing)
+    with Browser(store,test_url=ats[0]) as b:
+        b.context.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html'))
+        with pytest.raises(Blocked,match='form_changed'):b.apply(job)
+    assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='conditional_fields_revealed'").fetchone()[0]==(3 if unstable else 0)

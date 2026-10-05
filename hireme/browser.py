@@ -518,6 +518,18 @@ class Browser:
             shapes.append(shape)
         return shapes
 
+    @classmethod
+    def _additional_fields(cls, before, after):
+        """Only monotonic additions may restart local field resolution."""
+        from collections import Counter
+        def signatures(fields):
+            return Counter(digest({'shape':shape,'controls':[
+                {k:ref[k] for k in ('id','name','tag') if ref.get(k)}
+                for ref in field.get('refs',[field.get('ref',{})])]})
+                for field,shape in zip(fields,cls._shape(fields)))
+        old,new=signatures(before),signatures(after)
+        return len(after)>len(before) and not old-new
+
     def _menu(self, el):
         for name in ('aria-controls','aria-owns'):
             ident=el.get_attribute(name)
@@ -658,7 +670,7 @@ class Browser:
         job={**job,'description':posting_text,'answer_scope':job['host']+'|'+self.store.company(job['company'])}
         eligible(job,self.store.settings(),self.store.facts())
         self.store.upsert_job(job)
-        all_answers=[]; all_docs=[]; steps=[]
+        all_answers=[]; all_docs=[]; steps=[]; refreshes=0
         for step in range(8):
             try:self._guard(job)
             except Blocked as e:
@@ -734,7 +746,15 @@ class Browser:
                 self.store.checkpoint()
                 self.store.event('field_filling',job['id'],{'label':a['field']['label']})
                 self._fill(a)
-            self._verify(answers,documents,fields)
+            try:self._verify(answers,documents,fields)
+            except Blocked as error:
+                if error.reason!='form_changed':raise
+                fresh=self._snapshot()
+                if refreshes>=3 or not self._additional_fields(fields,fresh):raise
+                self._guard(job)
+                refreshes+=1
+                self.store.event('conditional_fields_revealed',job['id'],{'refresh':refreshes,'added':len(fresh)-len(fields)})
+                continue
             self._guard(job)
             all_answers.extend(answers);all_docs.extend(documents)
             steps.append({'step':step,'fields':fields,'url':self.page.url})
