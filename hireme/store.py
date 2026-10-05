@@ -17,7 +17,7 @@ from .config import DEFAULTS, FACTS, REQUIRED, validate_fact, validate_settings
 from .util import Blocked, atomic_json, company_normalizer, digest, now, private_dir
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS schema_metadata (id INTEGER PRIMARY KEY CHECK(id=1),fingerprint TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS schema_metadata (id INTEGER PRIMARY KEY CHECK(id=1),fingerprint TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS question_contexts (id TEXT PRIMARY KEY,context TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS field_bindings_v2 (id TEXT PRIMARY KEY,context TEXT NOT NULL,
@@ -106,20 +106,24 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         try:
-            try:metadata=self.db.execute('SELECT fingerprint FROM schema_metadata WHERE id=1').fetchone()
+            try:metadata=self.db.execute('SELECT fingerprint,schema_version FROM schema_metadata WHERE id=1').fetchone()
             except sqlite3.OperationalError as error:
-                if 'no such table: schema_metadata' not in str(error):raise
+                if not any(message in str(error) for message in ('no such table: schema_metadata','no such column: schema_version')):raise
                 metadata=None
             fingerprint=digest(SCHEMA)
-            if not metadata or metadata['fingerprint']!=fingerprint:
+            if (not metadata or metadata['fingerprint']!=fingerprint
+                    or metadata['schema_version']!=self.db.execute('PRAGMA schema_version').fetchone()[0]):
                 # Record readiness only after every idempotent schema statement
                 # and the initial config succeed. Ordinary readers need no DDL
                 # or INSERT lock while the worker is writing.
                 self.db.executescript(SCHEMA)
+                if 'schema_version' not in {row['name'] for row in self.db.execute('PRAGMA table_info(schema_metadata)')}:
+                    self.db.execute('ALTER TABLE schema_metadata ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0')
                 self.db.execute("INSERT OR IGNORE INTO config VALUES (1, ?)", (json.dumps(DEFAULTS),))
-                self.db.execute('INSERT OR REPLACE INTO schema_metadata VALUES(1,?)',(fingerprint,))
+                self.db.execute('INSERT OR REPLACE INTO schema_metadata(id,fingerprint,schema_version) VALUES(1,?,?)',
+                                (fingerprint,self.db.execute('PRAGMA schema_version').fetchone()[0]))
             elif not self.db.execute('SELECT 1 FROM config WHERE id=1').fetchone():
-                self.db.execute('INSERT INTO config VALUES(1,?)',(json.dumps(DEFAULTS),))
+                self.db.execute('INSERT OR IGNORE INTO config VALUES(1,?)',(json.dumps(DEFAULTS),))
             os.chmod(self.path, 0o600)
         except BaseException:
             self.db.close();raise

@@ -58,3 +58,25 @@ def test_missing_config_retains_conservative_initialization(store):
         assert not observer.settings()['onboarding_complete']
         assert observer.facts()['full_name']['value']=='Test Person'
     finally:observer.close()
+
+
+def test_external_schema_change_repairs_missing_table_without_resetting_facts(store):
+    before=store.facts();store.db.execute('DROP TABLE job_notes')
+    observer=Store(store.root)
+    try:
+        assert observer.db.execute('SELECT count(*) FROM job_notes').fetchone()[0]==0
+        assert observer.facts()==before
+        metadata=observer.db.execute('SELECT schema_version FROM schema_metadata').fetchone()[0]
+        assert metadata==observer.db.execute('PRAGMA schema_version').fetchone()[0]
+    finally:observer.close()
+
+
+def test_previous_fingerprint_marker_upgrades_without_resetting_config(store):
+    before=store.settings();store.db.execute('DROP TABLE schema_metadata')
+    store.db.execute('CREATE TABLE schema_metadata (id INTEGER PRIMARY KEY,fingerprint TEXT NOT NULL)')
+    store.db.execute("INSERT INTO schema_metadata VALUES(1,'previous-version')")
+    observer=Store(store.root)
+    try:
+        assert observer.settings()==before
+        assert observer.db.execute('SELECT schema_version FROM schema_metadata').fetchone()[0]>0
+    finally:observer.close()
