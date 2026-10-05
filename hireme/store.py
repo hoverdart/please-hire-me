@@ -17,6 +17,7 @@ from .config import DEFAULTS, FACTS, REQUIRED, validate_fact, validate_settings
 from .util import Blocked, atomic_json, company_normalizer, digest, now, private_dir
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS schema_metadata (id INTEGER PRIMARY KEY CHECK(id=1),fingerprint TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS question_contexts (id TEXT PRIMARY KEY,context TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS field_bindings_v2 (id TEXT PRIMARY KEY,context TEXT NOT NULL,
@@ -104,9 +105,24 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
-        self.db.executescript(SCHEMA)
-        os.chmod(self.path, 0o600)
-        self.db.execute("INSERT OR IGNORE INTO config VALUES (1, ?)", (json.dumps(DEFAULTS),))
+        try:
+            try:metadata=self.db.execute('SELECT fingerprint FROM schema_metadata WHERE id=1').fetchone()
+            except sqlite3.OperationalError as error:
+                if 'no such table: schema_metadata' not in str(error):raise
+                metadata=None
+            fingerprint=digest(SCHEMA)
+            if not metadata or metadata['fingerprint']!=fingerprint:
+                # Record readiness only after every idempotent schema statement
+                # and the initial config succeed. Ordinary readers need no DDL
+                # or INSERT lock while the worker is writing.
+                self.db.executescript(SCHEMA)
+                self.db.execute("INSERT OR IGNORE INTO config VALUES (1, ?)", (json.dumps(DEFAULTS),))
+                self.db.execute('INSERT OR REPLACE INTO schema_metadata VALUES(1,?)',(fingerprint,))
+            elif not self.db.execute('SELECT 1 FROM config WHERE id=1').fetchone():
+                self.db.execute('INSERT INTO config VALUES(1,?)',(json.dumps(DEFAULTS),))
+            os.chmod(self.path, 0o600)
+        except BaseException:
+            self.db.close();raise
 
     def close(self):
         self.db.close()
