@@ -6,6 +6,7 @@ from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
 ELIGIBILITY_VERSION = 2
+CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
  "San Francisco Bay Area": r"san francisco|\bsf\b|bay area|palo alto|mountain view|menlo park|redwood city|san mateo|sunnyvale|santa clara|san jose|oakland|berkeley|cupertino|foster city|emeryville|burlingame",
@@ -19,6 +20,8 @@ YEARS=re.compile(r"(?:at least|minimum(?: of)?|requires?|must have|\b)(\d+)(?:\s
 GRAD=re.compile(r"(?:graduat\w*.{0,35}(?:between|from)\s+)(\d{4})(?:.{0,20}(?:and|to|[-–])\s*)(\d{4})",re.I)
 NO_SPONSOR=re.compile(r"(?:do(?:es)? not|cannot|can.t|will not|unable to|not (?:available|offered)).{0,35}sponsor|sponsorship.{0,30}(?:not (?:available|offered)|unavailable)|without.{0,15}sponsorship",re.I)
 CITIZEN=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:us citizen|u\.s\. citizen|us person|u\.s\. person)|(?:us citizen|u\.s\. citizen|us person).{0,25}(?:required|only)|\bitar\b|(?:active|must have|requires?).{0,20}security clearance",re.I)
+US_CITIZEN_GATE=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:u\.?s\.?|united states) citizen(?:ship|s)?|(?:u\.?s\.?|united states) citizen(?:ship|s)?.{0,25}(?:required|only)",re.I)
+
 
 
 def fit_score(job,facts):
@@ -93,7 +96,10 @@ def eligible(job,s,facts):
         raise Blocked("sponsorship_mismatch")
     if CITIZEN.search(desc):
         if facts.get("us_person",{}).get("value")!="Yes": raise Blocked("citizenship_mismatch")
-        if re.search(r"citizen|clearance",desc,re.I): raise Blocked("citizenship_or_clearance_review")
+        citizenship=re.sub(r'[^a-z]','',facts.get('citizenship',{}).get('value','').casefold())
+        confirmed_us=citizenship in {'us','usa','unitedstates','unitedstatesofamerica','uscitizen','unitedstatescitizen','citizenoftheunitedstates','americancitizen'}
+        if re.search(r'\bclearance\b',desc,re.I) or US_CITIZEN_GATE.search(desc) and not confirmed_us:
+            raise Blocked("citizenship_or_clearance_review")
     grad=facts.get("graduation",{}).get("value","")
     from .graduation import required
     required(desc,grad)

@@ -1,14 +1,14 @@
 from pathlib import Path
 import json
 import pytest
-from hireme.job_holds import ELIGIBILITY_INPUTS,hold,ready
+from hireme.job_holds import ELIGIBILITY_REVIEWS,ELIGIBILITY_INPUTS,hold,ready
 from hireme.presentation import NOT_MATCH_REASONS
 from hireme.util import Blocked,digest
 from hireme.worker import cycle
 
 
 def test_all_eligibility_reasons_declare_dependencies():
-    assert set(ELIGIBILITY_INPUTS)==NOT_MATCH_REASONS
+    assert set(ELIGIBILITY_INPUTS)==NOT_MATCH_REASONS|ELIGIBILITY_REVIEWS
 
 
 @pytest.mark.parametrize('reason',sorted(NOT_MATCH_REASONS))

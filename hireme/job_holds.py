@@ -15,6 +15,8 @@ ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','acco
 TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
 
+ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review'}
+
 # Each exclusion is already a proven blocker. Other profile/preferences edits
 # cannot make that blocker pass and must not release it for another browser run.
 ELIGIBILITY_INPUTS = {
@@ -27,6 +29,7 @@ ELIGIBILITY_INPUTS = {
     'experience_mismatch': ({'professional_years'},{'max_years_required'}),
     'sponsorship_mismatch': ({'needs_sponsorship'},set()),
     'citizenship_mismatch': ({'us_person'},set()),
+    'citizenship_or_clearance_review': ({'citizenship','us_person'},set()),
     'graduation_mismatch': ({'graduation'},set()),
     'start_window_mismatch': ({'earliest_start','latest_start'},set()),
     'compensation_mismatch': (set(),{'min_annual_usd','min_hourly_usd'}),
@@ -36,7 +39,7 @@ ELIGIBILITY_INPUTS = {
 }
 
 def category(reason):
-    if reason in NOT_MATCH_REASONS:return 'eligibility'
+    if reason in NOT_MATCH_REASONS or reason in ELIGIBILITY_REVIEWS:return 'eligibility'
     if reason in FACT_REASONS:return 'information'
     if reason in MAPPING_REASONS:return 'mapping'
     if reason in DOCUMENT_REASONS:return 'documents'
@@ -61,6 +64,9 @@ def dependency(store, job, kind, reason=None):
             'facts':{k:facts[k]['value'] for k in sorted(fact_keys) if k in facts},
             'settings':{k:settings[k] for k in sorted(setting_keys) if k in settings}}
         if reason=='expired_posting':data['adapter']=ADAPTER_VERSION
+        if reason in {'citizenship_mismatch','citizenship_or_clearance_review'}:
+            from .policy import CITIZENSHIP_VERSION
+            data['citizenship_policy']=CITIZENSHIP_VERSION
         return digest(data)
     data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION}
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})
@@ -94,6 +100,8 @@ def ready(store, job, at=None):
     if row['reason']=='model_budget_exhausted' and model_available(store,at):return True
     if row['category']=='limits':return True # Existing policy checks the current day/company limits.
     if row['category']=='transient':return row['retry_at'] is not None and (at or time.time())>=row['retry_at']
+    if row['reason']=='citizenship_or_clearance_review':
+        return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':return False
     return row['dependency']!=dependency(store,job,row['category'],row['reason'])
 
