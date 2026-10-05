@@ -5,16 +5,18 @@ from hireme.util import Blocked
 
 
 @pytest.mark.parametrize('citizenship',['United States of America','U.S. Citizen','USA'])
-def test_explicit_citizenship_requirement_uses_confirmed_citizenship(store,job,citizenship):
+@pytest.mark.parametrize('requirement',['U.S. Citizenship is Required.','Must be a United States citizen.','United States citizenship required.'])
+def test_explicit_citizenship_requirement_uses_confirmed_citizenship(store,job,citizenship,requirement):
     store.put_facts({'citizenship':citizenship})
-    eligible({**job,'description':'U.S. Citizenship is Required. Build Python software.'},store.settings(),store.facts())
+    eligible({**job,'description':requirement+' Build Python software.'},store.settings(),store.facts())
 
 
 @pytest.mark.parametrize('citizenship',[None,'Canadian','U.S. Permanent Resident'])
-def test_us_person_does_not_establish_us_citizenship(store,job,citizenship):
+@pytest.mark.parametrize('requirement',['U.S. Citizenship is Required.','Must be a United States citizen.','United States citizenship required.'])
+def test_us_person_does_not_establish_us_citizenship(store,job,citizenship,requirement):
     if citizenship:store.put_facts({'citizenship':citizenship})
     with pytest.raises(Blocked,match='citizenship_or_clearance_review'):
-        eligible({**job,'description':'U.S. Citizenship is Required.'},store.settings(),store.facts())
+        eligible({**job,'description':requirement},store.settings(),store.facts())
 
 
 def test_generic_export_definition_does_not_require_separate_citizenship(store,job):

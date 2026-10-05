@@ -94,7 +94,7 @@ def eligible(job,s,facts):
         raise Blocked("ambiguous_experience","Written-out experience gate needs verification")
     if NO_SPONSOR.search(desc) and facts.get("needs_sponsorship",{}).get("value")!="No":
         raise Blocked("sponsorship_mismatch")
-    if CITIZEN.search(desc):
+    if CITIZEN.search(desc) or US_CITIZEN_GATE.search(desc):
         if facts.get("us_person",{}).get("value")!="Yes": raise Blocked("citizenship_mismatch")
         citizenship=re.sub(r'[^a-z]','',facts.get('citizenship',{}).get('value','').casefold())
         confirmed_us=citizenship in {'us','usa','unitedstates','unitedstatesofamerica','uscitizen','unitedstatescitizen','citizenoftheunitedstates','americancitizen'}
