@@ -55,8 +55,8 @@ def employment_kind(job):
     return 'new-grad'
 
 
-def eligible(job,s,facts):
-    title=job.get("title",""); desc=job.get("description",""); location=job.get("location","")
+def listing_scope(job,s):
+    title=job.get("title",""); desc=job.get("description","")
     text=title+"\n"+desc
     clean=re.sub(r"member of technical staff|technical staff", "",title,flags=re.I)
     if SENIOR.search(clean): raise Blocked("seniority_mismatch")
@@ -68,6 +68,13 @@ def eligible(job,s,facts):
     accepted=kind in s['seniority'] or internship and summer and 'summer-internship' in s['seniority']
     if not accepted:
         raise Blocked({'internship':'internship_out_of_scope','part-time':'parttime_out_of_scope','new-grad':'fulltime_out_of_scope'}[kind])
+    return kind,summer
+
+
+def eligible(job,s,facts):
+    kind,summer=listing_scope(job,s);internship=kind=='internship'
+    title=job.get("title",""); desc=job.get("description",""); location=job.get("location","")
+    text=title+"\n"+desc
     seasonal=facts.get("summer_2027_relocate",{}).get("value")=="Yes"
     locations=(s["summer_2027_locations"] if summer else s["school_locations"]) if seasonal else s["locations"]
     patterns=[LOCATIONS.get(l,re.escape(l)) for l in locations]

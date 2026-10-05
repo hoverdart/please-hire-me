@@ -101,7 +101,32 @@ def probe(net,ats,slug):
 def source_result(store,sid,jobs=None,error=None):
     # Full snapshots eliminate lossy global timestamp watermarks; partial failures keep existing jobs.
     if jobs is not None:
-        for job in jobs: store.upsert_job(job)
+        from .policy import listing_scope
+        from .job_holds import hold,clear,safe_state
+        scope_reasons={'seniority_mismatch','role_mismatch','internship_out_of_scope','fulltime_out_of_scope','parttime_out_of_scope'}
+        pending=iter(jobs);done=False
+        while not done:
+            started=time.monotonic()
+            with store.transaction():
+                settings=store.settings()
+                for _ in range(100):
+                    store.checkpoint()
+                    try:job=next(pending)
+                    except StopIteration:
+                        done=True;break
+                    key=store.upsert_job(job);job={**job,'id':key}
+                    # Recorded outcomes and manual decisions remain authoritative.
+                    if safe_state(store,key) and not store.db.execute('SELECT 1 FROM job_decisions WHERE job_id=?',(key,)).fetchone():
+                        try:listing_scope(job,settings)
+                        except Blocked as exclusion:
+                            store.block(key,exclusion.reason,exclusion.detail)
+                            hold(store,job,exclusion.reason,exclusion.detail,'discovery')
+                        else:
+                            previous=store.db.execute('SELECT reason FROM job_holds WHERE job_id=?',(key,)).fetchone()
+                            if previous and previous['reason'] in scope_reasons:
+                                clear(store,key)
+                                store.db.execute("UPDATE jobs SET status='discovered',reason='' WHERE id=? AND status='blocked'",(key,))
+                    if time.monotonic()-started>=.25:break
     store.db.execute("INSERT INTO sources VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,checked=excluded.checked,error=excluded.error,payload=excluded.payload",
                      (sid,"error" if error else "ok",now(),str(error or "")[:500],json.dumps({"jobs":len(jobs or [])})))
     results=getattr(store,'discovery_results',None)
@@ -188,8 +213,9 @@ def sweep_portals(store,net=None):
     store.checkpoint()
     rows,errors=collect(net)
     store.checkpoint()
+    jobs=[]
     for r in rows:
         store.checkpoint()
-        try: store.upsert_job(posting(r[5],r[0],r[3],r[4],"portal:"+r[0]))
+        try: jobs.append(posting(r[5],r[0],r[3],r[4],"portal:"+r[0]))
         except (ValueError,TypeError): continue
-    source_result(store,"portals",[],error="; ".join(errors) if errors else None)
+    source_result(store,"portals",jobs,error="; ".join(errors) if errors else None)

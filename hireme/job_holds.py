@@ -54,7 +54,7 @@ def dependency(store, job, kind, reason=None):
         fact_keys,setting_keys=ELIGIBILITY_INPUTS.get(reason,(
             set().union(*(v[0] for v in ELIGIBILITY_INPUTS.values())),
             set().union(*(v[1] for v in ELIGIBILITY_INPUTS.values()))))
-        facts=store.facts();settings=store.settings()
+        facts=store.facts() if fact_keys else {};settings=store.settings() if setting_keys else {}
         data={'version':2,'policy':ELIGIBILITY_VERSION,'reason':reason,
             'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),
             'posting_constraints':{k:posting.get(k) for k in ('min_years','compensation','employment_type','source')},

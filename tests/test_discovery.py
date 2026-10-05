@@ -112,3 +112,53 @@ def test_ashby_preserves_structured_country_when_display_location_is_ambiguous()
     j=probe(Net(),'ash','example')[0]
     assert j['location']=='SF; California; United States; Remote; Poland'
     assert j['employment_countries']==['United States','Poland']
+
+
+def test_discovery_excludes_new_grad_before_ready_and_releases_on_preference_change(store):
+    store.update_settings({'seniority':['internship','part-time','summer-internship']})
+    graduate=posting('https://jobs.lever.co/acme/graduate','Acme','Software Engineer, New Grad','San Francisco, US','test')
+    intern=posting('https://jobs.lever.co/acme/intern','Acme','Software Engineer Intern Summer 2027','San Francisco, US','test')
+    source_result(store,'test',[graduate,intern])
+    rows={r['id']:dict(r) for r in store.db.execute('SELECT id,status,reason FROM jobs')}
+    assert rows[graduate['id']]['status']=='blocked' and rows[graduate['id']]['reason']=='fulltime_out_of_scope'
+    assert rows[intern['id']]['status']=='discovered'
+    hold=store.db.execute('SELECT category,evidence FROM job_holds WHERE job_id=?',(graduate['id'],)).fetchone()
+    assert hold['category']=='eligibility' and json.loads(hold['evidence'])['stage']=='discovery'
+    assert store.db.execute('SELECT status FROM sources WHERE id=?',('test',)).fetchone()[0]=='ok'
+    store.update_settings({'seniority':['new-grad','internship']})
+    source_result(store,'test',[graduate])
+    assert store.db.execute('SELECT status,reason FROM jobs WHERE id=?',(graduate['id'],)).fetchone()[:]==('discovered','')
+    assert not store.db.execute('SELECT 1 FROM job_holds WHERE job_id=?',(graduate['id'],)).fetchone()
+
+
+@pytest.mark.parametrize('state',['confirmed','unknown','awaiting_verification','not_submitted'])
+def test_discovery_scope_exclusion_preserves_recorded_outcomes(store,job,package,state):
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,state,'Recorded synthetic result')
+    before=dict(store.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone())
+    source_result(store,'test',[{**job,'id':'another-import-id','title':'Senior Software Engineer, New Grad'}])
+    assert dict(store.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone())==before
+    assert store.db.execute('SELECT status FROM jobs WHERE id=?',(job['id'],)).fetchone()[0]==state
+    assert not store.db.execute('SELECT 1 FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+
+
+def test_discovery_scope_preserves_manual_application_decision(store,job):
+    store.decide_job(job['id'],'manually_applied')
+    source_result(store,'test',[{**job,'title':'Senior Software Engineer'}])
+    assert store.db.execute('SELECT status FROM jobs WHERE id=?',(job['id'],)).fetchone()[0]=='manually_applied'
+    assert not store.db.execute('SELECT 1 FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+
+
+def test_discovery_batches_commit_completed_groups_and_cancel_current_group(store,monkeypatch):
+    from hireme import discovery
+    jobs=[posting(f'https://jobs.lever.co/acme/intern-{i}','Acme','Software Engineer Intern','San Francisco, US','test') for i in range(220)]
+    monkeypatch.setattr(discovery.time,'monotonic',lambda:0)
+    calls=0
+    def checkpoint():
+        nonlocal calls
+        calls+=1
+        if calls==105:raise Blocked('paused')
+    monkeypatch.setattr(store,'checkpoint',checkpoint)
+    with pytest.raises(Blocked,match='paused'):source_result(store,'test',jobs)
+    assert store.db.execute('SELECT count(*) FROM jobs').fetchone()[0]==100
+    assert not store.db.in_transaction
+    assert not store.db.execute('SELECT 1 FROM sources WHERE id=?',('test',)).fetchone()
