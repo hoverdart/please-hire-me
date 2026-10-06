@@ -298,7 +298,10 @@ def test_find_opportunities_and_stop_without_enabling_submissions(tmp_path):
             expect(page.locator('#pause')).to_have_text('Stop search & pause')
             assert page.request.post(base + '/api/discover', data={}, headers={'X-Hireme-Token': 'fixture-capability'}).status == 400
             page.locator('#pause').click()
-            page.evaluate('refresh()')
+            # Cancellation is cooperative. A single snapshot can still show
+            # the worker running; poll its completion rather than depending on
+            # the fifteen-second background refresh to update this button.
+            page.wait_for_function('async()=>{await refresh();return !state.worker_running}', timeout=20000)
             expect(page.locator('#discover')).to_be_enabled()
             expect(page.locator('#run')).to_be_disabled()
             store = Store(root)
