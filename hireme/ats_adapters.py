@@ -9,22 +9,34 @@ class SingleStepAdapter:
         return verified if verified is not None else re.split(r'\bApply for this job\b',text,maxsplit=1,flags=re.I)[0]
 
 class GreenhouseAdapter(SingleStepAdapter):
-    version=2
+    version=3
     def navigation(self,job,*,checkpoint=None,deadline=None):
-        # Roblox redirects its board URL to a custom careers site. Use only
-        # Greenhouse's own embedded application after verifying its public job.
+        # Roblox always redirects its board URL to a custom careers site.
         from urllib.parse import urlsplit
-        path=urlsplit(job['url']).path
-        match=re.fullmatch(r'/roblox/jobs/(\d+)',path)
-        if not match:return super().navigation(job,checkpoint=checkpoint,deadline=deadline)
+        if re.fullmatch(r'/roblox/jobs/\d+',urlsplit(job['url']).path):return self.embedded(job,checkpoint=checkpoint,deadline=deadline)
+        return super().navigation(job,checkpoint=checkpoint,deadline=deadline)
+
+    def embedded(self,job,*,checkpoint=None,deadline=None):
+        """Greenhouse's own embedded application, for boards that forward to a custom careers site.
+
+        The custom site is outside the browser allowlist; the embedded form is
+        the same Greenhouse application on a Greenhouse host, after verifying
+        the public job and its title.
+        """
+        from urllib.parse import urlsplit
+        parts=urlsplit(job['url'])
+        match=re.fullmatch(r'/([A-Za-z0-9_-]+)/jobs/(\d+)',parts.path)
+        if not match or parts.hostname not in {'boards.greenhouse.io','job-boards.greenhouse.io'}:
+            raise Blocked('unexpected_redirect','The employer moved this application to its own careers site')
+        board,job_id=match.groups()
         from .net import Network
-        data=Network(checkpoint=checkpoint,deadline=deadline).json('https://boards-api.greenhouse.io/v1/boards/roblox/jobs/'+match[1]+'?content=true')
-        if not isinstance(data,dict) or str(data.get('id'))!=match[1] or not data.get('content') or not data.get('title'):
+        data=Network(checkpoint=checkpoint,deadline=deadline).json('https://boards-api.greenhouse.io/v1/boards/'+board+'/jobs/'+job_id+'?content=true')
+        if not isinstance(data,dict) or str(data.get('id'))!=job_id or not data.get('content') or not data.get('title'):
             raise Blocked('posting_fetch_failed','Cannot verify the Greenhouse posting for the embedded application')
         normalize=lambda value:re.sub(r'[^a-z0-9]+','',value.lower())
         if normalize(data['title'])!=normalize(job['title']):raise Blocked('posting_changed_review','The employer posting title changed')
         content=html.unescape(re.sub(r'<[^>]+>',' ',data['content']))
-        return 'https://job-boards.greenhouse.io/embed/job_app?for=roblox&token='+match[1],content
+        return 'https://job-boards.greenhouse.io/embed/job_app?for='+board+'&token='+job_id,content
 
 class WorkdayPostingAdapter(SingleStepAdapter):
     """Inspect a configured public posting; this grants no account/draft writes."""

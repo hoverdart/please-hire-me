@@ -18,9 +18,9 @@ RULES = [
     (r"^(street address|address line 1)\*?$", "street"), (r"^country( of residence)?\*?$", "country"),
     (r"^linkedin( profile)?( url)?\*?$", "linkedin"), (r"^github( profile)?( url)?\*?$", "github"),
     (r"^(website|personal website|portfolio)( url)?\*?$", "website"),
-    (r"^(school|university|college|school name|university name)\*?$", "school"),
+    (r"^(school|university|college|school name|university name|college\s*/\s*university|university\s*/\s*college)\*?$", "school"),
     (r"^(major|field of study|discipline\s*/\s*field of study)\*?$", "major"), (r"^(cumulative )?gpa\*?$", "gpa"),
-    (r"^(expected )?graduation( date)?\*?$", "graduation"),
+    (r"^(expected |anticipated )?graduation( date| semester| term| season| month| year| month\s*/\s*year| month and year)?\*?$", "graduation"),
     (r"^are you (legally )?authorized to work in (the )?(united states|us|u\.s\.)\??\*?$", "work_authorized_us"),
     (r"^will you( now or in the future)? require( visa)? sponsorship( now or in the future)?\??\*?$", "needs_sponsorship"),
     (r"^do you( now or in the future)? require( visa)? sponsorship\??\*?$", "needs_sponsorship"),
@@ -47,6 +47,8 @@ def field_key(label):
             and not re.search(r'marketing|advertis|sell|sale|third.part',label,re.I)):return 'demographic_data_consent'
     if re.search(r'(?:personal|familial) relationships?.{0,300}outside business activit',label,re.I|re.S):return 'conflict_disclosures'
     if re.search(r'government official.{0,400}(?:hold|held|referred|recommended|related)',label,re.I|re.S):return 'government_official'
+    # Politically exposed person (PEP) declarations ask the same thing.
+    if re.search(r'entrusted with (?:a )?(?:prominent )?(?:public )?(?:position|function)|politically exposed|family member of (?:someone|a person) holding such a position',label,re.I):return 'government_official'
     label=" ".join(label.strip().casefold().split()).rstrip(" *?:")
     if re.search(r'\bhigh school\b',label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
@@ -56,6 +58,8 @@ def field_key(label):
     if label=='consent to receiving text messages':return 'sms'
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
     if re.fullmatch(r'(?:what are your )?pronouns',label):return 'pronouns'
+    # Only the generic question; a named destination stays a separate decision.
+    if re.fullmatch(r'(?:are you )?(?:willing|open)(?: and able)? to relocat(?:e|ion)(?: for (?:this|the) (?:role|position|job|internship))?',label):return 'relocate'
     if re.fullmatch(r'what is your gender(?: identity)?',label):return 'gender'
     if re.fullmatch(r'how would you describe your gender identity',label):return 'gender'
     if re.fullmatch(r'what is your (?:cumulative )?gpa',label):return 'gpa'
@@ -120,6 +124,11 @@ def _option_value(key, value, options, context=None):
         if month:
             choices={normalize(value),normalize(calendar.month_abbr[month]),str(month),f'{month:02d}'}
             matches=[x for x in options if normalize(x) in choices]
+            if not matches:
+                abbr=calendar.month_abbr[month].casefold()
+                grouped=[x for x in options if re.fullmatch(r'[a-z]+\.?(?:\s*(?:/|,|or|&)\s*[a-z]+\.?)+',x.strip().casefold())
+                         and abbr in {part.strip(' .')[:3] for part in re.split(r'/|,|\bor\b|&',x.casefold())}]
+                matches=grouped
             if len(matches)!=1:raise Blocked('option_mismatch')
             return matches[0]
     aliases={
@@ -275,6 +284,26 @@ def _local_campus_answer(store,label):
         'source':'https://admissions.berkeley.edu/wp-content/uploads/OUA_Outreach2022_GeneralBrochure_web.pdf'}}}
 
 
+def _current_enrollment(store,label,options):
+    """Enrollment follows from a confirmed university and today's date within its confirmed dates."""
+    if not re.fullmatch(r'(?:are you )?currently enrolled in (?:a |an )?(?:degree program|undergraduate (?:degree )?program|bachelor.s (?:degree )?program)(?: at (?:a |an )?(?:registered |accredited )?(?:college or university|university or college|university|college))?[? *]*',label.strip(),re.I):return None
+    if options and options.count('Yes')!=1:return None
+    facts=store.facts();school=facts.get('school');start=facts.get('college_start');graduation=facts.get('graduation')
+    from .util import now
+    if not school or not start or not graduation or not start['value']<=now()[:7]<=graduation['value']:return None
+    return {'value':'Yes','provenance':{'current_enrollment':{'school_revision':school['revision'],
+        'college_start_revision':start['revision'],'graduation_revision':graduation['revision']}}}
+
+
+def _us_citizen_or_resident(store,label,options):
+    """A confirmed US citizen satisfies "citizen, green card holder, or permanent resident". Never infers No."""
+    if not re.fullmatch(r'(?:are you )?(?:a )?(?:u\.?s\.?|united states) citizen,? (?:(?:a )?green card holder,? )?or (?:a )?(?:lawful )?permanent resident[? *]*',label.strip(),re.I):return None
+    if options and options.count('Yes')!=1:return None
+    citizenship=store.facts().get('citizenship')
+    if not citizenship or re.sub(r'[^a-z]','',citizenship['value'].casefold()) not in {'unitedstates','us','usa','unitedstatesofamerica'}:return None
+    return {'value':'Yes','provenance':{'citizenship_revision':citizenship['revision']}}
+
+
 def _chronological_academic_year(store,label):
     match=re.fullmatch(r'Please indicate your level of education during the Fall (\d{4}) Semester[ :?*]*',label.strip(),re.I)
     if not match:return None
@@ -424,7 +453,7 @@ def _compatible_binding(key, label):
         'veteran':r'veteran|military', 'disability':r'disabil', 'salary':r'salary|compensation|pay expect|hourly (?:rate|pay)',
         'notice_period':r'notice', 'relocate':r'relocat',
         'summer_2027_relocate':r'relocat', 'summer_2027_available':r'availab|commit',
-        'worked_outside_resume':r'work|employ', 'contacts_outside_resume':r'contact|know anyone|family|relative|spouse|partner',
+        'worked_outside_resume':r'work|employ', 'contacts_outside_resume':r'contact|know anyone|family|relative|related to|referred|spouse|partner',
         'needs_sponsorship':r'sponsor|visa|immigration|h.?1b',
         'work_authorized_us':r'authoriz|eligible to work|work permit|legally.*work|right.*work',
         'unrestricted_authorization':r'authoriz|work permit|legally.*work|right.*work',
@@ -440,7 +469,7 @@ def _compatible_binding(key, label):
         'recruitment_data_consent':r'(?:store|process).*data.*(?:considering|consideration|eligibility).*application.*employment',
         'demographic_data_consent':r'consent.{0,80}(?:collect|stor|process).{0,120}(?:demographic|self.identif|voluntary.{0,20}survey)',
         'conflict_disclosures':r'(?:personal|familial) relationships?(?:.|\n){0,300}outside business activit',
-        'government_official':r'government official',
+        'government_official':r'government official|public (?:position|function)|politically exposed|holding such a position',
     }
     if key=='degree' and re.search(r'highest|completed|earned',label,re.I):return False
     return key in terms and bool(re.search(terms[key],label,re.I))
@@ -622,7 +651,7 @@ def resolve(store, host, field, provider=None, context=None):
         employer_named,prior_match=_employer_scope(store,host,label,context)
         if employer_named and not prior_match:
             if re.search(r'(?:previously|ever|before).{0,20}(?:work|employ)|(?:work|employ).{0,30}(?:previously|before)',label,re.I) and store.facts().get('worked_outside_resume',{}).get('value')=='No':key='worked_outside_resume'
-            elif re.search(r'(?:know anyone|family|spouse|partner|relative).{0,70}(?:company|work|employ)|(?:know anyone|personal contacts)',label,re.I) and store.facts().get('contacts_outside_resume',{}).get('value')=='No':key='contacts_outside_resume'
+            elif re.search(r'(?:know anyone|family|spouse|partner|relative|related to|referred (?:to this role |for this role )?by).{0,70}(?:company|work|employ)|(?:know anyone|personal contacts)',label,re.I) and store.facts().get('contacts_outside_resume',{}).get('value')=='No':key='contacts_outside_resume'
         if (not key and re.search(r'(?:authorized|eligible) to work',label,re.I)
                 and GENERIC_WORK_COUNTRY.search(label) and _us_location(work_country_location(context))
                 and _compatible_field('work_authorized_us',field,context)):key='work_authorized_us'
@@ -658,7 +687,7 @@ def resolve(store, host, field, provider=None, context=None):
         if graduation_confirmation:
             key=None;template=None;derived=graduation_confirmation
         if not key and not derived:derived=_context_preference(store,label,options,context)
-        if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label)
+        if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label) or _current_enrollment(store,label,options) or _us_citizen_or_resident(store,label,options)
         if key and key not in store.facts() and provider and store.settings()['tailored_writing'] and key in {'school','degree','major','skills','location','city','state'}:
             key=None  # Approved context may state an ordinary fact not separately entered.
         if not key and not template and not derived and provider and field.get('required'):
@@ -700,7 +729,7 @@ def resolve(store, host, field, provider=None, context=None):
         sensitive=r'consent|agree|acknowledge|certif|arbitrat|privacy|authoriz|citizen|sponsor|visa|hispanic|latino|ethnic|race|gender|pronoun|veteran|military|disabil|criminal|government|procurement|proficien|assessment|work sample|18 years|\bage\b|full.time.*availab|availab.*full.time'
         if (not key and not template and not derived and provider and field.get('required') and not is_writing
                 and store.settings()['tailored_writing'] and hasattr(provider,'context_answer')
-                and field.get('type') in {'text','textarea','number','select','radio','combobox','yesno'}
+                and field.get('type') in {'text','textarea','number','select','radio','combobox','yesno','checkbox-group'}
                 and not re.search(sensitive,label,re.I)):
             from .config import FACTS
             choices=_approved_sentences(store,{**context,'description':label+' '+context.get('description','')})

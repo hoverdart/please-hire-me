@@ -100,6 +100,7 @@ def test_blocked_questions_are_listed_one_per_line_with_reasons(store,job):
     assert lines[0].startswith('  • Do you have: a) any Personal/Familial') and '…' in lines[0] and lines[0].endswith('A personal answer is missing')
     assert 'did not pass its source check (review: The impact metric is not in any cited source.)' in lines[1]
     assert '; Tell us' not in body
+    assert f"{job['company']} — {job['title']}: Some answers are needed" in body and 'missing_answers' not in body
 
 
 def test_pending_batches_are_sent_as_one_email(store):
@@ -132,3 +133,10 @@ def test_failed_combined_send_marks_every_batch_uncertain(store):
     flush_reports(store,Client);flush_reports(store,Client)
     assert Client.calls==1
     assert {r[0] for r in store.db.execute('SELECT state FROM report_outbox')}=={'uncertain'}
+
+
+def test_limit_waits_are_not_listed_as_blocked(store,job):
+    store.event('application_finished',job['id'],{'run_id':'run-one','outcome':'blocked','reason':'company_same_day'})
+    finished(store)
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'Waiting for a company or daily limit — no action needed' in body and 'Blocked — review' not in body

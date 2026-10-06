@@ -240,3 +240,50 @@ def test_corrected_nested_sms_label_retires_only_the_mislabeled_radio_question(s
     assert resolve(store,job['host'],{**old,'label':'Consent to receiving text messages'},context=job)['value']==options[0]
     assert store.db.execute('SELECT resolved FROM questions WHERE id=?',(qid,)).fetchone()[0]==1
     assert store.db.execute('SELECT resolved FROM questions WHERE id=?',(phone_qid,)).fetchone()[0]==0
+
+
+def test_reported_ashby_questions_resolve_from_confirmed_facts(store, job):
+    store.put_facts({'school': 'Confirmed University', 'college_start': '2025-08', 'citizenship': 'United States',
+                     'contacts_outside_resume': 'No', 'phone': '(202) 555-0123'})
+    ashby = 'jobs.ashbyhq.com|saronic'
+    context = {**job, 'company': 'Saronic'}
+    assert resolve(store, ashby, field('Phone', 'number', []), context=context)['value'] == '2025550123'
+    assert resolve(store, ashby, field('College/University', 'text', []), context=context)['value'] == 'Confirmed University'
+    assert resolve(store, ashby, field('Expected Graduation Month', 'radio', ['April/May/June', 'August/September', 'December']), context=context)['value'] == 'April/May/June'
+    assert resolve(store, ashby, field('Are you related to any current Saronic employees?', 'yesno'), context=context)['value'] == 'No'
+    assert resolve(store, ashby, field('Are you a US Citizen, Green Card Holder, or Permanent Resident', 'yesno'), context=context)['value'] == 'Yes'
+    assert resolve(store, ashby, field('Are you currently enrolled in a degree program at a registered college or university?', 'yesno'), context=context)['value'] == 'Yes'
+
+
+def test_citizen_or_resident_and_enrollment_never_infer_no(store, job):
+    store.put_facts({'citizenship': 'Canada', 'school': 'Confirmed University', 'college_start': '2020-08', 'graduation': '2024-05'})
+    for label in ('Are you a US Citizen, Green Card Holder, or Permanent Resident',
+                  'Are you currently enrolled in a degree program at a registered college or university?'):
+        with pytest.raises(Blocked):resolve(store, job['host'], field(label, 'yesno'), context=job)
+
+
+def test_grouped_month_choice_must_be_unique(store, job):
+    with pytest.raises(Blocked):
+        resolve(store, job['host'], field('Expected Graduation Month', 'radio', ['April/May', 'May/June']), context=job)
+
+
+@pytest.mark.parametrize('label,expected', [
+    ('When is your anticipated graduation date?', 'May 2028'),
+    ('Graduation Semester', 'Spring 2028'),
+    ('Expected graduation (MM/YYYY)', '05/2028'),
+    ('Graduation month/year', '05/2028'),
+    ('Graduation year', '2028'),
+])
+def test_text_dates_are_written_as_people_write_them(store, job, label, expected):
+    assert resolve(store, job['host'], field(label, 'text', []), context=job)['value'] == expected
+
+
+@pytest.mark.parametrize('label,key', [
+    ('Are you or have you been entrusted with a prominent public function?*', 'government_official'),
+    ('Are you an immediate family member of someone holding such a position?*', 'government_official'),
+    ('Were you referred to this role by a current Acme employee?*', 'contacts_outside_resume'),
+])
+def test_disclosures_follow_their_confirmed_fact(store, job, label, key):
+    with pytest.raises(Blocked):resolve(store, job['host'], field(label), context=job)
+    store.put_facts({key: 'No'})
+    assert resolve(store, job['host'], field(label), context=job)['value'] == 'No'

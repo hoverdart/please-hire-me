@@ -136,7 +136,7 @@ FACTS = {
     "programming_proficiency": "Self-assessed programming proficiency (Beginner / Intermediate / Advanced / Expert)",
     "hispanic_latino": "Hispanic / Latino response (separate from race)",
     "conflict_disclosures": "Have a conflict-of-interest disclosure for employers you apply to: relationships with their staff or vendors, outside business activity, investments over 5% or in their competitors/partners, or retained IP (Yes / No)",
-    "government_official": "Within 5 years, a government official, referred by one, or closely related to one (Yes / No)",
+    "government_official": "Within 5 years, a government official or holder of a prominent public function (PEP), referred by one, or closely related to one (Yes / No)",
     "demographic_data_consent": "Consent to employers storing/processing your voluntary demographic survey responses (Yes / No)",
 }
 REQUIRED = {"full_name", "first_name", "last_name", "email", "phone", "location", "graduation",

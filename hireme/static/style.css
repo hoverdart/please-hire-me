@@ -777,8 +777,40 @@ textarea {
   margin-top: 3px;
   accent-color: var(--action);
 }
-#basic-context-form label.confirmation {
+#basic-context-form label.confirmation,
+#context-review-form label.confirmation {
   flex-direction: row;
+}
+.context-needs ul {
+  margin: 4px 0 16px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.context-review {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+}
+.context-review h3 {
+  margin: 0;
+}
+.context-review-label {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.context-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.question .question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 .form-footer {
   padding: 24px;

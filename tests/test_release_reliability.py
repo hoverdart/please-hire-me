@@ -188,3 +188,14 @@ def test_required_combobox_without_options_never_uses_raw_fact_or_model(store,jo
     with pytest.raises(Blocked,match='unsupported_widget'):resolve(store,job['host'],f,Model(),context=job)
     assert store.db.execute('SELECT count(*) FROM field_bindings_v2').fetchone()[0]==0
     assert resolve(store,job['host'],{**f,'required':False},Model(),context=job) is None
+
+
+def test_any_greenhouse_board_redirect_can_use_its_verified_embed(monkeypatch):
+    from hireme.ats_adapters import GreenhouseAdapter
+    job={'url':'https://job-boards.greenhouse.io/towerresearchcapital/jobs/8024128','title':'Quantitative Developer Intern','host':'job-boards.greenhouse.io'}
+    monkeypatch.setattr('hireme.net.Network.json',lambda *args:{'id':8024128,'title':job['title'],'content':'<p>Posting</p>'})
+    assert GreenhouseAdapter().navigation(job)==(job['url'],None)
+    url,text=GreenhouseAdapter().embedded(job)
+    assert url=='https://job-boards.greenhouse.io/embed/job_app?for=towerresearchcapital&token=8024128' and 'Posting' in text
+    with pytest.raises(Blocked,match='posting_changed_review'):GreenhouseAdapter().embedded({**job,'title':'Another role'})
+    with pytest.raises(Blocked,match='unexpected_redirect'):GreenhouseAdapter().embedded({**job,'url':'https://job-boards.eu.greenhouse.io/x/jobs/1'})

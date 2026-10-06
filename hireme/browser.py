@@ -328,7 +328,7 @@ class Browser:
           !document.querySelector('[aria-busy="true"]') &&
           (document.querySelector('form,input:not([type=hidden]),textarea,select') ||
            Array.from(document.querySelectorAll('a,button')).some(e=>/^apply/i.test(e.textContent.trim())) ||
-           /no longer|expired|sign in|log in|captcha/i.test(document.body.innerText))""",timeout=20000)
+           /no longer|expired|not found|sign in|log in|captcha/i.test(document.body.innerText))""",timeout=20000)
         # Network idle is a bounded hydration aid, not a requirement on analytics-heavy sites.
         with contextlib.suppress(Exception):self.page.wait_for_load_state('networkidle',timeout=4000)
 
@@ -343,7 +343,7 @@ class Browser:
         if self.page.locator('iframe[src*="bframe"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare.com"]').count():
             raise Blocked("captcha_blocked")
         text=self.page.locator('body').inner_text(timeout=5000)
-        if re.search(r"(?:job|position|posting).{0,40}(?:no longer available|no longer accepting|has expired|has been filled)",text,re.I):raise Blocked("expired_posting")
+        if re.search(r"(?:job|position|posting).{0,40}(?:no longer available|no longer accepting|has expired|has been filled|(?:was )?not found)",text,re.I):raise Blocked("expired_posting")
         if LOGIN.search(text) and not (allow_verification and self._email_verification(text)):raise Blocked("account_or_verification_blocked")
         if REFUSE.search(text):raise Blocked("human_work_sample")
         return text
@@ -649,7 +649,14 @@ class Browser:
         from .ats_adapters import adapter_for
         adapter=adapter_for(job)
         navigation,verified_posting=adapter.navigation(job,checkpoint=self.store.checkpoint,deadline=getattr(self.store,'run_deadline',None)) if not self.test_url else (job['url'],None)
-        try:self.page.goto(navigation,wait_until='domcontentloaded',timeout=45000)
+        try:
+            self.page.goto(navigation,wait_until='domcontentloaded',timeout=45000)
+            if not self.test_url and urlsplit(self.page.url).hostname!=urlsplit(navigation).hostname and hasattr(adapter,'embedded'):
+                # The board forwarded to a custom careers site. Nothing was filled;
+                # open the same application on the ATS's own embedded form.
+                navigation,verified_posting=adapter.embedded(job,checkpoint=self.store.checkpoint,deadline=getattr(self.store,'run_deadline',None))
+                self.current_host=urlsplit(navigation).hostname
+                self.page.goto(navigation,wait_until='domcontentloaded',timeout=45000)
         except Exception as error:
             # Only the initial read navigation is classified for delayed retry.
             from playwright.sync_api import TimeoutError as NavigationTimeout, Error as NavigationError

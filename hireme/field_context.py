@@ -63,17 +63,32 @@ def save_binding(store, host, field, context, key=None, template_id=None):
 def present(key, value, field):
     """Format confirmed facts without deriving citizenship or legal status."""
     label = field['label'].casefold()
-    if key in {'college_start', 'graduation'} and re.fullmatch(r'\d{4}-\d{2}', value):
+    if key in {'college_start', 'graduation', 'earliest_start', 'latest_start'} and re.fullmatch(r'\d{4}-\d{2}', value):
         year, month = value.split('-')
         if not 1 <= int(month) <= 12: raise Blocked('invalid_date_answer', field['label'])
-        # "Month/year" choices such as "May 2028" are matched from the full date.
-        if field.get('options') and re.search(r'\bmonth\b', label) and re.search(r'\byear\b', label): return value
-        if re.search(r'\byear\b', label): return year
-        if re.search(r'\bmonth\b', label): return str(int(month)) if field.get('type')=='number' else calendar.month_name[int(month)]
+        both = re.search(r'\bmonth\b', label) and re.search(r'\byear\b', label)
+        # Free text reads as a person would write it, unless the label asks for a format.
+        text = field.get('type') in ('text', 'textarea') and not field.get('options')
+        if text and (re.search(r'\bmm\s*/\s*yyyy\b', label) or both and re.search(r'month\s*/\s*year', label)): return f'{month}/{year}'
+        if text and re.search(r'\byyyy-mm\b', label): return value
+        if text and both: return f'{calendar.month_name[int(month)]} {year}'
+        if key in {'college_start', 'graduation'}:
+            # "Month/year" choices such as "May 2028" are matched from the full date.
+            if field.get('options') and both: return value
+            if re.search(r'\byear\b', label): return year
+            if re.search(r'\bmonth\b', label): return str(int(month)) if field.get('type')=='number' else calendar.month_name[int(month)]
+        if text and re.search(r'\b(?:semester|term|season)\b', label):
+            return ('Spring' if int(month) <= 5 else 'Summer' if int(month) <= 8 else 'Fall') + ' ' + year
+        if text: return f'{calendar.month_name[int(month)]} {year}'
     if key == 'gpa' and field.get('type') == 'number': return value.split('/', 1)[0].strip()
     if key == 'phone' and re.search(r'(?:country|dial|calling).*(?:code)|country.*phone', label):
         # +1 is a calling code shared by multiple countries, never a country answer.
         if re.fullmatch(r'\+?1\d{10}', re.sub(r'[ ()-]', '', value)): return '+1'
+        raise Blocked('phone_country_review', field['label'])
+    if key == 'phone' and field.get('type') == 'number':
+        # A numeric phone control accepts digits only, never punctuation.
+        digits = re.sub(r'\D', '', value)
+        if 10 <= len(digits) <= 15: return digits
         raise Blocked('phone_country_review', field['label'])
     if key == 'phone' and (field.get('phone_component') == 'national' or field.get('maxlength') == 10):
         digits = re.sub(r'\D', '', value)

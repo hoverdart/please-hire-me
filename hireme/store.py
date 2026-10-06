@@ -684,7 +684,8 @@ class Store:
         question_condition,question_parameters=actionable_question_sql('q')
         priority=f"({condition} OR EXISTS(SELECT 1 FROM questions q WHERE q.job_id=j.id AND {question_condition}))"
         from .saved_views import list_views
-        return {"basic_context":basic_context(self),"saved_views":list_views(self),"settings":self.settings(),"templates":self.templates(),"facts":self.facts(False),"missing_setup":self.missing_setup(),
+        from .context_inbox import open_needs
+        return {"basic_context":basic_context(self),"context_needs":open_needs(self),"saved_views":list_views(self),"settings":self.settings(),"templates":self.templates(),"facts":self.facts(False),"missing_setup":self.missing_setup(),
                 "jobs":rows(f"SELECT j.* FROM jobs j ORDER BY {priority} DESC,j.score DESC,j.first_seen DESC LIMIT 500",(*parameters,*question_parameters)),
                 "applications":rows(f"SELECT {'*' if include_packages else APPLICATION_METADATA} FROM applications ORDER BY (state IN ('unknown','awaiting_verification')) DESC,created DESC LIMIT 500"),
                 "questions":rows("SELECT q.* FROM questions q WHERE "+question_condition+" ORDER BY q.rowid" + (" LIMIT ?" if question_limit is not None else ''), (*question_parameters,question_limit) if question_limit is not None else question_parameters),

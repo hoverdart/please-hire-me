@@ -10,7 +10,8 @@ from .store import worker_lock
 from .util import now
 
 
-FOOTER = ('\n\nOpen the job links above on your phone to review or apply. Confirmed submissions are already applied. '
+FOOTER = ('\n\nQuestions that keep coming up can be answered once for every employer: Your facts → Add context in your own words.\n'
+          'Open the job links above on your phone to review or apply. Confirmed submissions are already applied. '
           'For uncertain submissions, check with the employer before applying again.\n'
           'After applying yourself, return to Application desk on the Pi, find the job, and choose Applied manually. '
           'This records your application and stops automatic retries. Jobs with uncertain submission records need reconciliation first.\n'
@@ -48,7 +49,9 @@ def queue_report(store, run_id):
     if not run or not run['finished']:
         raise ValueError('Only completed or stopped runs can be reported')
     email = owner_email(store)
-    groups = {'Applied successfully': [], 'Blocked — review or apply manually': [], 'Other outcomes — review before retrying': []}
+    from .presentation import REASON_GUIDANCE, WAIT_REASONS
+    groups = {'Applied successfully': [], 'Blocked — review or apply manually': [], 'Other outcomes — review before retrying': [],
+              'Waiting for a company or daily limit — no action needed': []}
     terminal={}
     for e in store.db.execute("SELECT subject,detail FROM events WHERE kind='application_finished' AND timestamp>=? ORDER BY seq", (run['started'],)):
         detail = json.loads(e['detail'])
@@ -59,11 +62,14 @@ def queue_report(store, run_id):
         job = store.db.execute('SELECT company,title,url FROM jobs WHERE id=?', (job_id,)).fetchone()
         if job:
             group = ('Applied successfully' if detail['outcome'] == 'confirmed' else
+                     'Waiting for a company or daily limit — no action needed' if detail.get('reason') in WAIT_REASONS else
                      'Blocked — review or apply manually' if detail['outcome'] == 'blocked' else
                      'Other outcomes — review before retrying')
             questions = _questions(store, job_id)
-            groups[group].append(f"{job['company']} — {job['title']}: {detail['outcome']}"
-                                 + (f" ({detail['reason']})" if detail.get('reason') else '')
+            reason = REASON_GUIDANCE.get(detail.get('reason'), (detail.get('reason'),))[0]
+            groups[group].append(f"{job['company']} — {job['title']}: "
+                                 + (reason if detail['outcome'] == 'blocked' and reason else
+                                    detail['outcome'] + (f" ({reason})" if reason else ''))
                                  + (''.join('\n  • ' + line for line in questions) if questions
                                     else f"\n{_short(detail['detail'], 300)}" if detail.get('detail') else '')
                                  + f"\n{job['url']}")

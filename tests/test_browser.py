@@ -117,6 +117,13 @@ def test_failed_model_calls_are_retried_rather_than_held_for_information(store,a
     assert category(reason)=='transient'
 
 
+def test_removed_ashby_posting_is_expired_not_a_fetch_failure(store,ats):
+    html='<html><body><h1>Job not found</h1><p>The job you requested was not found.</p><a href="/x">View all open positions</a></body></html>'
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
+        with pytest.raises(Blocked,match='expired_posting'):b.apply(local_job(store,ats),live=False)
+
+
 @pytest.mark.parametrize('checked',[False,True])
 def test_unchecked_optional_checkbox_is_not_a_prefilled_answer(store,ats,checked):
     html=(Path(__file__).parent/'fixtures/application.html').read_text()

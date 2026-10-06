@@ -1769,6 +1769,35 @@ async function loadQuestionLedger(reset = false, focus = false) {
       loadQuestionLedger(true);
   }
 }
+// What each question reason means for the applicant, in their terms.
+const questionReasons = {
+  missing_fact: "None of your facts or context answers this yet.",
+  option_mismatch: "Your facts don’t clearly match one of these choices. Pick one here, or make the related fact more specific.",
+  stale_answer: "Your earlier answer no longer matches your current facts. Choose again.",
+  mapping_review: "This looked related to one of your facts, but not closely enough to use it automatically.",
+  writing_unsupported: "Claude’s draft didn’t pass its source check. It retries automatically; you can also write this yourself.",
+  provider_timeout: "The model didn’t answer in time. This retries automatically.",
+  provider_error: "The model request failed. This retries automatically.",
+  provider_invalid_output: "The model returned an unusable answer. This retries automatically.",
+  numeric_answer_needed: "This field needs a number.",
+  answer_too_long: "The saved answer is longer than this field allows.",
+  repeated_entry_review: "This form repeats a section; confirm the answer for this entry.",
+};
+const contextReasons = new Set(["missing_fact", "option_mismatch", "stale_answer", "mapping_review"]);
+function shortLabel(label, limit = 140) {
+  const text = label.replace(/\s+/g, " ").replace(/[\s*]+$/, "");
+  if (text.length <= limit) return text;
+  const cut = text.slice(0, limit).match(/^(.{20,}?[?.:])\s/);
+  return cut ? cut[1] + " …" : text.slice(0, limit).trimEnd() + "…";
+}
+function answerInContext(label) {
+  show("profile");
+  const box = $("#context-inbox-form textarea");
+  box.value = `About “${shortLabel(label, 120)}”: `;
+  $("#context-inbox").scrollIntoView({ behavior: "smooth", block: "start" });
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+}
 function renderQuestionList() {
   if (
     [...document.querySelectorAll("#question-list form")].some(
@@ -1813,7 +1842,7 @@ function renderQuestionList() {
           ? el("p", `${x.company} · ${x.title}`)
           : link(x.url, `${x.company} · ${x.title}`),
       );
-    box.append(el("p", x.reason, "subtle"));
+    box.append(el("p", questionReasons[x.reason] || x.reason.replaceAll("_", " "), "subtle"));
     const f = el("form");
     let options;
     try {
@@ -1866,6 +1895,13 @@ function renderQuestionList() {
     };
     const actions = el("div", undefined, "actions");
     actions.append(b, discard);
+    if (contextReasons.has(x.reason) && !state.demo) {
+      // A fact or context note applies to every employer, not just this question.
+      const everywhere = el("button", "Answer for every employer", "secondary");
+      everywhere.type = "button";
+      everywhere.onclick = () => answerInContext(x.label);
+      actions.append(everywhere);
+    }
     f.append(input, bind, actions);
     f.onsubmit = async (e) => {
       e.preventDefault();
@@ -3116,6 +3152,7 @@ function render() {
   renderMail();
   renderDocumentStatus();
   if (!editing("#facts-form")) renderFacts();
+  renderContextNeeds();
   if (!editing("#basic-context-form")) {
     const context = state.basic_context || { text: "", revision: 0 };
     $("#basic-context-form textarea").value = context.text;
@@ -4557,6 +4594,101 @@ $("#context-form").onsubmit = async (event) => {
   } catch (error) {
     note(error.message, true);
   }
+};
+
+let contextDraft = null;
+function renderContextNeeds() {
+  const box = $("#context-needs"),
+    needs = state.context_needs || [];
+  box.replaceChildren();
+  if (!needs.length) {
+    box.append(el("p", "No held application is waiting on missing information right now.", "help"));
+    return;
+  }
+  box.append(el("p", "Held applications are still asking about:", "help"));
+  const list = el("ul");
+  for (const need of needs)
+    list.append(el("li", `${shortLabel(need.label)} (${need.jobs} application${need.jobs === 1 ? "" : "s"})`));
+  box.append(list);
+}
+function renderContextReview() {
+  const form = $("#context-review-form"),
+    draft = contextDraft;
+  form.hidden = !draft;
+  if (!draft) return;
+  const facts = $("#context-review-facts");
+  facts.replaceChildren();
+  if (draft.facts.length) {
+    facts.append(el("p", "Facts to update", "context-review-label"));
+    for (const fact of draft.facts) {
+      const label = el("label", undefined, "confirmation"),
+        box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = true;
+      box.dataset.key = fact.key;
+      box.dataset.value = fact.value;
+      label.append(box, ` ${fact.label}: ${fact.value}` + (fact.current ? ` (currently ${fact.current})` : ""));
+      facts.append(label);
+    }
+  }
+  form.elements.notes.value = draft.notes.join("\n");
+  const unclear = $("#context-review-unclear");
+  unclear.replaceChildren();
+  if (draft.unclear.length) {
+    unclear.append(el("p", "Claude could not place these. Add detail and organize again:"));
+    const list = el("ul");
+    for (const item of draft.unclear) list.append(el("li", item));
+    unclear.append(list);
+  }
+  $("#context-review-covers").textContent = draft.covers.length
+    ? "This should help with: " + draft.covers.join("; ")
+    : draft.facts.length || draft.notes.length
+      ? "This does not answer a currently held question, but future applications can use it."
+      : "Nothing here could be organized. Try adding more detail.";
+}
+$("#context-inbox-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.target,
+    button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  button.textContent = "Organizing…";
+  try {
+    contextDraft = await api("/api/context/organize", { text: form.elements.text.value });
+    renderContextReview();
+  } catch (error) {
+    note(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Organize with Claude";
+  }
+};
+$("#context-review-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.target,
+    facts = Object.fromEntries(
+      Array.from(form.querySelectorAll("#context-review-facts input:checked")).map((box) => [box.dataset.key, box.dataset.value]),
+    );
+  try {
+    const result = await api("/api/context/apply", {
+      facts,
+      notes: form.elements.notes.value,
+      revision: Number($("#basic-context-form").dataset.revision || 0),
+      confirmed: form.elements.confirmed.checked,
+    });
+    contextDraft = null;
+    form.reset();
+    $("#context-inbox-form").reset();
+    renderContextReview();
+    await refresh();
+    note(`Saved ${result.facts.length} fact${result.facts.length === 1 ? "" : "s"} and ${result.notes} note${result.notes === 1 ? "" : "s"}. Held applications are checked again on the next run.`);
+  } catch (error) {
+    note(error.message, true);
+  }
+};
+$("#context-review-discard").onclick = () => {
+  contextDraft = null;
+  $("#context-review-form").reset();
+  renderContextReview();
 };
 
 $("#basic-context-form").onsubmit = async (event) => {

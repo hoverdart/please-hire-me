@@ -942,18 +942,37 @@
               sent directly by your school, handle that through the employer.
             </p>
           </div>
-          <div class="section-head">
-            <div>
-              <h2>Basic context</h2>
-              <p class="help">Tell us what you’re doing now, your work history, interests and constraints. Approved factual context helps answer questions and tailor writing. Saved facts take precedence when the two conflict.</p>
-            </div>
+          <div class="section" id="context-inbox">
+            <h2>Add context in your own words</h2>
+            <p class="help">Write anything applications ask about: classes, projects, team or office preferences, availability. Claude organizes it into facts and short notes. Nothing is saved until you review it.</p>
+            <div id="context-needs" class="context-needs"></div>
+            <form id="context-inbox-form" class="form-grid">
+              <label class="wide">Your notes<textarea name="text" rows="4" minlength="3" maxlength="6000" required placeholder="Write the way you would to a friend; Claude will tidy it up."></textarea></label>
+              <button type="submit">Organize with Claude</button>
+            </form>
+            <form id="context-review-form" class="form-grid context-review" hidden>
+              <h3 class="wide">Review before saving</h3>
+              <div id="context-review-facts" class="wide"></div>
+              <label class="wide">Notes to add to Basic context<textarea name="notes" rows="5"></textarea></label>
+              <div id="context-review-unclear" class="help wide"></div>
+              <p id="context-review-covers" class="help wide"></p>
+              <label class="confirmation wide"><input type="checkbox" name="confirmed" required /> I reviewed these and they are accurate.</label>
+              <div class="wide context-review-actions">
+                <button type="submit">Save to my facts and context</button>
+                <button type="button" id="context-review-discard" class="secondary">Discard</button>
+              </div>
+            </form>
           </div>
-          <form id="basic-context-form" class="form-grid">
-            <label class="wide">About you<textarea name="text" rows="7" minlength="20" maxlength="12000" required placeholder="Current work, school, projects, goals and anything an application should know"></textarea></label>
-            <p id="basic-context-status" class="help wide" aria-live="polite"></p>
-            <label class="confirmation wide"><input type="checkbox" name="confirmed" required /> I reviewed this text and approve using it as factual application context.</label>
-            <button type="submit">Save basic context</button>
-          </form>
+          <div class="section">
+            <h2>Basic context</h2>
+            <p class="help">Everything Claude can cite about you beyond your facts and resume. Notes you save above are added here; you can edit them directly. Saved facts take precedence when the two conflict.</p>
+            <form id="basic-context-form" class="form-grid">
+              <label class="wide">About you<textarea name="text" rows="7" minlength="20" maxlength="12000" required placeholder="Current work, school, projects, goals and anything an application should know"></textarea></label>
+              <p id="basic-context-status" class="help wide" aria-live="polite"></p>
+              <label class="confirmation wide"><input type="checkbox" name="confirmed" required /> I reviewed this text and approve using it as factual application context.</label>
+              <button type="submit">Save basic context</button>
+            </form>
+          </div>
           <div class="section-head section">
             <div>
               <h2>The essentials</h2>
