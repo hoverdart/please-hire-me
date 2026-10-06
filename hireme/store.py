@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS question_contexts (id TEXT PRIMARY KEY,context TEXT N
 
 CREATE TABLE IF NOT EXISTS field_bindings_v2 (id TEXT PRIMARY KEY,context TEXT NOT NULL,
  fact_key TEXT,template_id TEXT,source_revision INTEGER NOT NULL,rule_version INTEGER NOT NULL,created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS option_mappings (id TEXT PRIMARY KEY,fact_key TEXT NOT NULL,fact_revision INTEGER NOT NULL,
+ value TEXT NOT NULL,created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS job_holds (job_id TEXT PRIMARY KEY,category TEXT NOT NULL,reason TEXT NOT NULL,
  dependency TEXT NOT NULL,retry_count INTEGER NOT NULL,retry_at REAL,evidence TEXT NOT NULL,updated TEXT NOT NULL);
 

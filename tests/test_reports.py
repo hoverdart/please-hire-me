@@ -83,3 +83,52 @@ def test_report_does_not_include_other_runs_job_links(store,job):
     finished(store)
     body = store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
     assert job['url'] not in body
+
+
+def test_blocked_questions_are_listed_one_per_line_with_reasons(store,job):
+    compound=('Do you have:\na) any Personal/Familial Relationships (current Acme employees); b) any Outside Business Activities '
+              'that you wish to continue; c) any investment that is greater than 5% of the outstanding shares of a publicly-traded company?*')
+    essay='Tell us about a technical project you are most proud of. What did you build, and what impact did it have?'
+    store.ask(job['id'],job['host'],compound,['Yes','No'],'missing_fact')
+    store.ask(job['id'],job['host'],essay,[],'writing_unsupported')
+    store.event('writing_reviewed',job['id'],{'question':essay,'supported':False,'reason':'The impact metric is not in any cited source.'})
+    store.event('application_finished',job['id'],{'run_id':'run-one','outcome':'blocked','reason':'missing_answers','detail':compound+'; '+essay})
+    finished(store)
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    lines=[line for line in body.splitlines() if line.startswith('  • ')]
+    assert len(lines)==2
+    assert lines[0].startswith('  • Do you have: a) any Personal/Familial') and '…' in lines[0] and lines[0].endswith('A personal answer is missing')
+    assert 'did not pass its source check (review: The impact metric is not in any cited source.)' in lines[1]
+    assert '; Tell us' not in body
+
+
+def test_pending_batches_are_sent_as_one_email(store):
+    store.update_settings({'gmail_reports':True})
+    for i,(mode,submitted) in enumerate((('prepare',0),('prepare',0),('live',2))):
+        store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(f'run-{i}',f'2026-01-01T0{i}:00:00Z',f'2026-01-01T0{i}:05:00Z','finished',submitted,'{"mode":"%s"}'%mode))
+        queue_report(store,f'run-{i}')
+    class Client:
+        email='test@candidate.invalid';sent=[]
+        def __init__(self,s):pass
+        def send_report(self,subject,body,message_id):Client.sent.append((subject,body));return 'one'
+    assert flush_reports(store,Client)=={'sent':1,'enabled':True,'batches':3}
+    (subject,body),=Client.sent
+    assert subject=='Application batches: 2 confirmed across 3 batches'
+    assert all(f'Application batch run-{i}' in body for i in range(3))
+    assert body.count('Open Application desk on the Pi')==1
+    assert {r[0] for r in store.db.execute('SELECT state FROM report_outbox')}=={'sent'}
+    assert flush_reports(store,Client)['sent']==0 and len(Client.sent)==1
+
+
+def test_failed_combined_send_marks_every_batch_uncertain(store):
+    store.update_settings({'gmail_reports':True})
+    for i in range(2):
+        store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(f'run-{i}',f'2026-01-01T0{i}:00:00Z',f'2026-01-01T0{i}:05:00Z','finished',0,'{}'))
+        queue_report(store,f'run-{i}')
+    class Client:
+        email='test@candidate.invalid';calls=0
+        def __init__(self,s):pass
+        def send_report(self,*args):Client.calls+=1;raise TimeoutError()
+    flush_reports(store,Client);flush_reports(store,Client)
+    assert Client.calls==1
+    assert {r[0] for r in store.db.execute('SELECT state FROM report_outbox')}=={'uncertain'}

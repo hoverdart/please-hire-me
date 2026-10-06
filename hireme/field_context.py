@@ -7,7 +7,7 @@ from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
-MAPPING_VERSION = 12
+MAPPING_VERSION = 13
 ADAPTER_VERSION = 6
 
 def field_context(host, field, context=None):
@@ -66,6 +66,8 @@ def present(key, value, field):
     if key in {'college_start', 'graduation'} and re.fullmatch(r'\d{4}-\d{2}', value):
         year, month = value.split('-')
         if not 1 <= int(month) <= 12: raise Blocked('invalid_date_answer', field['label'])
+        # "Month/year" choices such as "May 2028" are matched from the full date.
+        if field.get('options') and re.search(r'\bmonth\b', label) and re.search(r'\byear\b', label): return value
         if re.search(r'\byear\b', label): return year
         if re.search(r'\bmonth\b', label): return str(int(month)) if field.get('type')=='number' else calendar.month_name[int(month)]
     if key == 'gpa' and field.get('type') == 'number': return value.split('/', 1)[0].strip()

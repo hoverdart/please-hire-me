@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs,urlsplit,unquote
 
-from .config import FACTS,REQUIRED
+from .config import BOOLEANS,FACTS,REQUIRED
 from .store import Store
 from .util import private_dir,atomic_json
 
@@ -162,7 +162,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                         row=store.db.execute("SELECT detail FROM runs WHERE status='running' ORDER BY started DESC LIMIT 1").fetchone()
                         try:running_mode=json.loads(row['detail'] or '{}').get('mode') if row else None
                         except (TypeError,ValueError):pass
-                    return self.send(200,{**snapshot,'fact_labels':FACTS,'required':sorted(REQUIRED),'worker_running':activity['running'],'worker_mode':running_mode,'worker_error':local_error})
+                    return self.send(200,{**snapshot,'fact_labels':FACTS,'boolean_facts':sorted(BOOLEANS),'required':sorted(REQUIRED),'worker_running':activity['running'],'worker_mode':running_mode,'worker_error':local_error})
                 if path=='/api/coverage':
                     from .coverage import coverage
                     return self.send(200,coverage(store))

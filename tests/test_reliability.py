@@ -48,7 +48,7 @@ def test_hold_releases_on_facts_answers_documents_or_rules(store,job):
     assert ready(store,job)
     assert recheck(store,job['id'])['ready'] is True
 
-@pytest.mark.parametrize('reason',['navigation_failed','provider_timeout'])
+@pytest.mark.parametrize('reason',['navigation_failed','provider_timeout','provider_error'])
 def test_transient_retry_only_two_delayed_retries(store,job,reason):
     hold(store,job,reason,at=1000)
     assert not ready(store,job,at=2799)

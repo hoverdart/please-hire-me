@@ -10,6 +10,7 @@ def store(tmp_path,monkeypatch):
         def choose_answer(self,*args,**kwargs):return None
         def choose_sentences(self,*args,**kwargs):return []
         def match_field(self,*args,**kwargs):return {'fact_key':None,'template_id':None}
+        def map_option(self,*args,**kwargs):return None
     monkeypatch.setattr('hireme.provider.ManagedProvider',OfflineProvider)
     s=Store(tmp_path/'private')
     s.put_facts({'full_name':'Test Person','first_name':'Test','last_name':'Person','email':'test@candidate.invalid','phone':'5551234567','location':'Berkeley, CA','graduation':'2028-05','work_authorized_us':'Yes','needs_sponsorship':'No','us_person':'Yes','professional_years':'1','skills':'Python, TypeScript'})

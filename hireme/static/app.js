@@ -2238,11 +2238,21 @@ const groups = {
     "summer_2027_relocate",
     "worked_outside_resume",
     "contacts_outside_resume",
+    "summer_2027_available",
+  ],
+  "Employer screening questions": [
+    "conflict_disclosures",
+    "outside_business_activity",
+    "business_activity_details",
+    "government_official",
+    "recruitment_data_consent",
+    "demographic_data_consent",
   ],
   "Optional disclosures & consent": [
     "race",
     "hispanic_latino",
     "gender",
+    "pronouns",
     "veteran",
     "disability",
     "recording",
@@ -2273,6 +2283,11 @@ const monthFacts = new Set([
   "latest_start",
 ]);
 const factHelp = {
+  race: "Use your most specific answer (for example, South Asian rather than Asian). A specific answer can fill broader employer choices; a broad one cannot fill narrower choices.",
+  gender: "Use your most specific answer (for example, Cisgender man rather than Male). It can fill broader choices such as Man or Male.",
+  veteran: "Use your most specific answer (for example, I have never served in the military). It can fill broader choices such as I am not a protected veteran.",
+  disability: "Use your most specific answer, including whether you have had a disability in the past.",
+  conflict_disclosures: "Answer Yes if any listed disclosure could apply. A Yes is never expanded into details; those stay with you.",
   hispanic_latino: "Hispanic / Latino ethnicity is separate from race. Use your chosen response; an Asian race answer does not determine it.",
   programming_proficiency: "Your own assessment: Beginner, Intermediate, Advanced or Expert. Experience does not set this rating automatically.",
   skills:
@@ -2291,7 +2306,13 @@ const factHelp = {
 function renderFacts() {
   const parent = $("#fact-fields");
   parent.replaceChildren();
-  for (const [name, keys] of Object.entries(groups)) {
+  // Every fact the resolver can use must be editable here, grouped or not.
+  const grouped = new Set(Object.values(groups).flat()),
+    ungrouped = Object.keys(state.fact_labels).filter((key) => !grouped.has(key)),
+    entries = Object.entries(groups)
+      .map(([name, keys]) => [name, keys.filter((key) => key in state.fact_labels)])
+      .concat(ungrouped.length ? [["Other facts", ungrouped]] : []);
+  for (const [name, keys] of entries) {
     const group = el("fieldset", undefined, "fact-group"),
       grid = el("div", undefined, "form-grid");
     group.append(el("legend", name));
@@ -2312,7 +2333,7 @@ function renderFacts() {
       input.value = state.facts[key]?.value || "";
       if (key === "skills") input.rows = 2;
       if (required) input.required = true;
-      if (yesNoFacts.has(key)) {
+      if (yesNoFacts.has(key) || state.boolean_facts?.includes(key)) {
         input.setAttribute("list", "yes-no-values");
         input.pattern = "Yes|No";
         input.placeholder = "Choose Yes or No";
@@ -4214,7 +4235,9 @@ $("#flush-reports").onclick = async (event) => {
     note(
       result.error
         ? `Reports remain queued: ${result.error}`
-        : `${result.sent} report(s) sent.`,
+        : result.batches > 1
+          ? `One email sent covering ${result.batches} batches.`
+          : `${result.sent} report(s) sent.`,
       !!result.error,
     );
   } catch (error) {

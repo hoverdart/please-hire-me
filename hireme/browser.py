@@ -94,6 +94,15 @@ def submission_receipt(text):
     return bool(CONFIRMED.search(text) or (
         re.search(r"thanks again for applying[!.]",text,re.I) and
         re.search(r"our talent team will carefully review your qualifications and experience",text,re.I)))
+# Model outcomes that may succeed on a later attempt, unlike missing applicant information.
+PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output','writing_unsupported')
+
+
+def _prefilled(field):
+    # A standalone checkbox always reports Yes/No; unchecked is its empty state.
+    return bool(field['value']) and not (field['type']=='checkbox' and field['value']=='No')
+
+
 REJECTED=re.compile(r"we couldn.t submit your application[\s\S]*your application submission was flagged as possible spam",re.I)
 LOGIN=re.compile(r"sign in to (?:apply|continue)|log in to (?:apply|continue)|create (?:an |your )account|verify your (?:email|identity)|enter (?:the |your )?(?:verification|one.time|security) code",re.I)
 
@@ -717,19 +726,22 @@ class Browser:
                             raise Blocked('graduation_mismatch',f['label'])
                         answers.append(a)
                         self.store.event('field_answered',job['id'],{'label':f['label'],'value':a['value'],'provenance':a['provenance']})
-                    elif f['value']:raise Blocked('unknown_prefilled_value',f['label'])
+                    elif _prefilled(f):raise Blocked('unknown_prefilled_value',f['label'])
                 except Blocked as e:
                     if e.reason in ('human_work_sample','paused','cycle_timeout','provider_rate_limited','graduation_mismatch'):raise
                     if e.reason=='model_budget_exhausted':budget_error=e
                     self.store.event('field_blocked',job['id'],{'label':f['label'],'options':f['options'],'required':f['required'],'reason':e.reason})
-                    if not f['required'] and not f['value']:
+                    if not f['required'] and not _prefilled(f):
                         self.store.resolve_known_question(job['answer_scope'],f['label'],f['options'],field=f,context=job);continue
                     self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],e.reason,field=f,context=answer_context)
                     pending.append((f,e.reason))
             if pending:
                 labels='; '.join(f['label'] for f,_ in pending)
                 if budget_error:raise Blocked('model_budget_exhausted',labels+' — '+budget_error.detail)
-                if all(reason=='provider_timeout' for _,reason in pending):raise Blocked('provider_timeout',labels)
+                # A failed model call is not missing applicant information. Use
+                # the bounded delayed retry rather than an indefinite fact hold.
+                failures=[reason for _,reason in pending if reason in PROVIDER_FAILURES]
+                if len(failures)==len(pending):raise Blocked(failures[0],labels)
                 raise Blocked('missing_answers',labels)
             for d in documents:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')

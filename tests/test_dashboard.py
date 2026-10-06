@@ -1333,6 +1333,10 @@ def test_essential_facts_optional_toggle_and_provider_fields(tmp_path):
             expect(page.locator('#facts-form input[name][required]:visible, #facts-form textarea[name][required]:visible')).to_have_count(12)
             expect(page.locator('#facts-form [name=preferred_name]')).to_be_hidden()
             page.locator('#show-optional-facts').check()
+            from hireme.config import FACTS, BOOLEANS
+            # Every fact answer resolution can use must be editable.
+            for key in FACTS:expect(page.locator(f'#facts-form [name={key}]')).to_have_count(1)
+            for key in BOOLEANS:expect(page.locator(f'#facts-form [name={key}]')).to_have_attribute('pattern','Yes|No')
             page.locator('#facts-form [name=preferred_name]').fill('Saved in my draft')
             page.locator('#show-optional-facts').uncheck()
             page.evaluate('refresh()')

@@ -101,6 +101,34 @@ def test_required_field_timeouts_retry_only_without_genuinely_missing_answers(st
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
+@pytest.mark.parametrize('reason',['provider_error','provider_invalid_output'])
+def test_failed_model_calls_are_retried_rather_than_held_for_information(store,ats,monkeypatch,reason):
+    from hireme.answers import resolve as real_resolve
+    def resolve_field(store,host,field,*args,**kwargs):
+        if field['label']=='Describe your project':raise Blocked(reason)
+        return real_resolve(store,host,field,*args,**kwargs)
+    monkeypatch.setattr('hireme.browser.resolve',resolve_field)
+    html=(Path(__file__).parent/'fixtures/application.html').read_text()
+    html=html.replace('</form>','<label>Describe your project<textarea name="project" required></textarea></label></form>')
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
+        with pytest.raises(Blocked,match=reason):b.apply(local_job(store,ats),live=False)
+    from hireme.job_holds import category
+    assert category(reason)=='transient'
+
+
+@pytest.mark.parametrize('checked',[False,True])
+def test_unchecked_optional_checkbox_is_not_a_prefilled_answer(store,ats,checked):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text()
+    html=html.replace('</form>','<label><input type="checkbox" name="language-go"'+(' checked' if checked else '')+'>Go</label></form>')
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
+        if checked:
+            with pytest.raises(Blocked,match='missing_answers'):b.apply(local_job(store,ats),live=False)
+        else:assert b.apply(local_job(store,ats),live=False)=='prepared'
+    assert not ats[1]
+
+
 def test_report_question_variants_fill_and_submit_from_confirmed_sources(store, ats):
     """Exercise snapshot -> resolution -> filling -> validation -> local receipt."""
     job=local_job(store,ats)

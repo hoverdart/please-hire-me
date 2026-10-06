@@ -43,6 +43,10 @@ def field_key(label):
     if re.search(r'describe the nature of the activity.*your role.*overlap',label,re.I):return 'business_activity_details'
     if (re.search(r'(?:store|process).*data.*(?:considering|consideration|eligibility).*application.*employment',label,re.I)
             and not re.search(r'marketing|advertis|sell|sale|third.part',label,re.I)):return 'recruitment_data_consent'
+    if (re.search(r'consent.{0,80}(?:collect|stor|process).{0,120}(?:demographic|self.identif|voluntary.{0,20}survey)',label,re.I)
+            and not re.search(r'marketing|advertis|sell|sale|third.part',label,re.I)):return 'demographic_data_consent'
+    if re.search(r'(?:personal|familial) relationships?.{0,300}outside business activit',label,re.I|re.S):return 'conflict_disclosures'
+    if re.search(r'government official.{0,400}(?:hold|held|referred|recommended|related)',label,re.I|re.S):return 'government_official'
     label=" ".join(label.strip().casefold().split()).rstrip(" *?:")
     if re.search(r'\bhigh school\b',label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
@@ -57,13 +61,14 @@ def field_key(label):
     if re.fullmatch(r'what is your (?:cumulative )?gpa',label):return 'gpa'
     if re.fullmatch(r'what is your (?:race or ethnicity|race|ethnicity)',label):return 'race'
     if re.fullmatch(r'what is your disability status',label):return 'disability'
+    if re.fullmatch(r'what is your (?:military|veteran|protected veteran) status',label):return 'veteran'
     if re.fullmatch(r'(?:please indicate |what is )?your (?:desired )?hourly (?:rate|pay)(?: requirement| expectation)?',label):return 'salary'
     if re.search(r'(?:which|what|indicate|select|enter).*(?:\bstate\b|province).*(?:resid|live)',label):return 'state'
     if re.search(r'(?:zip|postal) code.*(?:primary residence|home|address)',label):return 'postal_code'
     if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
     if re.search(r"(?:which|what).*(?:college|university|school).*(?:attend|enroll)|name of (?:your |the )?(?:college|university|school)",label):return 'school'
     if re.fullmatch(r"(?:current |pursuing |academic )?degree(?: type)?",label):return 'degree'
-    if re.search(r'when.*(?:expect|plan).*graduat|(?:expected|anticipated).*graduation|what year.*graduat',label):return 'graduation'
+    if re.search(r'when.*(?:expect|plan).*graduat|(?:expected|anticipated).*graduation|what year.*graduat|^when (?:do|will) you graduate$',label):return 'graduation'
     if 'highest' in label and re.search(r'education|degree',label):return 'highest_completed_degree'
     if re.search(r'(?:will|do).*(?:require|need).*sponsor|(?:require|need).*employment visa',label):return 'needs_sponsorship'
     if re.search(r'(?:authorized|eligible|authorization).*(?:work|employment).*(?:united states|u\.s\.|\bus\b)',label):return 'work_authorized_us'
@@ -141,6 +146,17 @@ def _option_value(key, value, options, context=None):
                    *(normalize(name+year) for name in names),*(normalize(year+name) for name in names)}
         seasonal=[x for x in options if normalize(x) in supported]
         if len(seasonal)==1:return seasonal[0]
+        # Month-range buckets: "May - Aug 2028", "January 2028 - July 2028".
+        months={name:i for i,name in enumerate(('jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'),1)}
+        month_name=r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?'
+        ranges=[]
+        for option in options:
+            bucket=re.fullmatch(month_name+r'(?:\s+(\d{4}))?\s*(?:[-–—]|to|through)\s*'+month_name+r'\s+(\d{4})',option.strip(),re.I)
+            if not bucket:continue
+            first,first_year,last,last_year=bucket.groups()
+            start=f'{first_year or last_year}-{months[first.casefold()]:02d}';end=f'{last_year}-{months[last.casefold()]:02d}'
+            if start<=end and start<=value<=end:ranges.append(option)
+        if len(ranges)==1:return ranges[0]
     allowed={normalize(value)}|aliases.get(key,{}).get(normalize(value),set())
     if value in ('Yes','No'):
         matches=[x for x in options if normalize(x) in allowed]
@@ -162,6 +178,38 @@ def _option_value(key, value, options, context=None):
         return exact[0] if len(exact)==1 else min(matches,key=lambda x:(len(x),x.casefold(),x))
     if len(matches)!=1:raise Blocked('option_mismatch')
     return matches[0]
+
+
+# Identity, contact and free-text facts are entered verbatim, never translated into a choice.
+UNMAPPED_FACTS={'full_name','first_name','last_name','preferred_name','native_name','email','phone','street','postal_code',
+                'linkedin','github','website','skills','business_activity_details'}
+
+
+def _option_mapping_id(key, fact, field):
+    label=' '.join(field['label'].casefold().split()).rstrip(' *?:')
+    return digest(['option_mapping',key,fact['value'],label,field.get('type',''),sorted(field.get('options',[]))])
+
+
+def _mapped_option(store, key, field, provider=None):
+    """Reuse or request a reviewed translation of a confirmed fact into one listed choice.
+
+    The fact itself is unchanged; only its wording is mapped. Mappings are keyed
+    by the exact fact value, question wording and choices, so a fact edit or a
+    reworded question requires a new review, and package validation replays them
+    without a model.
+    """
+    fact=store.facts().get(key);options=field.get('options',[])
+    if not fact or key in UNMAPPED_FACTS or field.get('type')=='checkbox' or not field.get('required'):return None
+    mapping=_option_mapping_id(key,fact,field)
+    row=store.db.execute('SELECT value FROM option_mappings WHERE id=?',(mapping,)).fetchone()
+    if row:return row['value'] if options.count(row['value'])==1 else None
+    if not provider or not hasattr(provider,'map_option'):return None
+    from .config import FACTS
+    choice=provider.map_option(field,{'key':key,'label':FACTS[key],'value':fact['value']})
+    if not isinstance(choice,str) or options.count(choice)!=1:return None
+    from .util import now
+    store.db.execute('INSERT OR REPLACE INTO option_mappings VALUES(?,?,?,?,?)',(mapping,key,fact['revision'],choice,now()))
+    return choice
 
 
 def _resume_internship(store, label):
@@ -188,7 +236,9 @@ def _resume_internship(store, label):
 
 
 def _discovery_answer(label, options, context):
-    if not re.search(r'how (?:did|have).*hear|how did.*(?:find|learn)|where did.*(?:find|hear|learn)|how did.*connect with|what led you to apply for (?:this|the) opportunity',label,re.I) and not (len(options)>=3 and sum(bool(re.search(r'linkedin|indeed|search engine|social media|news article',x,re.I)) for x in options)>=3 and all(x.casefold() in label.casefold() for x in options)):return None
+    # Bounded gaps: an essay such as "how did you debug it ... what did you
+    # learn" is not a referral-source question.
+    if not re.search(r"how (?:did|have) you (?:first )?(?:hear(?:d)?|find out|learn(?:ed)?|come across|discover(?:ed)?)\s+(?:about|of)\b|how did you (?:first )?(?:find|discover|come across)\s+(?:us|(?:this|the|our)\s+(?:job|role|position|posting|opening|opportunity|internship|program|company|team))\b|where did you (?:first )?(?:find|hear|learn|see|discover)\b|how did you connect with|what led you to apply for (?:this|the) opportunity",label,re.I) and not (len(options)>=3 and sum(bool(re.search(r'linkedin|indeed|search engine|social media|news article',x,re.I)) for x in options)>=3 and all(x.casefold() in label.casefold() for x in options)):return None
     source=context.get('source','')
     if not source or source=='user':return None
     if not options:
@@ -388,6 +438,9 @@ def _compatible_binding(key, label):
         'outside_business_activity':r'currently own,? operate,? or provide services.*business or organization',
         'business_activity_details':r'describe the nature of the activity.*your role.*overlap',
         'recruitment_data_consent':r'(?:store|process).*data.*(?:considering|consideration|eligibility).*application.*employment',
+        'demographic_data_consent':r'consent.{0,80}(?:collect|stor|process).{0,120}(?:demographic|self.identif|voluntary.{0,20}survey)',
+        'conflict_disclosures':r'(?:personal|familial) relationships?(?:.|\n){0,300}outside business activit',
+        'government_official':r'government official',
     }
     if key=='degree' and re.search(r'highest|completed|earned',label,re.I):return False
     return key in terms and bool(re.search(terms[key],label,re.I))
@@ -398,7 +451,7 @@ def _compatible_field(key, field, context=None):
     if key=='degree' and any(re.fullmatch(r'Freshman|Sophomore|Junior|Senior',o,re.I) for o in field.get('options',[])):return False
     if key=='race' and re.search(r'hispanic|latino',label,re.I):return False
     if key in {'work_authorized_us','needs_sponsorship','unrestricted_authorization'} and re.search(r'temporary.*authoriz',label,re.I):return False
-    if key=='recruitment_data_consent' and re.search(r'marketing|advertis|sell|sale|third.part',label,re.I):return False
+    if key in {'recruitment_data_consent','demographic_data_consent'} and re.search(r'marketing|advertis|sell|sale|third.part',label,re.I):return False
     if key in {'summer_2027_available','summer_2027_relocate'} and not re.search(r'summer\s*2027',label+' '+(context or {}).get('title',''),re.I):return False
     if key in {'work_authorized_us','unrestricted_authorization'}:
         if re.search(r'\b(?:not|never)\b.{0,20}\b(?:authorized|eligible)|\b(?:unauthorized|ineligible)\b',label,re.I):return False
@@ -533,7 +586,7 @@ def resolve(store, host, field, provider=None, context=None):
     if field.get('section_entry',0)>0 and field.get('section') in {'education','employment'} and not saved:
         if field.get('required') or field.get('value'):raise Blocked('repeated_entry_review','Confirm the answer for this specific '+field['section']+' entry')
         return None
-    key=None;template=None;derived=None
+    key=None;template=None;derived=None;draft_rejection=None
     if saved:
         exact=field_key(label)
         if field.get('section')=='education' and re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I):
@@ -588,6 +641,7 @@ def resolve(store, host, field, provider=None, context=None):
         if is_writing and not key and provider and store.settings()['tailored_writing']:
             choices=_approved_sentences(store,context)
             draft=provider.draft_answer(label,choices,context,field.get('maxlength',-1)) if choices else {}
+            draft_rejection=draft.get('rejected')
             ids=draft.get('sentence_ids',[]);by_id={x['id']:x for x in choices}
             if draft.get('answer') and ids and all(x in by_id for x in ids):
                 parts=[{k:v for k,v in by_id[x].items() if k!='id'} for x in ids]
@@ -670,6 +724,8 @@ def resolve(store, host, field, provider=None, context=None):
         else:
             fact=store.facts().get(key)
             if not fact:
+                # Every grounded draft failed review: a model outcome, not a missing personal fact.
+                if field.get('required') and draft_rejection:raise Blocked('writing_unsupported',draft_rejection)
                 if field.get('required'):raise Blocked('missing_fact',label)
                 store.resolve_known_question(host,label,options,field=field,context=context)
                 return None
@@ -682,7 +738,10 @@ def resolve(store, host, field, provider=None, context=None):
             provenance={'fact_key':key,'revision':fact['revision']}
     if field.get('type') in ('radio','select','combobox','checkbox','checkbox-group','yesno') and options:
         try:value=_option_value(key,value,options,context)
-        except Blocked:raise Blocked('option_mismatch',label)
+        except Blocked:
+            mapped=_mapped_option(store,key,field,provider) if key and provenance.get('fact_key')==key else None
+            if mapped is None:raise Blocked('option_mismatch',label)
+            value=mapped;provenance={**provenance,'option_mapping':True}
     if field.get('maxlength',-1)>0 and len(value)>field['maxlength']:raise Blocked('answer_too_long',label)
     validate_numeric(value,field)
     if pending_binding:save_binding(store,host,field,context,**pending_binding)

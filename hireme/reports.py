@@ -2,11 +2,45 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 from .gmail import GmailClient, owner_email
 from .store import worker_lock
 from .util import now
+
+
+FOOTER = ('\n\nOpen the job links above on your phone to review or apply. Confirmed submissions are already applied. '
+          'For uncertain submissions, check with the employer before applying again.\n'
+          'After applying yourself, return to Application desk on the Pi, find the job, and choose Applied manually. '
+          'This records your application and stops automatic retries. Jobs with uncertain submission records need reconciliation first.\n'
+          'Open Application desk on the Pi: http://127.0.0.1:8766 (through Raspberry Pi Connect).\n')
+
+
+def _short(text, limit=140):
+    """One line, cut at the first question or sentence when the label is long."""
+    text = ' '.join(str(text).split()).rstrip(' *')
+    if len(text) <= limit:
+        return text
+    match = re.match(r'(.{20,%d}?[?.:])\s' % limit, text)
+    return match[1] + ' …' if match else text[:limit].rstrip() + '…'
+
+
+def _questions(store, job_id):
+    """Each unresolved question with a readable reason, and a failed draft's review."""
+    from .presentation import REASON_GUIDANCE
+    lines = []
+    for q in store.db.execute('SELECT label,reason FROM questions WHERE job_id=? AND resolved=0 ORDER BY rowid', (job_id,)):
+        reason = REASON_GUIDANCE.get(q['reason'], (q['reason'].replace('_', ' ').capitalize(),))[0]
+        line = f"{_short(q['label'])} — {reason}"
+        if q['reason'] == 'writing_unsupported':
+            for e in store.db.execute("SELECT detail FROM events WHERE kind='writing_reviewed' AND subject=? ORDER BY seq DESC LIMIT 5", (job_id,)):
+                review = json.loads(e['detail'])
+                if review.get('question') == q['label'] and review.get('supported') is False:
+                    line += f" (review: {_short(review.get('reason', ''), 200)})"
+                    break
+        lines.append(line)
+    return lines
 
 
 def queue_report(store, run_id):
@@ -27,9 +61,11 @@ def queue_report(store, run_id):
             group = ('Applied successfully' if detail['outcome'] == 'confirmed' else
                      'Blocked — review or apply manually' if detail['outcome'] == 'blocked' else
                      'Other outcomes — review before retrying')
+            questions = _questions(store, job_id)
             groups[group].append(f"{job['company']} — {job['title']}: {detail['outcome']}"
                                  + (f" ({detail['reason']})" if detail.get('reason') else '')
-                                 + (f"\n{detail['detail']}" if detail.get('detail') else '')
+                                 + (''.join('\n  • ' + line for line in questions) if questions
+                                    else f"\n{_short(detail['detail'], 300)}" if detail.get('detail') else '')
                                  + f"\n{job['url']}")
     outcomes = [heading + '\n\n' + '\n\n'.join(items) for heading, items in groups.items() if items]
     detail = json.loads(run['detail']) if run['detail'].startswith('{') else {'reason': run['detail']}
@@ -39,11 +75,7 @@ def queue_report(store, run_id):
             + ('\n\n'.join(outcomes) or 'No application outcomes recorded.'))
     if detail.get('reason'):
         body += '\n\nStopped because: ' + detail['reason']
-    body += ('\n\nOpen the job links above on your phone to review or apply. Confirmed submissions are already applied. '
-             'For uncertain submissions, check with the employer before applying again.\n'
-             'After applying yourself, return to Application desk on the Pi, find the job, and choose Applied manually. '
-             'This records your application and stops automatic retries. Jobs with uncertain submission records need reconciliation first.\n'
-             'Open Application desk on the Pi: http://127.0.0.1:8766 (through Raspberry Pi Connect).\n')
+    body += FOOTER
     enabled = store.settings()['gmail_reports']
     with store.transaction():
         store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
@@ -52,10 +84,21 @@ def queue_report(store, run_id):
     return run_id
 
 
-def flush_reports(store, client_factory=GmailClient, limit=5):
+def _combined(store, rows):
+    """One message for every batch finished since the last report, oldest first."""
+    if len(rows) == 1:
+        return rows[0]['subject'], rows[0]['body']
+    confirmed = sum(r[0] for r in store.db.execute(
+        'SELECT submitted FROM runs WHERE id IN (' + ','.join('?' for _ in rows) + ')', [r['id'] for r in rows]))
+    sections = [r['body'][:-len(FOOTER)] if r['body'].endswith(FOOTER) else r['body'].rstrip() for r in rows]
+    body = (f'{len(rows)} application batches finished since the last report.\n\n'
+            + ('\n\n' + '─' * 24 + '\n\n').join(sections) + FOOTER)
+    return f'Application batches: {confirmed} confirmed across {len(rows)} batches', body
+
+
+def flush_reports(store, client_factory=GmailClient, limit=25):
     if not store.settings()['gmail_reports']:
         return {'sent': 0, 'enabled': False}
-    sent = 0
     with worker_lock(store.root, 'reports'):
         # A process disappearing after send authorization may have delivered mail.
         store.db.execute("UPDATE report_outbox SET state='uncertain',last_error='Process stopped during mail send' WHERE state='sending'")
@@ -70,19 +113,25 @@ def flush_reports(store, client_factory=GmailClient, limit=5):
         for row in rows:
             if row['recipient'] != client.email:
                 store.db.execute("UPDATE report_outbox SET state='held',last_error='Owner email changed' WHERE id=?", (row['id'],))
-                continue
-            with store.transaction():
-                store.db.execute("UPDATE report_outbox SET state='sending',attempts=attempts+1,last_error=NULL WHERE id=?", (row['id'],))
-            try:
-                receipt = client.send_report(row['subject'], row['body'], row['message_id'])
-            except Exception as e:
-                store.db.execute("UPDATE report_outbox SET state='uncertain',last_error=? WHERE id=?", (type(e).__name__, row['id']))
-                store.event('batch_report_uncertain', row['id'], {})
-                continue
-            store.db.execute("UPDATE report_outbox SET state='sent',provider_id=?,sent=? WHERE id=?", (receipt, now(), row['id']))
-            store.event('batch_report_sent', row['id'], {'provider_id': receipt})
-            sent += 1
-    return {'sent': sent, 'enabled': True}
+        rows = [row for row in rows if row['recipient'] == client.email]
+        if not rows:
+            return {'sent': 0, 'enabled': True}
+        ids = [row['id'] for row in rows]
+        marks = ','.join('?' for _ in ids)
+        subject, body = _combined(store, rows)
+        with store.transaction():
+            store.db.execute(f"UPDATE report_outbox SET state='sending',attempts=attempts+1,last_error=NULL WHERE id IN ({marks})", ids)
+        try:
+            receipt = client.send_report(subject, body, rows[-1]['message_id'])
+        except Exception as e:
+            store.db.execute(f"UPDATE report_outbox SET state='uncertain',last_error=? WHERE id IN ({marks})", (type(e).__name__, *ids))
+            for rid in ids:
+                store.event('batch_report_uncertain', rid, {})
+            return {'sent': 0, 'enabled': True, 'batches': 0}
+        store.db.execute(f"UPDATE report_outbox SET state='sent',provider_id=?,sent=? WHERE id IN ({marks})", (receipt, now(), *ids))
+        for rid in ids:
+            store.event('batch_report_sent', rid, {'provider_id': receipt, 'combined': len(ids)})
+    return {'sent': 1, 'enabled': True, 'batches': len(ids)}
 
 
 def report_status(store):

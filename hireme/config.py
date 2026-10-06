@@ -135,11 +135,14 @@ FACTS = {
     "temporary_work_authorization": "Currently hold temporary US work authorization, such as F-1/OPT/CPT/H-1B (Yes / No)",
     "programming_proficiency": "Self-assessed programming proficiency (Beginner / Intermediate / Advanced / Expert)",
     "hispanic_latino": "Hispanic / Latino response (separate from race)",
+    "conflict_disclosures": "Have a conflict-of-interest disclosure for employers you apply to: relationships with their staff or vendors, outside business activity, investments over 5% or in their competitors/partners, or retained IP (Yes / No)",
+    "government_official": "Within 5 years, a government official, referred by one, or closely related to one (Yes / No)",
+    "demographic_data_consent": "Consent to employers storing/processing your voluntary demographic survey responses (Yes / No)",
 }
 REQUIRED = {"full_name", "first_name", "last_name", "email", "phone", "location", "graduation",
             "work_authorized_us", "needs_sponsorship", "us_person", "professional_years", "skills"}
 BOOLEANS = {"work_authorized_us", "needs_sponsorship", "us_person", "unrestricted_authorization",
-            "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent", "temporary_work_authorization"}
+            "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent", "temporary_work_authorization", "conflict_disclosures", "government_official", "demographic_data_consent"}
 
 
 def validate_fact(key: str, value: str) -> str:
