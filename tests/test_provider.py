@@ -1,6 +1,37 @@
 import json
 from types import SimpleNamespace
 from hireme.provider import ClaudeProvider
+import pytest
+
+
+@pytest.mark.parametrize('returncode,result,stderr',[
+    (1,"You've hit your session limit · resets 5:40am (America/Los_Angeles)",''),
+    (1,"You've hit your weekly limit",''),
+    (0,'Usage limit reached',''),
+    (1,'','rate limit exceeded'),
+])
+def test_claude_subscription_limit_envelope_stops_inference(monkeypatch,returncode,result,stderr):
+    from hireme.util import Blocked
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _: '/fixture/claude')
+    calls=[]
+    def run(args,**kwargs):
+        calls.append(args)
+        if args[1:]==['auth','status']:
+            return SimpleNamespace(returncode=0,stdout=json.dumps({'loggedIn':True,'authMethod':'claude.ai','subscriptionType':'pro'}))
+        return SimpleNamespace(returncode=returncode,stdout=json.dumps({'is_error':True,'result':result}),stderr=stderr)
+    monkeypatch.setattr('hireme.provider.subprocess.run',run)
+    with pytest.raises(Blocked,match='provider_rate_limited'):ClaudeProvider().choose_answer('Synthetic question',[])
+    assert len(calls)==2
+
+
+def test_claude_limit_detection_does_not_reclassify_normal_output_or_other_errors():
+    from hireme.provider import _claude_rate_limited
+    for code,payload,stderr in [(0,{'is_error':False,'result':"You've hit your session limit"},''),
+                                (1,{'is_error':True,'result':'Sign in required'},''),
+                                (1,{'is_error':True,'result':None},''),
+                                (1,[],'')]:
+        assert not _claude_rate_limited(SimpleNamespace(returncode=code,stdout=json.dumps(payload),stderr=stderr))
+    assert not _claude_rate_limited(SimpleNamespace(returncode=1,stdout='invalid JSON',stderr='Login failed'))
 
 
 def test_source_array_wire_schema_is_stable_without_weakening_local_schema():

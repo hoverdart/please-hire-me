@@ -13,6 +13,16 @@ import threading
 from .util import Blocked
 
 
+def _claude_rate_limited(response):
+    """Claude may return its subscription-limit error as JSON on stdout with exit 1."""
+    pattern=r'rate limit|usage limit|limit reached|quota exceeded|hit your (?:(?:session|weekly|usage) )?limit'
+    if response.returncode and re.search(pattern,response.stderr or '',re.I):return True
+    try:output=json.loads(response.stdout)
+    except (ValueError,TypeError):return False
+    return (isinstance(output,dict) and output.get('is_error') is True
+            and isinstance(output.get('result'),str) and bool(re.search(pattern,output['result'],re.I)))
+
+
 def _claude_output_schema(schema):
     # Keep the decoder grammar stable as the source library changes. Full
     # source membership, uniqueness and array limits are enforced locally.
@@ -113,19 +123,17 @@ class ClaudeProvider:
                 r=self._run(args,input=json.dumps(data),cwd=cwd,env=env)
                 if self.observer:self.observer("inference_finished",{"seconds":round(time.monotonic()-started,2),"success":r.returncode==0})
             except subprocess.TimeoutExpired: raise Blocked("provider_timeout")
+        if _claude_rate_limited(r):
+            raise Blocked('provider_rate_limited','Claude subscription allowance is unavailable; wait for the vendor reset')
         if r.returncode:
             if re.search(r'unknown option|unrecognized argument|unsupported (?:option|flag)|invalid.*(?:effort|model)',r.stderr or '',re.I):
                 raise Blocked('provider_cli_incompatible','Update Claude Code to a version supporting the required isolation, model and effort controls; no unsafe fallback is permitted')
-            if re.search(r'rate limit|usage limit|limit reached|quota exceeded',r.stderr or '',re.I):
-                raise Blocked('provider_rate_limited','Claude subscription allowance is unavailable; wait for the vendor reset')
             raise Blocked("provider_error","Claude inference failed; check subscription/login")
         try:
             result=json.loads(r.stdout)
             usage=result.get('usage',{})
             self.last_usage={k:v for k,v in usage.items() if k in {'input_tokens','output_tokens','cache_creation_input_tokens','cache_read_input_tokens'} and type(v) is int and v>=0} if isinstance(usage,dict) else {}
             if result.get("is_error"):
-                if re.search(r'rate limit|usage limit|limit reached|quota exceeded',str(result.get('result','')),re.I):
-                    raise Blocked('provider_rate_limited','Claude subscription allowance is unavailable; wait for the vendor reset')
                 raise ValueError("error result")
             answer=result.get("structured_output") or json.loads(result["result"])
             from jsonschema import validate,ValidationError
