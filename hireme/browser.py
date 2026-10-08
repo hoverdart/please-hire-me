@@ -629,12 +629,28 @@ class Browser:
             if f['type']!='textarea' and '\n' in value:raise Blocked('invalid_single_line_answer',f['label'])
             el.fill(value)
 
+    @staticmethod
+    def _filled_number_fields(before,after,answers):
+        """Ignore only a blank numeric default mirrored from our verified entry."""
+        result=[]
+        for fresh in after:
+            previous=[f for f in before if f['label']==fresh['label'] and f['type']==fresh['type'] and f.get('ref')==fresh.get('ref')]
+            entries=[a for a in answers if a['field'] in previous]
+            if (fresh['type']=='number' and len(previous)==len(entries)==1
+                    and previous[0].get('step_base') in (None,'','undefined')
+                    and not previous[0].get('step') and not fresh.get('step')
+                    and fresh.get('step_base')==fresh.get('value')==entries[0]['value']):
+                fresh={**fresh,'step_base':previous[0].get('step_base')}
+            result.append(fresh)
+        return result
+
     def _verify(self,answers,documents,fields):
         fresh=self._snapshot()
         body=self.page.locator('body').inner_text()
         completed={d['field']['label'] for d in documents if d['hash'] in self.uploaded_files and d['filename'] in body}
         def remaining(items):return [f for f in items if not (f['type']=='file' and f['label'] in completed)]
-        if digest(self._shape(remaining(fresh)))!=digest(self._shape(remaining(fields))):
+        compared=self._filled_number_fields(fields,fresh,answers)
+        if digest(self._shape(remaining(compared)))!=digest(self._shape(remaining(fields))):
             self.store.event('form_changed',self.current_host,{'before':self._shape(remaining(fields)),'after':self._shape(remaining(fresh))})
             raise Blocked('form_changed')
         for a in answers:
@@ -814,7 +830,8 @@ class Browser:
             except Blocked as error:
                 if error.reason!='form_changed':raise
                 fresh=self._snapshot()
-                if refreshes>=3 or not self._additional_fields(fields,fresh):raise
+                compared=self._filled_number_fields(fields,fresh,answers)
+                if refreshes>=3 or not self._additional_fields(fields,compared):raise
                 self._guard(job)
                 refreshes+=1
                 self.store.event('conditional_fields_revealed',job['id'],{'refresh':refreshes,'added':len(fresh)-len(fields)})

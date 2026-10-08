@@ -851,6 +851,35 @@ def test_controlled_number_value_updates_preserve_only_equivalent_constraints(st
     assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
 
 
+@pytest.mark.parametrize('initial',['','undefined'])
+def test_controlled_decimal_default_accepts_only_the_verified_answer(store,ats,initial):
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content(f'<form><label for="gpa">GPA</label><input id="gpa" type="number" value="{initial}" oninput="this.setAttribute(\'value\',this.value)"></form>')
+        before=b._snapshot();f=before[0]
+        answer={'field':f,'value':'3.76','provenance':{'fact_key':'gpa'}}
+        b.page.locator('#gpa').fill('3.76')
+        b._verify([answer],[],before)
+        with pytest.raises(Blocked,match='form_changed'):b._verify([],[],before)
+        b.page.locator('#gpa').fill('3.75')
+        with pytest.raises(Blocked,match='form_changed'):b._verify([answer],[],before)
+        b.page.locator('#gpa').fill('3.76')
+        b.page.locator('#gpa').evaluate('(e)=>e.max="3.5"')
+        with pytest.raises(Blocked,match='form_changed'):b._verify([answer],[],before)
+        b.page.locator('#gpa').evaluate('(e)=>{e.removeAttribute("max");e.step="1"}')
+        with pytest.raises(Blocked,match='form_changed'):b._verify([answer],[],before)
+    assert not ats[1]
+
+
+def test_controlled_gpa_default_and_conditional_field_submit_on_local_fixture(store,ats):
+    store.put_facts({'gpa':'3.76/4.0','city':'Berkeley'})
+    job=local_job(store,ats)
+    html=conditional_html().replace('<button type="submit">','<label for="gpa">What is your GPA?</label><input id="gpa" name="gpa" type="number" value="undefined" oninput="this.setAttribute(\'value\',this.value)"><button type="submit">')
+    with Browser(store,test_url=ats[0]) as b:
+        b.context.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html') if route.request.method=='GET' else route.continue_())
+        assert b.apply(job)=='confirmed'
+    assert len(ats[1])==1 and b'3.76' in ats[1][0] and b'Berkeley' in ats[1][0]
+
+
 def test_ashby_nested_sms_consent_is_distinct_from_phone(store,ats):
     from hireme.answers import resolve
     store.put_facts({'sms':'No'})
