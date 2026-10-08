@@ -7,8 +7,8 @@ from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
-MAPPING_VERSION = 14
-ADAPTER_VERSION = 6
+MAPPING_VERSION = 15
+ADAPTER_VERSION = 7
 
 def field_context(host, field, context=None):
     context = context or {}
@@ -63,6 +63,11 @@ def save_binding(store, host, field, context, key=None, template_id=None):
 def present(key, value, field):
     """Format confirmed facts without deriving citizenship or legal status."""
     label = field['label'].casefold()
+    if key=='fulltime_start' and re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):
+        if field.get('type') in {'text','textarea'} and not field.get('options'):
+            from datetime import date
+            day=date.fromisoformat(value)
+            return f'{calendar.month_name[day.month]} {day.day}, {day.year}'
     if key in {'college_start', 'graduation', 'earliest_start', 'latest_start'} and re.fullmatch(r'\d{4}-\d{2}', value):
         year, month = value.split('-')
         if not 1 <= int(month) <= 12: raise Blocked('invalid_date_answer', field['label'])

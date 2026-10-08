@@ -91,7 +91,7 @@ def test_context_provider_requires_independent_support_review():
         calls.append((instruction,data,schema))
         return {'answer':'Manufacturing','sentence_ids':['s1']} if len(calls)==1 else {'supported':False,'reason':'Unsupported claim'}
     p.request=request
-    assert p.context_answer(field(options=['Manufacturing','Finance']),[{'id':'s1','text':'I work in education.'}],{}, {})=={}
+    assert p.context_answer(field(options=['Manufacturing','Finance']),[{'id':'s1','text':'I work in education.'}],{}, {})=={'rejected':'Unsupported claim'}
     assert len(calls)==2 and calls[0][2]['properties']['answer']['enum']==[None,'Manufacturing','Finance']
 
 

@@ -32,7 +32,9 @@ SNAPSHOT=r"""selector => {
   const direct=Array.from(el.labels||[]).map(labelText).join(' ').trim();
   const field=el.closest('fieldset'); const legend=field?.querySelector('legend')?.innerText||field?.querySelector('.ashby-application-form-question-title')?.innerText;
   const wrapper=el.closest('[class*=form-field],[class*=field-entry],[class*=application-question],.field');
-  return (el.getAttribute('description')||el.getAttribute('aria-label')||aria||direct||legend||labelText(wrapper?.querySelector('label'))||el.getAttribute('placeholder')||'').trim();
+  const lever=el.closest('.application-question');
+  const leverHeading=labelText(lever?.querySelector('.application-label'));
+  return (el.getAttribute('description')||el.getAttribute('aria-label')||aria||leverHeading||direct||legend||labelText(wrapper?.querySelector('label'))||el.getAttribute('placeholder')||'').trim();
  }
  controls.forEach((el,index)=>{
   if(!el.getClientRects().length && el.type!=='file')return;
@@ -48,7 +50,7 @@ SNAPSHOT=r"""selector => {
   if(el.disabled || el.closest('[aria-hidden=true]') || (el.readOnly && el.tabIndex<0))return;
   let type=el.tagName==='SELECT'?'select':el.tagName==='TEXTAREA'?'textarea':el.getAttribute('role')==='combobox'?'combobox':el.type||'text';
   let indices=[index]; let question=label(el); let options=[]; let value=el.value||'';
-  let required=el.required||el.getAttribute('aria-required')==='true'||/\*/.test(question);
+  let required=el.required||el.getAttribute('aria-required')==='true'||/[\*✱]/.test(question);
   const ashbyHeading=el.closest('fieldset')?.querySelector('.ashby-application-form-question-title')||el.closest('.ashby-application-form-field-entry')?.querySelector('.ashby-application-form-question-title');
   required=required||!!ashbyHeading?.className.includes('_required_');
   if(type==='file'){
@@ -60,7 +62,8 @@ SNAPSHOT=r"""selector => {
    else if(/cover.?letter/.test(identity))question='Cover letter';
   }
   const ashbyGroup=type==='checkbox' ? el.closest('fieldset.ashby-application-form-input-checkbox-group') : null;
-  const checkboxGroup=ashbyGroup || type==='checkbox' && el.name && el.getAttribute('description') && controls.filter(x=>x.type==='checkbox'&&x.name===el.name&&x.getAttribute('description')===el.getAttribute('description')).length>1;
+  const leverGroup=type==='checkbox' ? el.closest('.application-question') : null;
+  const checkboxGroup=ashbyGroup || leverGroup && el.name && controls.filter(x=>x.type==='checkbox'&&x.name===el.name&&x.closest('.application-question')===leverGroup).length>1 || type==='checkbox' && el.name && el.getAttribute('description') && controls.filter(x=>x.type==='checkbox'&&x.name===el.name&&x.getAttribute('description')===el.getAttribute('description')).length>1;
   if(type==='radio'||checkboxGroup){
    const name=ashbyGroup||el.name; if(!name||seen.has(name))return;seen.add(name);
    const group=controls.filter(x=>x.type===el.type&&(ashbyGroup?x.closest('fieldset.ashby-application-form-input-checkbox-group')===ashbyGroup:x.name===name));
@@ -68,7 +71,7 @@ SNAPSHOT=r"""selector => {
    indices=group.map(x=>controls.indexOf(x)); options=group.map(x=>Array.from(x.labels||[]).map(l=>l.innerText).join(' ').trim()||x.value);
    const parent=el.closest('fieldset');
    if(ashbyGroup)required=required||!!ashbyGroup.querySelector('label[class*=_required_]');
-   question=ashbyGroup?.querySelector('.ashby-application-form-question-title')?.innerText||el.getAttribute('description')||parent?.querySelector('legend')?.innerText||el.closest('[class*=field],[class*=question]')?.querySelector('label')?.innerText||question;
+   question=ashbyGroup?.querySelector('.ashby-application-form-question-title')?.innerText||el.getAttribute('description')||parent?.querySelector('legend')?.innerText||labelText(el.closest('.application-question')?.querySelector('.application-label'))||el.closest('[class*=field],[class*=question]')?.querySelector('label')?.innerText||question;
    // Ashby's SMS radios are nested inside the Phone field. The enclosing
    // heading describes the phone input, not this separate consent control.
    if(type==='radio'&&el.closest('.ashby-application-form-texting-consent-description'))question='Consent to receiving text messages';
@@ -81,7 +84,7 @@ SNAPSHOT=r"""selector => {
   out.push({index,indices,...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),type,options,
    ...(el.closest('.education--form,[data-automation-id="educationSection"],[data-automation-id="education"]') ? {section:'education'} : el.closest('.employment--form,.experience--form,[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]') ? {section:'employment'} : {}),
    ...(entryPeers.length>1 ? {section_entry:entryPeers.indexOf(entry)} : {}),
-   required:required||/\*/.test(question),
+   required:required||/[\*✱]/.test(question),
    maxlength:el.maxLength||-1,min:el.getAttribute('min'),max:el.getAttribute('max'),step:el.getAttribute('step'),step_base:type==='number'?el.getAttribute('value'):null,pattern:el.getAttribute('pattern'),value,multiple:!!el.multiple});
  });return out;
 }"""

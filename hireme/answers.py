@@ -50,6 +50,11 @@ def field_key(label):
     # Politically exposed person (PEP) declarations ask the same thing.
     if re.search(r'entrusted with (?:a )?(?:prominent )?(?:public )?(?:position|function)|politically exposed|family member of (?:someone|a person) holding such a position',label,re.I):return 'government_official'
     label=" ".join(label.strip().casefold().split()).rstrip(" *?:")
+    if re.fullmatch(r'(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)',label):return 'over_18'
+    if re.fullmatch(r'are you willing and able to work nights and weekends',label):return 'nights_weekends'
+    if re.fullmatch(r'do you have experience working with robots',label):return 'robots_experience'
+    if re.fullmatch(r'have you worked with humanoids',label):return 'humanoids_experience'
+    if re.match(r'when will you be available to work as a full.time,? permanent employee\?',label):return 'fulltime_start'
     if re.search(r'\bhigh school\b',label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
@@ -85,6 +90,7 @@ def field_key(label):
 
 
 def category(label):
+    if re.search(r'what qualities.{0,150}(?:great|successful).{0,180}(?:how|skills|experiences)|(?:how|why).{0,100}(?:skills|experiences|background).{0,100}(?:best|good|strong|ideal) candidate',label,re.I):return 'experience'
     if re.search(r'what (?:are you )?(?:most )?excited (?:to|about)',label,re.I):return 'motivation'
     if re.search(r"why (?:do you want|are you interested|this (?:role|company))|what interests you|what (?:excites|motivates) you|what excites you|why are you excited|what makes you (?:excited|interested)|why.{0,50}(?:work|join)|why.{0,30}(?:choose|chose)|(?:professional|career|short.term) (?:goals|plans|aspirations)",label,re.I):return "motivation"
     if re.search(r"(?:tell|describe|share).{0,25}(?:project|something you (?:built|created))",label,re.I):return "project"
@@ -93,6 +99,8 @@ def category(label):
 
 
 def _option_value(key, value, options, context=None):
+    if key=='fulltime_start' and re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):
+        return _option_value('graduation',value[:7],options,context)
     if key is None and value in options:
         if options.count(value)!=1:raise Blocked('option_mismatch')
         return value
@@ -299,7 +307,9 @@ def _current_enrollment(store,label,options):
 
 def _us_citizen_or_resident(store,label,options):
     """A confirmed US citizen satisfies "citizen, green card holder, or permanent resident". Never infers No."""
-    if not re.fullmatch(r'(?:are you )?(?:a )?(?:u\.?s\.?|united states) citizen,? (?:(?:a )?green card holder,? )?or (?:a )?(?:lawful )?permanent resident[? *]*',label.strip(),re.I):return None
+    simple=re.fullmatch(r'(?:are you )?(?:a )?(?:u\.?s\.?|united states) citizen,? (?:(?:a )?green card holder,? )?or (?:a )?(?:lawful )?permanent resident[? *]*',label.strip(),re.I)
+    export=re.fullmatch(r'I am one of the following: \(a\) a citizen of the United States; \(b\) a lawful permanent resident of the United States; or \(c\) a person admitted into the United States as an asylee or refugee[:? *]*',label.strip(),re.I)
+    if not simple and not export:return None
     if options and options.count('Yes')!=1:return None
     citizenship=store.facts().get('citizenship')
     if not citizenship or re.sub(r'[^a-z]','',citizenship['value'].casefold()) not in {'unitedstates','us','usa','unitedstatesofamerica'}:return None
@@ -335,6 +345,15 @@ def selection_limit(label):
     return None
 
 
+def choice_limit(field):
+    """Checkbox groups permit several choices even when their label omits 'select all'."""
+    if field.get('type')!='checkbox-group':return None
+    explicit=selection_limit(field['label'])
+    if explicit:return explicit
+    if re.search(r'\b(?:select|choose|pick)\s+(?:only\s+)?(?:one|1)\b|\bsingle choice\b',field['label'],re.I):return 1,1
+    return 1,None
+
+
 def selections(value, options):
     """The exact listed choices of an answer, in the form's order; None if any is not listed once."""
     if options.count(value)==1:return [value]
@@ -345,8 +364,8 @@ def selections(value, options):
 
 def _multiple(field, chosen):
     """Join several choices when the question asks for that many, in the form's order."""
-    limit=selection_limit(field['label'])
-    if field.get('type')!='checkbox-group' or not limit or not chosen:return None
+    limit=choice_limit(field)
+    if not limit or not chosen or len(set(chosen))!=len(chosen) or any(field['options'].count(x)!=1 for x in chosen):return None
     if len(chosen)<limit[0] or limit[1] is not None and len(chosen)>limit[1]:return None
     return '; '.join(option for option in field['options'] if option in chosen)
 
@@ -354,7 +373,7 @@ def _multiple(field, chosen):
 def _listed_answer(field, value):
     """Exact listed choices, as many as a multi-select question asks for."""
     options=field.get('options',[])
-    if field.get('type')=='checkbox-group' and selection_limit(field['label']):
+    if choice_limit(field):
         chosen=selections(value,options)
         return bool(chosen) and value==_multiple(field,chosen)
     return options.count(value)==1
@@ -384,7 +403,14 @@ def _context_preference(store, label, options, context, field=None):
     low=label.casefold();facts=store.facts()
     value=None;evidence={}
     seasons=[x for x in options if re.fullmatch(r'(?:Spring|Summer|Fall|Winter) 20\d{2}',x)]
-    if employment_country_question(label):
+    if (field and choice_limit(field) and re.fullmatch(r'(?:what|which) (?:development|programming|coding) languages are you (?:most )?experienced with[? *]*',low)):
+        skills=facts.get('skills')
+        if skills:
+            terms={x.strip().casefold() for x in re.split(r'[,;\n]',skills['value'])}
+            chosen=[x for x in options if x.strip().casefold() in terms]
+            value=_multiple(field,chosen)
+            if value:evidence={'skills_revision':skills['revision']}
+    elif employment_country_question(label):
         country=facts.get('country')
         if country:
             try:value=_option_value('country',country['value'],options)
@@ -456,6 +482,25 @@ def _context_preference(store, label, options, context, field=None):
             local=[x for x in options if re.search(r'San Francisco|Bay Area|Berkeley',x,re.I)]
             if len(local)==1:value=local[0];evidence={'location_revision':facts['location']['revision'],'onsite':'Yes'}
     return {'value':value,'provenance':{'contextual_preference':evidence}} if value else None
+
+
+def _context_pronunciation(store, field):
+    """Read an explicitly approved spelling; never invent pronunciation from a name."""
+    if (field_key(field['label'])!='name_pronunciation' or field.get('type') not in {'text','textarea'}
+            or field.get('options') or not store.settings()['tailored_writing']):return None
+    matches=[]
+    for template in store.templates():
+        for line in template['body'].splitlines():
+            match=re.fullmatch(r'\s*Name prono?unciation:\s*(.+?)\s*',line,re.I)
+            if not match:continue
+            value=match[1]
+            if len(value)>1 and (value[0],value[-1]) in {('“','”'),('"','"'),("'","'")}:
+                value=value[1:-1]
+            if value.strip():matches.append((value,template))
+    if not matches:return None
+    if len({value for value,_ in matches})!=1:raise Blocked('mapping_review',field['label'])
+    value,template=matches[0]
+    return {'value':value,'provenance':{'context_fact':{'key':'name_pronunciation','template_id':template['id'],'revision':template['revision']}}}
 
 
 def _graduation_confirmation(store, field):
@@ -539,6 +584,11 @@ def _compatible_binding(key, label):
         'demographic_data_consent':r'consent.{0,80}(?:collect|stor|process).{0,120}(?:demographic|self.identif|voluntary.{0,20}survey)',
         'conflict_disclosures':r'(?:personal|familial) relationships?(?:.|\n){0,300}outside business activit',
         'government_official':r'government official|public (?:position|function)|politically exposed|holding such a position',
+        'over_18':r'^(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)[? *]*$',
+        'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?',
+        'nights_weekends':r'^are you willing and able to work nights and weekends[? *]*$',
+        'robots_experience':r'^do you have experience working with robots[? *]*$',
+        'humanoids_experience':r'^have you worked with humanoids[? *]*$',
     }
     if key=='degree' and re.search(r'highest|completed|earned',label,re.I):return False
     return key in terms and bool(re.search(terms[key],label,re.I))
@@ -669,6 +719,42 @@ def _validate_writing(store, answer):
         if not source or source['revision']!=part['revision'] or part['text'] not in source['body']:raise Blocked('unsupported_or_stale_sample')
 
 
+def _explicit_context_answer(store, host, field, key, provider, context):
+    topics={
+        'veteran':r'military|veteran|armed forces|national guard|reservist',
+        'government_official':r'government|politically exposed|public function|PEP',
+        'conflict_disclosures':r'conflict|outside business|personal relationship|familial|retained IP',
+        'demographic_data_consent':r'demographic.{0,40}consent|consent.{0,40}demographic',
+        'name_pronunciation':r'pronunciation|pronounciation|pronounce',
+        'over_18':r'18\+|18 or older|18 years|date of birth|age:',
+        'fulltime_start':r'permanent|full.time.{0,40}(?:start|availab)',
+        'nights_weekends':r'nights|weekends',
+        'robots_experience':r'robot', 'humanoids_experience':r'humanoid',
+    }
+    if key not in topics or not provider or not hasattr(provider,'explicit_context_answer') or not store.settings()['tailored_writing']:return None
+    # Only user-approved personal wording is eligible; resume/reference/style
+    # sources do not silently establish sensitive declarations or commitments.
+    choices=[c for c in _approved_sentences(store,{**context,'description':field['label']+' '+context.get('description','')}) if 'template_id' in c and re.search(topics[key],c['text'],re.I)]
+    if not choices:return None
+    abstention=_abstention_key(store,'explicit_context_answer',context)
+    if _abstained(store,abstention):return None
+    from .config import FACTS
+    draft=provider.explicit_context_answer(field,choices,{k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()},context)
+    by_id={c['id']:c for c in choices};ids=draft.get('sentence_ids',[]);value=draft.get('answer')
+    if (not isinstance(value,str) or not value or not ids or len(ids)!=len(set(ids)) or any(x not in by_id for x in ids)
+            or field.get('options') and not _listed_answer(field,value)):
+        _abstain(store,abstention,'explicit_context_answer',field['label']);return None
+    from .materials import writing_context_hash
+    parts=[{k:v for k,v in by_id[x].items() if k!='id'} for x in ids]
+    writing={'value':value,'provenance':{'tailored':True,'context_answer':True,'explicit_context':True,'sample_parts':parts,
+        'text_hash':digest(value),'context_hash':writing_context_hash(store,context),'field_hash':digest(context['field_context']),'facts_hash':digest(store.facts())}}
+    _validate_writing(store,writing);validate_numeric(value,field)
+    if not _fits_writing_limits(value,field,context):raise Blocked('answer_too_long',field['label'])
+    store.save_writing_answer(host,field['label'],field.get('options',[]),writing)
+    store.resolve_known_question(host,field['label'],field.get('options',[]),field=field,context=context)
+    return {'field':field,**writing}
+
+
 def resolve(store, host, field, provider=None, context=None):
     label=field['label'];options=field.get('options',[]);context=dict(context or {})
     context['max_sentences']=_sentence_cap(field,context)
@@ -732,6 +818,20 @@ def resolve(store, host, field, provider=None, context=None):
     else:
         key=field_key(label)
         if key and not _compatible_field(key,field,context):raise Blocked('mapping_review',label)
+        if key=='name_pronunciation' and key not in store.facts():
+            derived=_context_pronunciation(store,field)
+            if derived:key=None
+        if (key=='conflict_disclosures' and key not in store.facts()
+                and re.search(r'do you have.{0,10}(?:a\)|any)',label,re.I)
+                and not re.search(r'want to|intend to|plan to|continue',label,re.I)
+                and store.facts().get('outside_business_activity',{}).get('value')=='Yes'):
+            # A confirmed positive answers an any-of declaration. A negative
+            # cannot establish the absence of the other listed conflicts.
+            derived={'value':'Yes','provenance':{'outside_business_activity_revision':store.facts()['outside_business_activity']['revision']}}
+            key=None
+        if key and key not in store.facts():
+            explicit=_explicit_context_answer(store,host,field,key,provider,context)
+            if explicit:return explicit
         education_date=field.get('section')=='education' and bool(re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I))
         if education_date:key='college_start' if label.lower().startswith('start') else 'graduation'
         # A posting's distinctive first company word can establish a short-form
@@ -828,6 +928,7 @@ def resolve(store, host, field, provider=None, context=None):
             choices += [{'id':'fact:'+k,'text':v['value'],'fact_key':k,'revision':v['revision']}
                         for k,v in store.facts().items() if k not in {'worked_outside_resume','contacts_outside_resume'}]
             draft=provider.context_answer(field,choices,{k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()},context) if choices else {}
+            draft_rejection=draft.get('rejected') or draft_rejection
             by_id={x['id']:x for x in choices};ids=draft.get('sentence_ids',[])
             if (isinstance(draft.get('answer'),str) and draft['answer'] and ids and len(ids)==len(set(ids))
                     and all(x in by_id for x in ids) and (not options or _listed_answer(field,draft['answer']))):
@@ -838,7 +939,7 @@ def resolve(store, host, field, provider=None, context=None):
                 if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
                 store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)
                 return {'field':field,**writing}
-            _abstain(store,context_abstention,'context_answer',label)
+            if not draft_rejection:_abstain(store,context_abstention,'context_answer',label)
         if template:
             value=re.sub(r'[\r\n]+',' ',template['body']).strip() if field.get('type')=='text' else template['body'];provenance={'template_id':template['id'],'revision':template['revision']}
         elif derived:
@@ -858,14 +959,17 @@ def resolve(store, host, field, provider=None, context=None):
                 value=hourly[1]
             value=present(key,value,field)
             provenance={'fact_key':key,'revision':fact['revision']}
-    if field.get('type')=='checkbox-group' and options and selection_limit(label) and selections(value,options):
+    if field.get('type')=='checkbox-group' and options and selections(value,options):
         # Exact choices for a question that states how many it wants.
         if not _listed_answer(field,value):raise Blocked('option_mismatch',label)
     elif field.get('type') in ('radio','select','combobox','checkbox','checkbox-group','yesno') and options:
         try:value=_option_value(key,value,options,context)
         except Blocked:
             mapped=_mapped_option(store,key,field,provider) if key and provenance.get('fact_key')==key else None
-            if mapped is None:raise Blocked('option_mismatch',label)
+            if mapped is None:
+                explicit=_explicit_context_answer(store,host,field,key,provider,context)
+                if explicit:return explicit
+                raise Blocked('option_mismatch',label)
             value=mapped;provenance={**provenance,'option_mapping':True}
     if field.get('maxlength',-1)>0 and len(value)>field['maxlength']:raise Blocked('answer_too_long',label)
     validate_numeric(value,field)

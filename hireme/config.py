@@ -139,11 +139,17 @@ FACTS = {
     "conflict_disclosures": "Have a conflict-of-interest disclosure for employers you apply to: relationships with their staff or vendors, outside business activity, investments over 5% or in their competitors/partners, or retained IP (Yes / No)",
     "government_official": "Within 5 years, a government official or holder of a prominent public function (PEP), referred by one, or closely related to one (Yes / No)",
     "demographic_data_consent": "Consent to employers storing/processing your voluntary demographic survey responses (Yes / No)",
+    "over_18": "Currently 18 or older (Yes / No)",
+    "fulltime_start": "Earliest permanent full-time start (YYYY-MM-DD)",
+    "nights_weekends": "Willing and able to work nights and weekends (Yes / No)",
+    "robots_experience": "Direct experience working with robots (Yes / No)",
+    "humanoids_experience": "Direct experience working with humanoid robots (Yes / No)",
 }
 REQUIRED = {"full_name", "first_name", "last_name", "email", "phone", "location", "graduation",
             "work_authorized_us", "needs_sponsorship", "us_person", "professional_years", "skills"}
 BOOLEANS = {"work_authorized_us", "needs_sponsorship", "us_person", "unrestricted_authorization",
             "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent", "temporary_work_authorization", "conflict_disclosures", "government_official", "demographic_data_consent"}
+BOOLEANS |= {'over_18','nights_weekends','robots_experience','humanoids_experience'}
 
 
 def validate_fact(key: str, value: str) -> str:
@@ -157,6 +163,12 @@ def validate_fact(key: str, value: str) -> str:
         raise ValueError("Answer exactly Yes or No")
     if key in {"graduation", "college_start", "earliest_start", "latest_start"} and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):
         raise ValueError("Use YYYY-MM")
+    if key=='fulltime_start':
+        from datetime import date
+        try:
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):raise ValueError
+            date.fromisoformat(value)
+        except ValueError:raise ValueError('Use a valid YYYY-MM-DD date') from None
     if key == "email" and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
         raise ValueError("Invalid email")
     if key == "professional_years" and (not re.fullmatch(r"\d+(?:\.\d+)?", value) or float(value) > 80):
