@@ -18,11 +18,16 @@ from hireme.store import Store
 from importlib.resources import files
 assert board_sources(Path.cwd(),limit=2)
 assert files('hireme').joinpath('static','index.html').is_file()
+assert files('hireme').joinpath('static','workspace.js').is_file()
+from hireme.platform_connections import list_connections
+from hireme.application_artifacts import library
 s=Store(Path.home()/'private')
 assert not s.settings()['live_enabled']
 assert s.settings()['provider_model']=='sonnet'
 assert not s.facts()
 assert s.missing_setup()
+assert all(not c['enabled'] and not c['discovery_enabled'] and not c['native_apply_enabled'] for c in list_connections(s))
+assert library(s)['total']==0
 s.close()
 print('Installed artifact: discovery, dashboard assets, private onboarding and conservative defaults passed')
 """

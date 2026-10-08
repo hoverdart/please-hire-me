@@ -535,7 +535,7 @@ def test_model_request_budget_counts_all_providers_without_replacing_connection_
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=providers]').click()
+            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=connections]').click()
             expect(page.locator('#model-request-usage')).to_contain_text('2 of 2 requests used today · 0 remaining · Daily cap reached')
             expect(page.locator('#model-request-reset')).to_contain_text(store.settings()['timezone'])
             expect(page.locator('#model-token-usage')).to_contain_text('Claude subscription / sonnet: 1 requests · 1 successful · 0 failed. 1,234 input tokens · 34 output tokens')
@@ -1346,7 +1346,7 @@ def test_essential_facts_optional_toggle_and_provider_fields(tmp_path):
             page.locator('#show-optional-facts').check()
             expect(page.locator('#facts-form [name=preferred_name]')).to_have_value('Saved in my draft')
             expect(page.locator('[data-draft-for=facts-form]')).to_contain_text('Unsaved changes')
-            page.locator('[data-view=providers]').click()
+            page.locator('[data-view=connections]').click()
             expect(page.locator('#provider-key-field')).to_be_hidden()
             page.locator('#provider-form [name=model_effort]').select_option('high')
             page.locator('#provider-form [name=model_escalation]').check()

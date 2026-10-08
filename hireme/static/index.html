@@ -3,15 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#f4f6f9" />
+    <meta name="theme-color" content="#f5f6f5" />
     <meta
       name="description"
       content="Your private application workspace. Find opportunities, keep track of applications, and move your search forward."
     />
-    <title>Application desk · Your next chapter</title>
+    <title>Application desk · Connected workspace</title>
     <link rel="stylesheet" href="/style.css" />
     <script src="/notes.js" defer></script>
     <script src="/app.js" defer></script>
+    <script src="/workspace.js" defer></script>
   </head>
   <body>
     <a class="skip" href="#main">Skip to workspace</a>
@@ -21,7 +22,7 @@
           ><span class="brand-mark" aria-hidden="true">a<span>↗</span></span
           ><span
             >application desk<span class="brand-caption"
-              >YOUR NEXT CHAPTER</span
+              >YOUR APPLICATION WORKSPACE</span
             ></span
           ></a
         >
@@ -29,35 +30,16 @@
           <span class="privacy-dot"></span> Private workspace
         </div>
         <nav aria-label="Workspace">
-          <p class="nav-label">YOUR WORKSPACE</p>
-          <button data-view="today" aria-current="page">
-            <span class="nav-icon" aria-hidden="true">▦</span>Overview
-          </button>
-          <button data-view="questions">
-            <span class="nav-icon" aria-hidden="true">◇</span>Needs you
-            <span id="question-count" class="nav-count"></span>
-          </button>
-          <p class="nav-label">MAKE IT YOURS</p>
-          <button data-view="profile">
-            <span class="nav-icon" aria-hidden="true">◎</span>Your facts
-          </button>
-          <button data-view="materials">
-            <span class="nav-icon" aria-hidden="true">▤</span>Writing &amp;
-            context
-          </button>
-          <button data-view="settings">
-            <span class="nav-icon" aria-hidden="true">≡</span>Preferences
-          </button>
-          <p class="nav-label">CONNECTIONS</p>
-          <button data-view="providers">
-            <span class="nav-icon" aria-hidden="true">⌘</span>Model connection
-          </button>
-          <button data-view="connections">
-            <span class="nav-icon" aria-hidden="true">✉</span>Email automation
-          </button>
-          <button data-view="setup">
-            <span class="nav-icon" aria-hidden="true">✦</span>Setup checklist
-          </button>
+          <button data-view="today" aria-current="page"><span class="nav-icon" data-icon="today"></span>Today</button>
+          <button data-view="opportunities"><span class="nav-icon" data-icon="jobs"></span>Jobs</button>
+          <button data-view="questions"><span class="nav-icon" data-icon="attention"></span>Needs you <span id="question-count" class="nav-count"></span></button>
+          <button data-view="materials"><span class="nav-icon" data-icon="materials"></span>Materials</button>
+          <button data-view="profile"><span class="nav-icon" data-icon="profile"></span>Profile</button>
+          <button data-view="connections"><span class="nav-icon" data-icon="connections"></span>Connections</button>
+          <div class="nav-utilities">
+            <button data-view="settings"><span class="nav-icon" data-icon="settings"></span>Preferences</button>
+            <button data-view="setup"><span class="nav-icon" data-icon="setup"></span>Setup</button>
+          </div>
         </nav>
         <div class="rail-footer">
           <div class="worker-indicator">
@@ -119,13 +101,13 @@
               aria-haspopup="dialog"
               aria-keyshortcuts="Control+k Meta+k"
             >
-              <span aria-hidden="true">⌕</span> Find a tool
+              <span class="nav-icon" data-icon="search" aria-hidden="true"></span> Find a tool
             </button>
           </div>
         </div>
         <header class="page-head">
           <div>
-            <p class="eyebrow" id="page-eyebrow">YOUR SEARCH, IN MOTION</p>
+            <span id="page-eyebrow" hidden></span>
             <h1 id="heading">Today’s applications</h1>
             <p id="subheading">Loading your application ledger…</p>
           </div>
@@ -147,7 +129,7 @@
           </p>
           <div class="setup-banner">
             <div>
-              <span class="eyebrow">A GOOD SEARCH STARTS WITH YOU</span>
+
               <h2>Your experience.<br />Your voice. Your next step.</h2>
               <p>
                 Give your desk the essentials. It takes care of the repetitive
@@ -156,7 +138,7 @@
             </div>
             <div class="setup-art" aria-hidden="true">
               <span class="art-sheet"
-                ><span>YOUR NEXT CHAPTER</span><i></i><i></i><i></i
+                ><span>YOUR APPLICATION WORKSPACE</span><i></i><i></i><i></i
                 ><b>↗</b></span
               ><span class="art-tag">Made for your ambitions.</span>
             </div>
@@ -190,8 +172,7 @@
         </section>
         <div id="guided-setup" class="section" hidden>
           <div class="guided-top">
-            <span class="eyebrow">SETTING UP YOUR DESK</span
-            ><span id="guided-progress-text" class="help"></span>
+            <span id="guided-progress-text" class="help"></span>
           </div>
           <progress
             id="guided-progress"
@@ -208,7 +189,10 @@
             </button>
           </div>
         </div>
+        <div id="worker-strip" class="worker-strip" role="region" aria-label="Worker controls"></div>
+        <section id="opportunities" class="view" hidden><div class="jobs-workspace"><div id="job-list-workspace"></div><aside id="job-detail-workspace" aria-label="Selected opportunity"><p class="detail-placeholder">Select a job to review its posting, materials and application record.</p></aside></div></section>
         <section id="today" class="view">
+          <div class="today-workspace"><section aria-labelledby="attention-title"><div class="section-head"><h2 id="attention-title">Next actions</h2><button id="open-attention" class="secondary">Review all</button></div><div id="today-attention"></div></section><section aria-labelledby="connection-health-title"><div class="section-head"><h2 id="connection-health-title">Connection health</h2><button id="open-connections" class="secondary">Manage</button></div><div id="today-connections"></div></section></div>
           <div class="overview-grid" aria-label="Application overview">
             <article class="metric metric-primary">
               <div class="metric-top">
@@ -226,7 +210,7 @@
             <button class="metric metric-attention" id="review-queue">
               <div class="metric-top">
                 <span>Needs your attention</span
-                ><span aria-hidden="true">◇</span>
+                >
               </div>
               <strong id="metric-attention">0</strong>
               <p id="metric-attention-help">You're all caught up</p>
@@ -236,7 +220,7 @@
             </button>
             <article class="metric">
               <div class="metric-top">
-                <span>Opportunities</span><span aria-hidden="true">▤</span>
+                <span>Opportunities</span>
               </div>
               <strong id="metric-opportunities">0</strong>
               <p>In your application ledger</p>
@@ -272,7 +256,7 @@
           <div class="ledger-panel">
             <div class="section-head">
               <div>
-                <p class="eyebrow">ONE OPPORTUNITY AT A TIME</p>
+
                 <h2>
                   Application ledger
                   <span id="ledger-count" class="count-pill">0</span>
@@ -288,8 +272,7 @@
             </div>
             <div class="ledger-toolbar">
               <label class="search-field"
-                ><span aria-hidden="true">⌕</span
-                ><input
+                ><span class="nav-icon" data-icon="search" aria-hidden="true"></span><input
                   id="job-search"
                   maxlength="200"
                   type="search"
@@ -324,6 +307,7 @@
                 </select></label
               >
             </div>
+            <div class="connection-filters"><label>Source<select id="connection-source"><option value="all">All sources</option><option value="handshake">Handshake</option><option value="workatastartup">Work at a Startup</option><option value="employer">Employer sources</option></select></label><label>Apply through<select id="connection-destination"><option value="all">All destinations</option><option value="native">Connected platforms</option><option value="external">Employer sites</option></select></label><label>Minimum fit<select id="connection-fit"><option value="0">Any fit</option><option value="50">50+</option><option value="70">70+</option><option value="90">90+</option></select></label></div>
             <p id="ledger-scope" class="help ledger-scope"></p>
             <details id="saved-views-panel" class="section">
               <summary>Save and reopen your filters</summary>
@@ -464,7 +448,7 @@
           </details>
           <div class="section-head">
             <div>
-              <p class="eyebrow">BEHIND THE SCENES</p>
+
               <h2>Recent batches</h2>
             </div>
             <span class="help">Your worker’s activity</span>
@@ -872,6 +856,7 @@
           </details>
         </section>
         <section id="profile" class="view" hidden>
+          <details class="section"><summary>Platform profile suggestions</summary><p class="help">Draft a profile from approved sources, then review and copy it yourself. Generating a suggestion uses your selected model and request allowance.</p><div class="actions"><button id="suggest-handshake" class="secondary">Draft Handshake profile</button><button id="suggest-workatastartup" class="secondary">Draft startup profile</button></div><p id="profile-suggestion-status" role="status"></p><textarea id="profile-suggestion" readonly rows="6" aria-label="Draft profile suggestion" hidden></textarea><button id="copy-profile-suggestion" class="secondary" hidden>Copy suggestion</button></details>
           <div class="section">
             <h2>Your resume</h2>
             <p id="resume-state">No resume imported.</p>
@@ -1083,6 +1068,8 @@
           </div>
         </section>
         <section id="materials" class="view" hidden>
+          <section class="section" aria-labelledby="generated-materials-title"><div class="section-head"><h2 id="generated-materials-title">Application materials</h2><button id="reload-artifacts" class="secondary">Refresh materials</button></div><p class="help">Introductions and response PDFs are saved per job. Earlier versions stay available in your history.</p><div id="artifact-library"></div><div class="actions"><button id="artifact-previous" class="secondary">Previous materials</button><span id="artifact-page" class="help" role="status"></span><button id="artifact-next" class="secondary">Next materials</button></div></section>
+          <h2 id="reusable-sources-title">Reusable sources</h2>
           <p class="intro">
             Give the model your writing, cover-letter examples and supporting
             context. Review the extracted text before it is used. Resume and
@@ -1167,6 +1154,9 @@
           ></div>
         </section>
         <section id="connections" class="view" hidden>
+          <p class="intro">Choose where your desk finds and applies to jobs. Each platform has its own sign-in and verified capabilities.</p>
+          <div id="platform-connections"></div>
+          <div class="section-head"><h2>Workspace services</h2><button data-view="providers" class="secondary">Model settings</button></div>
           <div class="section">
             <h2>Your Gmail connection</h2>
             <p id="gmail-state">Checking authorization…</p>
@@ -1505,7 +1495,7 @@
             </div>
           </div>
           <div class="section backup-tools">
-            <p class="eyebrow">KEEP YOUR HISTORY WITH YOU</p>
+
             <h2>Your data and backups</h2>
             <p class="intro">
               Download a consistent copy of your application history, confirmed
@@ -1556,7 +1546,7 @@
             </details>
           </div>
         </section>
-        <section id="providers" class="view" hidden>
+        <section id="providers" class="view" hidden><h2 id="model-connection-title" tabindex="-1">Model connection</h2>
           <p class="intro">
             Choose your connection explicitly. CLI subscriptions and API billing
             are separate. No inherited API keys are used.
@@ -1669,7 +1659,7 @@ claude auth login</pre
           </div>
         </section>
         <footer class="workspace-footer">
-          <span>Small steps. Real progress.</span
+          <span>Connected application workspace</span
           ><span>Application desk · Your private search workspace</span>
         </footer>
       </main>
@@ -1681,7 +1671,7 @@ claude auth login</pre
     >
       <header class="dialog-head">
         <div>
-          <p class="eyebrow">OPPORTUNITY DETAILS</p>
+
           <h2 id="job-dialog-title"></h2>
           <p id="job-dialog-company" class="help"></p>
         </div>
@@ -1726,6 +1716,9 @@ claude auth login</pre
           </p>
           <div id="opportunity-note-editor"></div>
         </details>
+        <section id="connected-job-context" class="section"></section>
+        <details id="job-writing-panel" class="section"><summary>Prepare application materials</summary><p class="help">Generate from approved sources using your selected model. Review the result before using it manually.</p><form id="artifact-form" class="form-grid"><label>Purpose<select name="kind"><option value="cover_letter">Grounded cover letter</option><option value="introduction">Company introduction</option><option value="supplemental_response">Supplemental response PDF</option></select></label><label class="wide">Employer prompt<textarea name="prompt" required maxlength="4000" rows="3"></textarea></label><button type="submit">Generate material</button></form><p id="artifact-status" role="status"></p><div id="job-artifacts"></div></details>
+        <details id="job-record-panel" class="section"><summary>Application record</summary><div id="job-record-evidence"></div></details>
         <h3>About the opportunity</h3>
         <p id="job-dialog-description" class="posting-description"></p>
         <div class="section">

@@ -4,11 +4,15 @@ A job application desk that runs on your computer—or a Raspberry Pi—and work
 
 ![Application desk: local navigation, daily progress and the opportunity ledger](docs/images/application-desk-demo.png)
 
-*Read-only demo with invented companies and application records. [Try the sample workspace](#try-a-sample-workspace) without importing personal information.*
+*Synthetic local workspace fixture; [screenshot provenance](docs/images/application-desk-demo.provenance.md). [Try the read-only sample workspace](#try-a-sample-workspace) without importing personal information.*
 
 This project began as a fork of [alecswang/please-hire-me](https://github.com/alecswang/please-hire-me). The original automation and discovery work provided the starting point. This fork grew from trying to make that workflow usable day after day: watching applications fail, distinguishing missing facts from poor context matching, and replacing fragile retries with a private ledger and explicit controls. The original MIT license and attribution remain.
 
 ## What changed
+
+- **Connected operations workspace:** Today, Jobs, Materials, Profile and Connections, with persistent worker controls and a single filtered job queue.
+- **Optional platform connections:** dedicated Handshake and Work at a Startup sign-in profiles, disabled by default. Automatic discovery and native applications require independent access and live-flow validation; neither is production-verified by this change. [Setup and capability evidence](docs/connected-workspace.md).
+- **Reusable materials and immutable drafts:** cover letters, company introductions and supplemental response PDFs, plus optional copyable profile suggestions.
 
 - **A setup flow for each applicant:** resume, optional transcript and cover-letter examples, confirmed facts, context, writing samples, job preferences, scheduling, and model connection.
 - **Better use of context:** high school and university are separate facts; eligible role/track choices can use confirmed skills. Writing can draw on approved personal sources, with style examples separated from factual evidence.

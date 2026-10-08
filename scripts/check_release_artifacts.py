@@ -7,7 +7,7 @@ def validate(names):
         path=PurePosixPath(name)
         if path.is_absolute() or '..' in path.parts:raise ValueError('Unsafe artifact member path')
         if re.search(r'(?:^|/)(?:\.env(?:\..*)?|ledger\.sqlite3(?:-.*)?|credentials\.json|token\.json|profile\.json|answers\.md|client_secret_[^/]+|[^/]+\.(?:pem|key))$',name,re.I):raise ValueError('Private file class in release artifact: '+name)
-        if any(p in {'applications','screenshots','browser','logs','state'} for p in path.parts):raise ValueError('Private storage directory in release artifact: '+name)
+        if any(p in {'applications','screenshots','browser','platform-browser','logs','state'} for p in path.parts):raise ValueError('Private storage directory in release artifact: '+name)
 
 for archive in sys.argv[1:]:
     if archive.endswith('.whl'):

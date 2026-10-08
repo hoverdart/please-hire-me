@@ -10,7 +10,7 @@ from .util import digest, now, Blocked
 
 FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stale_answer','answer_too_long','numeric_answer_needed','phone_country_review','model_budget_exhausted'}
 MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer','invalid_fields','invalid_single_line_answer','numeric_answer_out_of_range','repeated_entry_review','unsupported_widget'}
-DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed'}
+DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed','writing_link_unverified'}
 ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','account_fields_unavailable','captcha_blocked','account_or_verification_blocked','account_automation_disabled','account_result_uncertain','account_creation_held','account_credentials_unavailable','company_verification_pending','account_blocked','account_required','company_uncertain','email_verification_required','captcha','email_verification_failed'}
 TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output','writing_unsupported'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
@@ -39,6 +39,7 @@ ELIGIBILITY_INPUTS = {
 }
 
 def category(reason):
+    if reason.startswith('connection_') and reason != 'connection_identity_review':return 'connection'
     if reason in NOT_MATCH_REASONS or reason in ELIGIBILITY_REVIEWS:return 'eligibility'
     if reason in FACT_REASONS:return 'information'
     if reason in MAPPING_REASONS:return 'mapping'
@@ -52,6 +53,14 @@ def category(reason):
 def dependency(store, job, kind, reason=None):
     saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
     posting=json.loads(saved['payload']) if saved else job
+    if reason and reason.startswith('connection_'):
+        from .platform_connections import configuration,VERSION
+        connection_id=job.get('connection_id')
+        if connection_id:
+            return digest({'version':VERSION,'connection':configuration(store,connection_id),
+                'flows':[tuple(row) for row in store.db.execute('SELECT capability,version,signature,evidence,verified FROM connection_flows WHERE connection_id=? ORDER BY capability,signature',(connection_id,))],
+                'facts':store.facts(),'documents':[tuple(row) for row in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')],
+                'posting':posting.get('_listing_hash')})
     if kind=='eligibility':
         from .policy import ELIGIBILITY_VERSION
         fact_keys,setting_keys=ELIGIBILITY_INPUTS.get(reason,(
@@ -125,6 +134,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
     retries=previous['retry_count']+1 if previous and previous['dependency']==fingerprint else 0
     retry_at=(at or time.time())+(1800 if retries==0 else 7200) if kind=='transient' and retries<2 else None
     guidance={'eligibility':'Change relevant preferences or wait for a posting update.',
+        'connection':'Open Connections to restore sign-in or validate the affected platform flow. Enabling a setting alone cannot validate access.',
         'information':'Confirm the missing answer in Your facts or the question queue.',
         'mapping':'Review the exact employer choices. A corrected answer or mapping update releases this hold.',
         'documents':'Repair or update the approved document or writing source.',

@@ -9,7 +9,7 @@ SORTS = {'recent','fit','company'}
 
 
 def list_views(store):
-    return [dict(row) for row in store.db.execute('SELECT id,name,search,status,sort,updated FROM saved_views ORDER BY name_key,id')]
+    return [dict(row) for row in store.db.execute("SELECT v.id,v.name,v.search,v.status,v.sort,v.updated,COALESCE(c.source,'all') source,COALESCE(c.destination,'all') destination,COALESCE(c.min_fit,0) min_fit FROM saved_views v LEFT JOIN saved_view_connections c ON c.view_id=v.id ORDER BY v.name_key,v.id")]
 
 
 def _filters(data):
@@ -33,7 +33,12 @@ def change_view(store, data):
     else:
         key = data.get('id')
         if not isinstance(key, str) or not re.fullmatch(r'[a-f0-9]{32}', key): raise ValueError('Choose an existing saved view')
-    if action != 'delete': filters = _filters(data)
+    if action != 'delete':
+        filters = _filters(data)
+        from .platform_connections import PLATFORMS
+        source,destination,min_fit=data.get('source','all'),data.get('destination','all'),data.get('min_fit',0)
+        if not isinstance(source,str) or source not in {'all','employer',*PLATFORMS} or not isinstance(destination,str) or destination not in {'all','native','external'} or type(min_fit) is not int or not 0<=min_fit<=100:
+            raise ValueError('Choose valid connection filters and a fit score from 0 to 100')
     with store.transaction():
         if action == 'save':
             if store.db.execute('SELECT 1 FROM saved_views WHERE name_key=?', (name.casefold(),)).fetchone():
@@ -44,7 +49,10 @@ def change_view(store, data):
             store.db.execute('INSERT INTO saved_views VALUES(?,?,?,?,?,?,?,?)', (key,name,name.casefold(),*filters,now(),now()))
         else:
             if not store.db.execute('SELECT 1 FROM saved_views WHERE id=?', (key,)).fetchone(): raise ValueError('This saved view is no longer available. Refresh the desk and try again.')
-            if action == 'delete': store.db.execute('DELETE FROM saved_views WHERE id=?', (key,))
+            if action == 'delete':
+                store.db.execute('DELETE FROM saved_view_connections WHERE view_id=?',(key,))
+                store.db.execute('DELETE FROM saved_views WHERE id=?', (key,))
             else: store.db.execute('UPDATE saved_views SET search=?,status=?,sort=?,updated=? WHERE id=?', (*filters,now(),key))
+        if action != 'delete':store.db.execute('INSERT OR REPLACE INTO saved_view_connections VALUES(?,?,?,?)',(key,source,destination,min_fit))
         store.event('saved_view_'+action, key, {})
     return {'views': list_views(store)}

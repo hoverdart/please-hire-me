@@ -50,8 +50,8 @@ def _manifest(data):
 
 def _validate_references(store):
     validated=set()
-    def document(h,name,directory):
-        suffix=r'\.pdf' if directory=='documents' else r'\.(?:pdf|docx|pptx|txt|md)'
+    def document(h,name,directory,text_only=False):
+        suffix=r'\.txt' if text_only else r'\.pdf' if directory=='documents' else r'\.(?:pdf|docx|pptx|txt|md)'
         if not isinstance(h,str) or not isinstance(name,str) or not re.fullmatch(r'[a-f0-9]{64}',h) or not re.fullmatch(re.escape(h)+suffix,name):raise ValueError('Invalid document reference in ledger')
         reference=(directory,h,name)
         if reference in validated:return
@@ -63,6 +63,8 @@ def _validate_references(store):
     for table,directory in (('documents','documents'),('generated_documents','documents'),('materials','materials')):
         for row in store.db.execute('SELECT hash,filename FROM '+table):
             document(*row,directory)
+    for row in store.db.execute('SELECT hash,filename,kind FROM application_artifacts'):
+        document(row['hash'],row['filename'],'documents',text_only=row['kind'] in {'introduction','profile_suggestion'})
     for app in store.db.execute('SELECT package,screenshot FROM applications'):
         # Preserve damaged/legacy package text for recovery. Readable references
         # still must resolve, even after the current upload was replaced/withdrawn.
@@ -104,7 +106,7 @@ def create_backup(store, destination: Path):
                         archive.writestr(name,data)
                     add('ledger.sqlite3',ledger.read_bytes())
                     for directory, pattern in (
-                        ('documents',r'[a-f0-9]{64}\.pdf'),
+                        ('documents',r'[a-f0-9]{64}\.(?:pdf|txt)'),
                         ('materials',r'[a-f0-9]{64}\.(?:pdf|docx|pptx|txt|md)'),
                         ('screenshots',r'[a-f0-9]{64}-(?:before|after|verified)\.jpg')):
                         parent=store.root/directory
@@ -148,7 +150,7 @@ def restore_backup(archive_path: Path, destination: Path):
             for name,info in manifest['files'].items():
                 p=PurePosixPath(name)
                 approved = name=='ledger.sqlite3' or bool(re.fullmatch(
-                    r'(?:documents/[a-f0-9]{64}\.pdf|materials/[a-f0-9]{64}\.(?:pdf|docx|pptx|txt|md)|screenshots/[a-f0-9]{64}-(?:before|after|verified)\.jpg)',name))
+                    r'(?:documents/[a-f0-9]{64}\.(?:pdf|txt)|materials/[a-f0-9]{64}\.(?:pdf|docx|pptx|txt|md)|screenshots/[a-f0-9]{64}-(?:before|after|verified)\.jpg)',name))
                 if p.is_absolute() or '..' in p.parts or not approved:
                     raise ValueError('Unapproved backup member')
                 if archive.getinfo(name).file_size>(MAX_LEDGER if name=='ledger.sqlite3' else MAX_MEMBER):
@@ -178,6 +180,8 @@ def restore_backup(archive_path: Path, destination: Path):
         try:
             _validate_references(restored)
             restored.update_settings({'live_enabled':False});restored.recover();restored.export_config()
+            restored.db.execute("UPDATE platform_connections SET enabled=0,discovery_enabled=0,native_apply_enabled=0,session_state='not_connected',detail='Sign in and validate this connection on the restored worker machine.'")
+            restored.db.execute('DELETE FROM platform_documents')
         finally:restored.close()
         if destination.exists():raise ValueError('Restore destination appeared concurrently')
         os.rename(staging,destination)

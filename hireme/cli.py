@@ -51,6 +51,9 @@ def main(argv=None):
     sub.add_parser('recover',help='Recover interrupted worker records and remain paused')
     p=sub.add_parser('retry-not-submitted');p.add_argument('application_id');p.add_argument('--note',required=True)
     p=sub.add_parser('login');p.add_argument('url')
+    p=sub.add_parser('connection',help='Manage an optional job-platform connection on this machine')
+    p.add_argument('platform',choices=['handshake','workatastartup'])
+    p.add_argument('action',choices=['connect','status','disconnect','discover'])
     p=sub.add_parser('import-legacy');p.add_argument('path',type=Path,default=REPO,nargs='?')
     args=parser.parse_args(argv)
     os.umask(0o077)
@@ -207,6 +210,14 @@ def main(argv=None):
                 print('Sign in yourself in the dedicated browser. Press Enter here when finished.')
                 input();ctx.close()
             store.update_settings({'signed_in_portals':sorted(set(store.settings()['signed_in_portals'])|{host})})
+        elif args.command=='connection':
+            from . import platform_connections as pc
+            if args.action=='status':result=pc.status(store,args.platform)
+            elif args.action=='discover':
+                with worker_lock(store.root),worker_lock(store.root,'browser'):
+                    result=pc.discover(store,args.platform)
+            else:result=getattr(pc,args.action)(store,args.platform)
+            print(json.dumps(result,indent=2))
         elif args.command=='import-legacy':
             # Legacy personal profile is a proposal. Historical application records block resubmission.
             from .migration import import_legacy

@@ -124,8 +124,9 @@ class Browser:
     def __enter__(self):
         from playwright.sync_api import sync_playwright
         self.playwright=sync_playwright().start()
-        s=self.store.settings(); profile=private_dir(self.store.root/"browser")
+        s=self.store.settings(); profile=getattr(self,'profile_directory',None) or private_dir(self.store.root/"browser")
         kwargs={"headless":s["headless"],"accept_downloads":False,"service_workers":"block"}
+        if getattr(self,'interactive',False):kwargs['headless']=False
         if s["browser_channel"]=="chrome": kwargs["channel"]="chrome"
         elif s["browser_channel"]=="system-chromium":
             executable=shutil.which('chromium') or shutil.which('chromium-browser')
@@ -140,7 +141,8 @@ class Browser:
         self.page=self.context.pages[0] if self.context.pages else self.context.new_page()
         for p in self.context.pages:
             if p!=self.page:p.close()
-        self.context.on("page",lambda p:p.close() if p!=self.page else None)
+        self._popup_handler=lambda p:p.close() if p!=self.page else None
+        self.context.on("page",self._popup_handler)
         self.page.on("response",self._upload_response)
         self.page.on("dialog",lambda d:d.dismiss())
         self.page.on("download",lambda d:d.cancel())

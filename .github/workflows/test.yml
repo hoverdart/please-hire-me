@@ -25,6 +25,7 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - run: python -m pytest -q
       - run: node --check hireme/static/app.js
+      - run: node --check hireme/static/workspace.js
       - run: for file in run.sh setup.sh scripts/*.sh; do bash -n "$file"; done
       - run: python -m pip install build
       - run: python -m build

@@ -85,7 +85,8 @@ def export_csv(store):
     return output.getvalue().encode('utf-8-sig')
 
 
-def search_jobs(store, search='', status='all', sort='recent', offset=0, limit=50, include_packages=True):
+def search_jobs(store, search='', status='all', sort='recent', offset=0, limit=50, include_packages=True,
+                source='all', destination='all', min_fit=0):
     """Search the complete ledger with bounded pages and exact display-status semantics."""
     from .presentation import NOT_MATCH_REASONS, WAIT_REASONS
     if not isinstance(search, str) or len(search) > 200:
@@ -106,6 +107,20 @@ def search_jobs(store, search='', status='all', sort='recent', offset=0, limit=5
     if status not in allowed:
         raise ValueError('Unknown opportunity status')
     clauses = []; parameters = []
+    from .platform_connections import PLATFORMS
+    if source not in {'all','employer',*PLATFORMS}:raise ValueError('Choose a job source')
+    if destination not in {'all','native','external'}:raise ValueError('Choose an application destination')
+    if type(min_fit) is not int or not 0<=min_fit<=100:raise ValueError('Minimum fit must be between 0 and 100')
+    if source in PLATFORMS:
+        clauses.append('(j.source=? OR EXISTS(SELECT 1 FROM job_origins o WHERE o.job_id=j.id AND o.connection_id=?))')
+        parameters.extend([source,source])
+    elif source=='employer':
+        clauses.append('j.source NOT IN (?,?) AND NOT EXISTS(SELECT 1 FROM job_origins o WHERE o.job_id=j.id)')
+        parameters.extend(PLATFORMS)
+    if destination!='all':
+        clauses.append('j.host '+('IN' if destination=='native' else 'NOT IN')+' (?,?)')
+        parameters.extend(spec['host'] for spec in PLATFORMS.values())
+    if min_fit:clauses.append('j.score>=?');parameters.append(min_fit)
     code = "TRIM(SUBSTR(j.reason,1,CASE WHEN INSTR(j.reason,':')>0 THEN INSTR(j.reason,':')-1 ELSE LENGTH(j.reason) END))"
     if status in ('blocked', 'not_match', 'waiting'):
         reasons = sorted(QUIET_REASONS if status == 'blocked' else NOT_MATCH_REASONS if status == 'not_match' else WAIT_REASONS)
@@ -135,6 +150,8 @@ def search_jobs(store, search='', status='all', sort='recent', offset=0, limit=5
     jobs = annotate_companies(store, jobs)
     from .job_holds import annotate
     jobs = annotate(store, jobs)
+    from .platform_connections import annotate_jobs
+    jobs = annotate_jobs(store,jobs)
     applications = []
     if jobs:
         from .store import APPLICATION_METADATA

@@ -10,13 +10,12 @@ from urllib.parse import parse_qs,urlsplit,unquote
 
 from .config import BOOLEANS,FACTS,REQUIRED
 from .store import Store
-from .util import private_dir,atomic_json
+from .util import private_dir,atomic_json,Blocked
 
 MAX_BODY=21*1024*1024
 
 
 def _action_failure(error, discovery_only=False):
-    from .util import Blocked
     if isinstance(error, Blocked) and error.reason == 'paused': return None
     if isinstance(error, Blocked) and error.reason == 'cycle_timeout':
         return 'Your last batch reached its time budget. Completed progress is saved. You can adjust the time budget in Preferences before starting another batch.'
@@ -121,9 +120,9 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
         def do_GET(self):
             path=urlsplit(self.path).path
             if not self._valid_host():return self.send(403,{'error':'Invalid host'})
-            if path in ('/','/app.js','/notes.js','/style.css'):
-                name={'/':'index.html','/app.js':'app.js','/notes.js':'notes.js','/style.css':'style.css'}[path]
-                return self.send(200,(assets/name).read_bytes(),{'/':'text/html; charset=utf-8','/app.js':'text/javascript','/notes.js':'text/javascript','/style.css':'text/css'}[path])
+            if path in ('/','/app.js','/notes.js','/workspace.js','/style.css'):
+                name={'/':'index.html','/app.js':'app.js','/notes.js':'notes.js','/workspace.js':'workspace.js','/style.css':'style.css'}[path]
+                return self.send(200,(assets/name).read_bytes(),'text/html; charset=utf-8' if path=='/' else 'text/css' if path=='/style.css' else 'text/javascript')
             if not self._auth():return self.send(403,{'error':'Open the dashboard URL printed by hireme dashboard'})
             store=Store(root)
             try:
@@ -149,6 +148,9 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                     snapshot['jobs']=annotate_companies(store,snapshot['jobs'])
                     from .job_holds import annotate
                     snapshot['jobs']=annotate(store,snapshot['jobs'])
+                    from .platform_connections import list_connections,annotate_jobs
+                    snapshot['platform_connections']=list_connections(store)
+                    snapshot['jobs']=annotate_jobs(store,snapshot['jobs'])
                     from .coverage import cycle_funnel
                     snapshot['cycle_funnel']=cycle_funnel(store)
                     snapshot['demo']=demo
@@ -166,6 +168,21 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                 if path=='/api/coverage':
                     from .coverage import coverage
                     return self.send(200,coverage(store))
+                if path=='/api/connections':
+                    from .platform_connections import list_connections
+                    return self.send(200,{'connections':list_connections(store)})
+                if path=='/api/artifacts':
+                    from .application_artifacts import library
+                    query=parse_qs(urlsplit(self.path).query)
+                    try:return self.send(200,library(store,query.get('job_id',[None])[0],int(query.get('offset',['0'])[0])))
+                    except ValueError as error:return self.send(400,{'error':str(error)})
+                if path.startswith('/api/artifact-document/'):
+                    from .application_artifacts import download
+                    parts=path[len('/api/artifact-document/'):].split('/')
+                    if len(parts)!=2:return self.send(400,{'error':'Choose a response PDF'})
+                    try:content,name=download(store,parts[0],parts[1])
+                    except ValueError as error:return self.send(400,{'error':str(error)})
+                    return self.send(200,content,'application/pdf',download=name)
                 if path=='/api/diagnostics':
                     from .doctor import dashboard_diagnostics
                     return self.send(200,dashboard_diagnostics(store,demo=demo))
@@ -178,7 +195,8 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                     query=parse_qs(urlsplit(self.path).query)
                     try:
                         result=search_jobs(store,search=query.get('search',[''])[0],status=query.get('status',['all'])[0],
-                            sort=query.get('sort',['recent'])[0],offset=int(query.get('offset',['0'])[0]),include_packages=False)
+                            sort=query.get('sort',['recent'])[0],offset=int(query.get('offset',['0'])[0]),include_packages=False,
+                            source=query.get('source',['all'])[0],destination=query.get('destination',['all'])[0],min_fit=int(query.get('min_fit',['0'])[0]))
                     except ValueError as error:return self.send(400,{'error':str(error)})
                     return self.send(200,result)
                 if path=='/api/accounts':
@@ -295,9 +313,44 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                         result=preview_postings(store,raw) if path.endswith('-preview') else import_postings(store,raw,self.headers.get('X-Import-Hash',''))
                         return self.send(200,result)
                     data=json.loads(raw)
+                    if path.startswith('/api/connections/'):
+                        if not isinstance(data,dict):raise ValueError('Provide a connection action object')
+                        from . import platform_connections as pc
+                        parts=path[len('/api/connections/'):].split('/')
+                        if len(parts)!=2:return self.send(400,{'error':'Choose a connection and action'})
+                        connection_id,action=parts;pc.platform(connection_id)
+                        if action=='configure':result=pc.configure(store,connection_id,data)
+                        elif action=='connect':result=pc.start_connect(store,connection_id)
+                        elif action=='check':result=pc.check(store,connection_id)
+                        elif action=='disconnect':result=pc.disconnect(store,connection_id)
+                        elif action=='discover':
+                            from .store import worker_lock
+                            with worker_lock(store.root),worker_lock(store.root,'browser'):result=pc.discover(store,connection_id)
+                        elif action=='import':
+                            if not isinstance(data,dict) or set(data)-{'url','company','title','location','description'}:raise ValueError('Provide a job link and posting details')
+                            if pc.platform_listing(data.get('url',''))[0]!=connection_id:raise ValueError('The job link belongs to another platform')
+                            result={'id':pc.import_listing(store,**data)}
+                        elif action=='profile-suggestion':
+                            from .application_artifacts import generate
+                            from .store import worker_lock
+                            job={'id':'profile:'+connection_id,'url':pc.platform(connection_id)['login_url'],'host':pc.platform(connection_id)['host'],
+                                 'company':pc.platform(connection_id)['name'],'title':'Candidate profile','description':'A concise professional profile using only confirmed applicant sources.'}
+                            with worker_lock(store.root):result=generate(store,job,'profile_suggestion','Tell us about yourself: write a concise professional profile using my confirmed experience and approved sources.')
+                        else:return self.send(404,{'error':'Unknown connection action'})
+                        return self.send(200,result)
+                    if path=='/api/artifacts/generate':
+                        if not isinstance(data,dict) or set(data)-{'job_id','kind','prompt'}:raise ValueError('Provide a saved job and material purpose')
+                        from .application_artifacts import generate
+                        from .store import worker_lock
+                        if not isinstance(data.get('job_id'),str):raise ValueError('Choose a saved job first')
+                        row=store.db.execute('SELECT payload FROM jobs WHERE id=?',(data['job_id'],)).fetchone()
+                        if not row:raise ValueError('Choose a saved job first')
+                        job=json.loads(row['payload'])
+                        if data.get('kind')=='profile_suggestion':raise ValueError('Use the profile suggestion action')
+                        with worker_lock(store.root):result=generate(store,job,data.get('kind'),data.get('prompt'))
+                        return self.send(200,result)
                     if path=='/api/account-credentials':
                         from .accounts import AccountVault
-                        from .util import Blocked
                         if not isinstance(data,dict):raise ValueError('Provide employer-scoped credentials')
                         try:
                             result=AccountVault(store).save_supplied(data.get('origin'),data.get('company'),data.get('email'),data.get('password'),data.get('confirmation'))
@@ -328,7 +381,6 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                         result=readiness(store,verify=True)
                     elif path=='/api/transcript-withdraw':
                         from .document_controls import withdraw_transcript
-                        from .util import Blocked
                         try:result=withdraw_transcript(store)
                         except Blocked:return self.send(409,{'error':'Wait for the active batch to finish before withdrawing your transcript.'})
                     elif path=='/api/remove-provider-key':
@@ -353,7 +405,6 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                     elif path=='/api/backup':
                         import tempfile
                         from .backup import create_backup
-                        from .util import Blocked
                         with state['lock']:
                             if state['running']:raise ValueError('Wait for the active batch to finish before downloading a backup')
                         with tempfile.TemporaryDirectory(prefix='hireme-backup-') as directory:
@@ -381,7 +432,6 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                         with state['lock']:
                             if state['running']:raise ValueError('A batch is still running. Pause it and wait before recovering interrupted work.')
                         from .recovery import recover_interrupted
-                        from .util import Blocked
                         try:result=recover_interrupted(store)
                         except Blocked as error:
                             if error.reason=='worker_busy':raise ValueError('A batch is still running. Pause it and wait before recovering interrupted work.') from None
@@ -390,7 +440,6 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                         with state['lock']:
                             if state['running']:raise ValueError('Wait for the current batch to finish before changing its schedule.')
                         from .scheduler import apply_saved_interval
-                        from .util import Blocked
                         try:result=apply_saved_interval(store,repo)
                         except Blocked as error:
                             if error.reason=='worker_busy':raise ValueError('Wait for the current batch to finish before changing its schedule.') from None
@@ -425,7 +474,6 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                         store.reconcile(data['id'],data['submitted'],data['note']);result={'saved':True}
                     elif path=='/api/account-confirm':
                         from .accounts import AccountVault
-                        from .util import Blocked
                         try:AccountVault(store).reconcile(data['id'],data['note'])
                         except Blocked as e:return self.send(409,{'error':e.reason})
                         result={'saved':True}
@@ -438,7 +486,6 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                     elif path=='/api/recheck':
                         from .job_holds import recheck
                         from .store import worker_lock
-                        from .util import Blocked
                         try:
                             with worker_lock(store.root),store.transaction():result=recheck(store,data['job_id'])
                         except Blocked as error:
@@ -447,9 +494,13 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                     elif path=='/api/job-decision':
                         store.decide_job(data['id'],data['decision']);result={'saved':True}
                     elif path=='/api/job':
-                        from .discovery import posting
-                        job=posting(data['url'],data['company'],data['title'],data['location'],'user',data.get('description',''))
-                        result={'id':store.upsert_job(job)}
+                        from .platform_connections import platform_listing,import_listing
+                        try:platform_listing(data['url'])
+                        except ValueError:
+                            from .discovery import posting
+                            job=posting(data['url'],data['company'],data['title'],data['location'],'user',data.get('description',''))
+                            result={'id':store.upsert_job(job)}
+                        else:result={'id':import_listing(store,data['url'],data['company'],data['title'],data['location'],data.get('description',''))}
                     elif path=='/api/run':
                         start_cycle();result={'started':True}
                     elif path=='/api/prepare':
@@ -460,6 +511,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
                     return self.send(200,result)
                 finally:store.close()
             except (ValueError,KeyError,TypeError) as e:return self.send(400,{'error':str(e)})
+            except Blocked as e:return self.send(409,{'error':str(e)})
             except Exception as e:return self.send(500,{'error':type(e).__name__})
     server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     url=f'http://127.0.0.1:{port}/#token={token}'

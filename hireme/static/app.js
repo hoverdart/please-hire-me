@@ -448,7 +448,11 @@ $("#account-import-form").onsubmit = async (event) => {
 };
 
 function show(name) {
+  const modelRoute = name === "providers";
+  if (modelRoute) name = "connections";
+  if (window.connectedWorkspace) window.connectedWorkspace.placeLedger(name);
   view = name;
+  if(name === "materials") window.connectedWorkspace?.loadArtifacts();
   if (name === "settings" && state && !scheduleLoaded) loadSchedule();
   if (name === "questions" && state) {
     loadAccountLedger();
@@ -478,10 +482,11 @@ function show(name) {
     setup: "Make it yours",
     providers: "Your model connection",
     today: "Today’s applications",
+    opportunities: "Jobs",
     questions: "A few things need you",
     profile: "Your verified facts",
-    materials: "Your writing and context",
-    connections: "Email automation",
+    materials: "Materials",
+    connections: "Connections",
     settings: "Your search preferences",
   }[name];
   $("#subheading").textContent = {
@@ -492,10 +497,11 @@ function show(name) {
     profile: "Saved once, reused across applications. Unknown means unknown.",
     materials:
       "Reviewed sources guide the voice and facts in your applications.",
-    connections:
-      "Verification codes and batch reports for your application email.",
+    opportunities: "One queue across your connected platforms and employer sites.",
+    connections: "Job platforms, model providers and email for your private workspace.",
     settings: "Choose your search boundaries. Throughput never overrides them.",
   }[name];
+  if(modelRoute) { $("#model-connection-title").scrollIntoView({block:"start"}); $("#model-connection-title").focus({preventScroll:true}); }
 }
 const toolDestinations = [
   {
@@ -852,10 +858,9 @@ function date(v) {
       })
     : "—";
 }
-function empty(parent, text, title = "Nothing here yet", symbol = "◇") {
+function empty(parent, text, title = "Nothing here yet") {
   const box = el("div", undefined, "empty");
   box.append(
-    el("span", symbol, "empty-symbol"),
     el("strong", title),
     el("p", text),
   );
@@ -898,6 +903,9 @@ async function loadLedger(reset = false) {
     status: $("#status-filter").value,
     sort: $("#job-sort").value,
     offset: String(ledgerOffset),
+    source: $("#connection-source")?.value || "all",
+    destination: $("#connection-destination")?.value || "all",
+    min_fit: $("#connection-fit")?.value || "0",
   });
   $("#jobs").setAttribute("aria-busy", "true");
   $("#ledger-previous").disabled = true;
@@ -940,6 +948,9 @@ function currentViewFilters() {
     search: $("#job-search").value,
     status: $("#status-filter").value,
     sort: $("#job-sort").value,
+    source: $("#connection-source").value,
+    destination: $("#connection-destination").value,
+    min_fit: Number($("#connection-fit").value),
   };
 }
 function renderSavedViews() {
@@ -1066,11 +1077,17 @@ async function openSavedView(item, button) {
     $("#job-search").value = item.search;
     $("#status-filter").value = item.status;
     $("#job-sort").value = item.sort;
+    $("#connection-source").value = item.source || "all";
+    $("#connection-destination").value = item.destination || "all";
+    $("#connection-fit").value = String(item.min_fit || 0);
     const loaded = await loadLedger(true);
     if (loaded === false) {
       $("#job-search").value = previous.search;
       $("#status-filter").value = previous.status;
       $("#job-sort").value = previous.sort;
+      $("#connection-source").value = previous.source;
+      $("#connection-destination").value = previous.destination;
+      $("#connection-fit").value = String(previous.min_fit);
       ledgerOffset = previous.offset;
       renderLedger();
       savedViewFeedback(
@@ -1114,7 +1131,6 @@ function renderLedger() {
       parent,
       "Your saved opportunities are on their way.",
       "Loading your ledger",
-      "↻",
     );
     return;
   }
@@ -1147,6 +1163,7 @@ async function loadEvidence(app, parent) {
   if (parent.dataset.loading === "true" || parent.dataset.loaded === "true")
     return;
   parent.dataset.loading = "true";
+  parent.dataset.applicationId = app.id;
   parent.setAttribute("aria-busy", "true");
   parent.replaceChildren(el("p", "Loading recorded answers…", "help"));
   const key = evidenceKey(app);
@@ -1166,12 +1183,12 @@ async function loadEvidence(app, parent) {
         evidenceCache.delete(evidenceCache.keys().next().value);
     }
     const record = await evidenceCache.get(key);
-    if (!parent.isConnected) return;
+    if (!parent.isConnected || parent.dataset.applicationId !== app.id) return;
     renderEvidence(record, parent);
     parent.dataset.loaded = "true";
   } catch (error) {
     evidenceCache.delete(key);
-    if (!parent.isConnected) return;
+    if (!parent.isConnected || parent.dataset.applicationId !== app.id) return;
     const message = el(
         "p",
         `Recorded evidence could not be loaded: ${error.message}`,
@@ -1183,8 +1200,7 @@ async function loadEvidence(app, parent) {
     retry.onclick = () => loadEvidence(app, parent);
     parent.replaceChildren(message, retry);
   } finally {
-    delete parent.dataset.loading;
-    parent.removeAttribute("aria-busy");
+    if(parent.dataset.applicationId === app.id) { delete parent.dataset.loading; parent.removeAttribute("aria-busy"); }
   }
 }
 
@@ -1289,6 +1305,7 @@ function renderEvidence(app, parent) {
         resume: "resume",
         transcript: "transcript",
         cover_letter: "cover letter",
+        supplemental_response: "response PDF",
       };
       if (
         !attachment ||
@@ -1327,6 +1344,11 @@ function renderEvidence(app, parent) {
       documents.append(row);
     });
     parent.append(documents);
+  }
+  if (app.connection_receipt) {
+    const receipt = el("details");
+    receipt.append(el("summary", "Platform acknowledgement"),el("pre", app.connection_receipt.receipt));
+    parent.append(receipt);
   }
   if (app.screenshot) {
     const button = el("button", "View confirmation", "secondary"),
@@ -2837,7 +2859,6 @@ function renderRuns() {
       parent,
       "Finish your setup and start a batch. This is where you’ll see what ran and how it went.",
       "Your desk is ready for its first batch",
-      "↻",
     );
     return;
   }
@@ -3041,6 +3062,7 @@ function render() {
         dayFormatter.format(new Date(application.attempted)) === today,
     ).length;
   renderOverview(submitted);
+  window.connectedWorkspace?.render(state);
   renderCycleFunnel();
   $("#daily-progress").textContent =
     submitted >= state.settings.target_per_day
@@ -4918,7 +4940,9 @@ document.addEventListener("input", (event) => {
   }
 });
 
+let opportunityOrigin = null;
 function openOpportunity(job) {
+  opportunityOrigin = document.activeElement;
   const payload = jobPayload(job),
     dialog = $("#job-dialog");
   dialog.dataset.jobId = job.id;
@@ -4983,8 +5007,14 @@ function openOpportunity(job) {
   if (!official.hidden) official.href = job.url;
   else official.removeAttribute("href");
   $("#job-dialog-demo").hidden = !state.demo;
-  document.body.classList.add("dialog-open");
-  dialog.showModal();
+  window.connectedWorkspace?.openJob(job);
+  show("opportunities");
+  if (matchMedia("(max-width: 900px)").matches) {
+    document.body.classList.add("dialog-open");
+    dialog.showModal();
+  } else {
+    if (!dialog.open) dialog.show();
+  }
 }
 $("#check-saved-posting").onclick = async () => {
   const dialog = $("#job-dialog"),
@@ -5064,9 +5094,10 @@ $("#job-dialog").addEventListener("click", (event) => {
     event.currentTarget.close();
 });
 
-$("#job-dialog").addEventListener("close", () =>
-  document.body.classList.toggle("dialog-open", $("#tool-dialog").open),
-);
+$("#job-dialog").addEventListener("close", () => {
+  document.body.classList.toggle("dialog-open", $("#tool-dialog").open);
+  if(opportunityOrigin?.isConnected && opportunityOrigin.getClientRects().length) opportunityOrigin.focus({preventScroll:true});
+});
 
 let backupCheckBusy = false;
 $("#backup-check-file").onchange = () => {

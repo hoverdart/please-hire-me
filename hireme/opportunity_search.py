@@ -37,6 +37,13 @@ def find_opportunities(store, repo, deadline_seconds=300, requested_generation=N
             remaining = deadline - time.monotonic()
             if remaining > 0:
                 sweep_boards(store, repo, deadline_seconds=remaining)
+            if remaining > 0:
+                from .platform_connections import sweep_connections
+                store.run_deadline = deadline
+                try:sweep_connections(store)
+                except Blocked as error:
+                    if error.reason != 'cycle_timeout':raise
+                finally:store.run_deadline = None
             store.checkpoint()
             added = store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] - before
             detail = {'mode': 'discovery', 'added': added, 'submissions': 0,
@@ -56,3 +63,4 @@ def find_opportunities(store, repo, deadline_seconds=300, requested_generation=N
         finally:
             store.discovery_generation = None
             store.discovery_results = None
+            store.run_deadline = None

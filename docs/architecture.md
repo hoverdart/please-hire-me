@@ -71,3 +71,12 @@ New semantic bindings use `field_bindings_v2`, fingerprinted by ATS, employer, r
 `job_holds` separates missing information, mapping/document repair, eligibility, account tasks, unsupported flows, transient failures and unclassified review. Relevant dependency changes release repair holds. A stable discovery fingerprint distinguishes real posting updates from the extra navigation and form text captured by the browser. Document availability and modification time also release repaired-file holds even when the approved hash stays the same. Only failed initial read navigation receives two delayed retries (30 minutes then two hours); terminal and uncertain application states remain excluded. Recheck performs policy validation under the worker lock and cannot authorize another submission.
 
 The authenticated coverage endpoint distinguishes configured discovery sources from supported single-step application forms. Workday discovery does not imply an application adapter. Cycle counts distinguish screening exclusions from browser-attempted failures. Live reports retain attempted-only links.
+
+
+## Connected workspace and platform boundaries
+
+`platform_connections.py` owns optional platform configuration, dedicated-profile bindings, independently versioned capability evidence, sequential discovery and listing-origin identity. `platform_browser.py` dispatches native jobs and narrowly reviewed read/write operations; employer destinations use the existing adapter. No production native flow evidence ships with this change. The fixture request protocol must not be mistaken for a verified Handshake or Work at a Startup transport. Sign-in and native settings cannot bypass this gate.
+
+Exact canonical employer requisitions retain all platform origins. Conflicting identities retain their proposed listing/destination and require review, preserving existing IDs and immutable outcomes. `application_artifacts.py` indexes content-addressed cover letters, introductions, narrative PDFs and copyable profile suggestions with source-bound revisions. Past package downloads validate historical bytes; preparation validates current sources. Private remote-document handles bind exact document hashes and never replace old uploads. Durable submission intent and uncertain-outcome recovery remain authoritative.
+
+See [connected workspace](connected-workspace.md) for CLI/API contracts, access restrictions and the capability-specific fixture, dedicated-profile, Pi and submission evidence matrix.

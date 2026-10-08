@@ -80,6 +80,8 @@ def generate_cover_letter(store, job, provider):
         document = {'kind': 'cover_letter', 'hash': row['hash'], 'filename': row['filename'],
                     'generated': True, 'job_id': job['id']}
         validate_generated_document(store, job, document)
+        from .application_artifacts import record_cover_letter
+        record_cover_letter(store,job,document,json.loads(row['provenance']),fingerprint)
         return document
     facts = store.facts()
     name = facts.get('full_name', {}).get('value', '')
@@ -106,6 +108,8 @@ def generate_cover_letter(store, job, provider):
                          'fingerprint=excluded.fingerprint,provenance=excluded.provenance,created=excluded.created',
                          (job['id'], 'cover_letter', h, dest.name, fingerprint, json.dumps(answer), now()))
         store.event('cover_letter_generated', job['id'], {'hash': h, 'words': len(answer['value'].split())})
+        from .application_artifacts import record_cover_letter
+        record_cover_letter(store,job,{'hash':h,'filename':dest.name},answer,fingerprint)
     return {'kind': 'cover_letter', 'hash': h, 'filename': dest.name, 'generated': True, 'job_id': job['id']}
 
 

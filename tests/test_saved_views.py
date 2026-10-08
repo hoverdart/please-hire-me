@@ -60,3 +60,9 @@ def test_invalid_saved_view_actions_leave_existing_data_unchanged(store,data):
     before=store.snapshot()
     with pytest.raises(ValueError):change_view(store,data)
     assert store.snapshot()==before
+
+
+def test_saved_views_preserve_connection_destination_and_fit_filters(store):
+    row=save(store,source='handshake',destination='external',min_fit=70)[0]
+    assert (row['source'],row['destination'],row['min_fit'])==('handshake','external',70)
+    with pytest.raises(ValueError):save(store,name='Bad connection',source='linkedin')

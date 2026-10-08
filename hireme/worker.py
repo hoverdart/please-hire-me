@@ -35,6 +35,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                 store.checkpoint(); sweep_lists(store)
                 store.checkpoint(); sweep_portals(store)
                 store.checkpoint(); sweep_boards(store,repo)
+                from .platform_connections import sweep_connections
+                store.checkpoint(); sweep_connections(store)
             discovered_count=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]-jobs_before if discover else 0
             query="SELECT * FROM jobs WHERE status IN ('discovered','blocked','prepared') AND id NOT IN (SELECT job_id FROM job_decisions)"
             selected=tuple(job_ids or ())
@@ -74,7 +76,11 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             if limit is not None:target=min(target,limit)
             if ranked and target>0:
                 with worker_lock(store.root,'browser'):
-                    with browser_factory(store) as browser:
+                    if browser_factory is Browser:
+                        from .platform_browser import ConnectedBrowser
+                        factory=ConnectedBrowser
+                    else:factory=browser_factory
+                    with factory(store) as browser:
                         for _,job in sorted(ranked,key=lambda x:x[0],reverse=True):
                             if count>=target or (max_attempts is not None and attempts>=max_attempts):break
                             store.checkpoint()

@@ -902,6 +902,11 @@ def validate_package(store, job, package):
         if expected != answer:
             raise Blocked("unsupported_or_stale_answer",field["label"])
     for doc in package.get("documents",[]):
+        if doc.get('artifact_id'):
+            from .application_artifacts import validate
+            if doc.get('kind') != 'supplemental_response' or not validate(store,job,doc).startswith(b'%PDF-'):
+                raise Blocked('artifact_changed')
+            continue
         if doc.get("generated"):
             from .letters import validate_generated_document
             validate_generated_document(store,job,doc)
@@ -918,3 +923,6 @@ def validate_package(store, job, package):
             if not any(x["field"]==field for x in entries):raise Blocked("required_answer_missing",field["label"])
     if package.get("facts_hash")!=digest(facts):
         raise Blocked("facts_changed")
+    if package.get('connection'):
+        from .platform_browser import validate_connection_package
+        validate_connection_package(store,job,package)

@@ -7,7 +7,7 @@ import re
 
 from .onboarding import _read_pdf_bytes
 
-NAMES = {'resume': 'resume.pdf', 'transcript': 'transcript.pdf', 'cover_letter': 'cover-letter.pdf'}
+NAMES = {'resume': 'resume.pdf', 'transcript': 'transcript.pdf', 'cover_letter': 'cover-letter.pdf', 'supplemental_response': 'application-response.pdf'}
 
 
 def recorded_pdf(store, application_id, index, expected_hash):

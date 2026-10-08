@@ -86,6 +86,32 @@ CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, status TEXT NOT NULL, c
  error TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, started TEXT NOT NULL, finished TEXT,
  status TEXT NOT NULL, submitted INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS platform_connections (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0,
+ discovery_enabled INTEGER NOT NULL DEFAULT 0, native_apply_enabled INTEGER NOT NULL DEFAULT 0,
+ checked TEXT, session_state TEXT NOT NULL DEFAULT 'not_connected', detail TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS connection_flows (connection_id TEXT NOT NULL, capability TEXT NOT NULL,
+ version INTEGER NOT NULL, signature TEXT NOT NULL, evidence TEXT NOT NULL, verified TEXT NOT NULL,
+ PRIMARY KEY(connection_id,capability,version,signature));
+CREATE TABLE IF NOT EXISTS job_origins (connection_id TEXT NOT NULL, platform_job_id TEXT NOT NULL,
+ job_id TEXT NOT NULL, listing_url TEXT NOT NULL, observed TEXT NOT NULL,
+ PRIMARY KEY(connection_id,platform_job_id));
+CREATE INDEX IF NOT EXISTS job_origins_job ON job_origins(job_id);
+CREATE TABLE IF NOT EXISTS connection_conflicts (connection_id TEXT NOT NULL, platform_job_id TEXT NOT NULL,
+ job_id TEXT NOT NULL, candidate TEXT NOT NULL, detail TEXT NOT NULL, observed TEXT NOT NULL,
+ PRIMARY KEY(connection_id,platform_job_id));
+CREATE INDEX IF NOT EXISTS connection_conflicts_job ON connection_conflicts(job_id);
+CREATE TABLE IF NOT EXISTS application_artifacts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL,
+ requirement_key TEXT NOT NULL, kind TEXT NOT NULL, revision INTEGER NOT NULL, hash TEXT NOT NULL,
+ filename TEXT NOT NULL, content TEXT NOT NULL, provenance TEXT NOT NULL, fingerprint TEXT NOT NULL,
+ created TEXT NOT NULL, UNIQUE(job_id,requirement_key,revision));
+CREATE INDEX IF NOT EXISTS application_artifacts_job ON application_artifacts(job_id,created DESC);
+CREATE TABLE IF NOT EXISTS platform_documents (connection_id TEXT NOT NULL, hash TEXT NOT NULL,
+ kind TEXT NOT NULL, remote_id TEXT NOT NULL, acknowledged TEXT NOT NULL,
+ PRIMARY KEY(connection_id,hash,kind));
+CREATE TABLE IF NOT EXISTS connection_receipts (application_id TEXT PRIMARY KEY, connection_id TEXT NOT NULL,
+ receipt TEXT NOT NULL, request_hash TEXT NOT NULL, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS saved_view_connections (view_id TEXT PRIMARY KEY, source TEXT NOT NULL,
+ destination TEXT NOT NULL, min_fit INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS applications_company_state ON applications(company_key,state);
 CREATE INDEX IF NOT EXISTS applications_state_attempted ON applications(state,attempted);
 CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(first_seen DESC,id);
@@ -677,7 +703,11 @@ class Store:
         if not isinstance(aid,str) or not aid or len(aid)>100:
             raise ValueError('Choose an existing application record')
         row=self.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone()
-        return dict(row) if row else None
+        if not row:return None
+        result=dict(row)
+        receipt=self.db.execute('SELECT * FROM connection_receipts WHERE application_id=?',(aid,)).fetchone()
+        if receipt:result['connection_receipt']=dict(receipt)
+        return result
 
     def snapshot(self,material_offset=0,include_packages=True,question_limit=None,*,material_search='',material_status='all'):
         from .materials import basic_context
