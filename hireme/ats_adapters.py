@@ -38,6 +38,52 @@ class GreenhouseAdapter(SingleStepAdapter):
         content=html.unescape(re.sub(r'<[^>]+>',' ',data['content']))
         return 'https://job-boards.greenhouse.io/embed/job_app?for='+board+'&token='+job_id,content
 
+class LeverPostingAdapter(SingleStepAdapter):
+    """The /apply page omits the posting body; verify the public read before writing."""
+    version=1
+
+    def navigation(self,job,*,checkpoint=None,deadline=None):
+        from urllib.parse import urlsplit
+        from urllib.error import HTTPError,URLError
+        from .net import Network
+        parsed=urlsplit(job['url'])
+        match=re.fullmatch(r'/([A-Za-z0-9_-]+)/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?:/apply)?/?',parsed.path,re.I)
+        if (not match or parsed.scheme!='https' or parsed.hostname!=job['host']
+                or parsed.hostname not in {'jobs.lever.co','jobs.eu.lever.co'} or parsed.port not in (None,443)
+                or parsed.username or parsed.password or parsed.fragment):
+            raise Blocked('posting_inspection_review','Inspect the Lever posting link')
+        site,req=match.groups();api='api.eu.lever.co' if parsed.hostname=='jobs.eu.lever.co' else 'api.lever.co'
+        try:data=Network(checkpoint=checkpoint,deadline=deadline).json(f'https://{api}/v0/postings/{site}/{req}?mode=json')
+        except HTTPError as error:
+            if error.code==404:raise Blocked('expired_posting','The official Lever posting is no longer published') from None
+            if error.code in {429,500,502,503,504}:raise Blocked('posting_fetch_failed','Lever posting read temporarily failed') from None
+            raise Blocked('posting_inspection_review','Lever posting read requires review') from None
+        except (URLError,TimeoutError):raise Blocked('posting_fetch_failed','Lever posting read did not complete') from None
+        except (ValueError,TypeError):raise Blocked('posting_inspection_review','Lever posting response is not recognized') from None
+        if not isinstance(data,dict) or data.get('id')!=req or not isinstance(data.get('text'),str):
+            raise Blocked('posting_inspection_review','Lever requisition identity could not be verified')
+        normalize=lambda value:re.sub(r'\s+',' ',html.unescape(value)).strip().casefold()
+        if normalize(data['text'])!=normalize(job['title']):raise Blocked('posting_changed_review','The employer posting title changed')
+        for key,suffix in [('hostedUrl',''),('applyUrl','/apply')]:
+            target=urlsplit(data.get(key,'') if isinstance(data.get(key),str) else '')
+            if (target.scheme!='https' or target.hostname!=parsed.hostname or target.port not in (None,443)
+                    or target.username or target.password or target.path.rstrip('/')!=f'/{site}/{req}'+suffix):
+                raise Blocked('posting_changed_review','Lever response refers to a different posting')
+        body=data.get('descriptionPlain');lists=data.get('lists',[])
+        if not isinstance(body,str) or not body.strip() or not isinstance(lists,list):
+            raise Blocked('posting_inspection_review','The official Lever posting body is missing')
+        parts=[body]
+        for item in lists:
+            if not isinstance(item,dict) or not isinstance(item.get('text'),str) or not isinstance(item.get('content'),str):
+                raise Blocked('posting_inspection_review','Lever posting requirements are not recognized')
+            parts.extend([item['text'],html.unescape(re.sub(r'<[^>]+>',' ',item['content']))])
+        for key in ('additionalPlain','salaryDescriptionPlain'):
+            value=data.get(key)
+            if isinstance(value,str):parts.append(value)
+        if checkpoint:checkpoint()
+        return job['url'],'\n'.join(parts)
+
+
 class WorkdayPostingAdapter(SingleStepAdapter):
     """Inspect a configured public posting; this grants no account/draft writes."""
     version=1
@@ -99,5 +145,6 @@ class WorkdayPostingAdapter(SingleStepAdapter):
 
 def adapter_for(job):
     if 'greenhouse.io' in job['host']:return GreenhouseAdapter()
+    if job['host'] in {'jobs.lever.co','jobs.eu.lever.co'}:return LeverPostingAdapter()
     if job['host'].endswith('.myworkdayjobs.com'):return WorkdayPostingAdapter()
     return SingleStepAdapter()

@@ -132,6 +132,32 @@ def test_new_confirmed_answers_are_independent_and_replayable(store,job,package)
     assert not _compatible_field('robots_experience',field('Have you worked with humanoids?'))
 
 
+def test_generic_start_date_respects_fulltime_posting_and_keeps_internship_availability(store,job,package):
+    store.put_facts({'earliest_start':'2027-05','fulltime_start':'2028-05-19'})
+    f=field('Earliest available start date')
+    assert resolve(store,job['host'],f,context=job)['value']=='May 2027'
+    fulltime={**job,'title':'Software Engineer, New Grad 2028'}
+    answer=resolve(store,job['host'],f,context=fulltime)
+    assert answer['value']=='May 19, 2028' and answer['provenance']['fact_key']=='fulltime_start'
+    package.update(answers=[answer],steps=[],facts_hash=digest(store.facts()))
+    validate_package(store,fulltime,package)
+    assert not _compatible_field('fulltime_start',f,job)
+
+
+def test_fulltime_start_window_and_hold_dependencies_are_separate_from_internships(store,job):
+    from hireme.policy import eligible
+    from hireme.job_holds import dependency
+    store.put_facts({'earliest_start':'2027-05','fulltime_start':'2028-05-19'})
+    s=store.settings();s['min_fit_score']=0;s['seniority']=['internship','new-grad']
+    eligible(job,s,store.facts())
+    fulltime={**job,'title':'Software Engineer New Grad Summer 2027'}
+    with pytest.raises(Blocked,match='start_window_mismatch'):eligible(fulltime,s,store.facts())
+    before=dependency(store,fulltime,'eligibility','start_window_mismatch')
+    store.put_facts({'fulltime_start':'2027-05-19'})
+    assert before!=dependency(store,fulltime,'eligibility','start_window_mismatch')
+    eligible(fulltime,s,store.facts())
+
+
 def test_any_of_conflicts_uses_positive_activity_without_inventing_no(store,job):
     f=field('Do you have: a) any Personal/Familial Relationships (current Acme employees or employees of Acme vendors); b) any Outside Business Activities?','yesno',['Yes','No'])
     store.put_facts({'outside_business_activity':'No'})
@@ -172,3 +198,18 @@ def test_lever_question_heading_and_checkbox_group_use_employer_structure(store)
         assert fields[1]['type']=='checkbox-group' and fields[1]['required']
         assert fields[1]['options']==['Python','C++']
         assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_lever_generic_instruction_uses_one_question_card_heading_only(store):
+    from hireme.browser import Browser
+    with Browser(store,test_url='http://127.0.0.1:12345') as b:
+        b.page.set_content('''<div class="application-form" data-qa="additional-cards"><h4 data-qa="card-name">How did you hear about us?</h4>
+            <li class="application-question"><div class="application-label">Select One✱</div>
+            <label><input type="radio" name="source" value="Website">Website</label><label><input type="radio" name="source" value="Other">Other</label></li></div>
+            <div class="application-form" data-qa="additional-cards"><h4 data-qa="card-name">Ambiguous card</h4>
+            <li class="application-question"><div class="application-label">Select One</div><input name="one"></li>
+            <li class="application-question"><div class="application-label">Select One</div><input name="two"></li></div>''')
+        fields=b._snapshot()
+        assert fields[0]['label']=='How did you hear about us?*' and fields[0]['required']
+        assert fields[0]['options']==['Website','Other']
+        assert fields[1]['label']==fields[2]['label']=='Select One'

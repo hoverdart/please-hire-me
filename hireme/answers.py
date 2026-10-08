@@ -55,6 +55,7 @@ def field_key(label):
     if re.fullmatch(r'do you have experience working with robots',label):return 'robots_experience'
     if re.fullmatch(r'have you worked with humanoids',label):return 'humanoids_experience'
     if re.match(r'when will you be available to work as a full.time,? permanent employee\?',label):return 'fulltime_start'
+    if re.fullmatch(r'(?:earliest (?:available )?start(?: date)?|available start date|start date availability)',label):return 'earliest_start'
     if re.search(r'\bhigh school\b',label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
@@ -594,8 +595,19 @@ def _compatible_binding(key, label):
     return key in terms and bool(re.search(terms[key],label,re.I))
 
 
+def _field_fact_key(store,label,context):
+    key=field_key(label)
+    if key=='earliest_start' and store.facts().get('fulltime_start') and context.get('title') and not re.search(r'internship|co.op|part.time',label,re.I):
+        from .policy import employment_kind
+        if employment_kind(context)=='new-grad':return 'fulltime_start'
+    return key
+
+
 def _compatible_field(key, field, context=None):
     label=field['label']
+    if key=='fulltime_start' and _compatible_binding('earliest_start',label):
+        from .policy import employment_kind
+        return bool((context or {}).get('title') and employment_kind(context)=='new-grad' and not re.search(r'internship|co.op|part.time',label,re.I))
     if key=='degree' and any(re.fullmatch(r'Freshman|Sophomore|Junior|Senior',o,re.I) for o in field.get('options',[])):return False
     if key=='race' and re.search(r'hispanic|latino',label,re.I):return False
     if key in {'work_authorized_us','needs_sponsorship','unrestricted_authorization'} and re.search(r'temporary.*authoriz',label,re.I):return False
@@ -791,7 +803,7 @@ def resolve(store, host, field, provider=None, context=None):
         return None
     key=None;template=None;derived=None;draft_rejection=None
     if saved:
-        exact=field_key(label)
+        exact=_field_fact_key(store,label,context)
         if field.get('section')=='education' and re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I):
             exact='college_start' if label.lower().startswith('start') else 'graduation'
         legacy_literal=not saved['fact_key'] and not store.db.execute('SELECT 1 FROM question_contexts WHERE id=?',(saved['id'],)).fetchone()
@@ -816,7 +828,7 @@ def resolve(store, host, field, provider=None, context=None):
         provenance=({'fact_key':key,'revision':fact['revision']} if key and fact['value']!=saved['value']
                     else {'answer_id':saved['id'],'revision':saved['revision']})
     else:
-        key=field_key(label)
+        key=_field_fact_key(store,label,context)
         if key and not _compatible_field(key,field,context):raise Blocked('mapping_review',label)
         if key=='name_pronunciation' and key not in store.facts():
             derived=_context_pronunciation(store,field)

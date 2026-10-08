@@ -31,7 +31,7 @@ ELIGIBILITY_INPUTS = {
     'citizenship_mismatch': ({'us_person'},set()),
     'citizenship_or_clearance_review': ({'citizenship','us_person'},set()),
     'graduation_mismatch': ({'graduation'},set()),
-    'start_window_mismatch': ({'earliest_start','latest_start'},set()),
+    'start_window_mismatch': ({'earliest_start','latest_start','fulltime_start'},set()),
     'compensation_mismatch': (set(),{'min_annual_usd','min_hourly_usd'}),
     'company_blocked': (set(),{'skip_companies','interview_companies','company_aliases'}),
     'low_fit': ({'skills'},{'min_fit_score'}),

@@ -111,6 +111,8 @@ def eligible(job,s,facts):
         span={"winter":(1,3),"spring":(3,5),"summer":(5,8),"fall":(8,11),"autumn":(8,11)}[start.group(1).lower()]
         lo=f"{start[2]}-{span[0]:02d}"; hi=f"{start[2]}-{span[1]:02d}"
         earliest=facts.get("earliest_start",{}).get("value"); latest=facts.get("latest_start",{}).get("value")
+        if kind=='new-grad' and facts.get('fulltime_start'):
+            earliest=facts['fulltime_start']['value'][:7];latest=None
         if earliest and earliest>hi or latest and latest<lo: raise Blocked("start_window_mismatch")
     pay=job.get("compensation") or {}
     hourly=kind in {'internship','part-time'}

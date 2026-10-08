@@ -26,14 +26,23 @@ SNAPSHOT=r"""selector => {
   return copy.textContent.trim();
  }
  function reference(el) {return {id:el.id||'',name:el.name||'',tag:el.tagName.toLowerCase()};}
+ function leverLabel(el){
+  const question=el.closest('.application-question');
+  const heading=labelText(question?.querySelector('.application-label'));
+  const card=question?.closest('.application-form[data-qa="additional-cards"]');
+  if(/^(?:select|choose) one[\s*✱:]*$/i.test(heading) && card?.querySelectorAll('.application-question').length===1){
+   const title=labelText(card.querySelector('h4[data-qa="card-name"]'));
+   if(title)return title+(/[\*✱]/.test(heading)?'*':'');
+  }
+  return heading;
+ }
  function label(el) {
   const ids=(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean);
   const aria=ids.map(id=>document.getElementById(id)?.innerText||'').join(' ').trim();
   const direct=Array.from(el.labels||[]).map(labelText).join(' ').trim();
   const field=el.closest('fieldset'); const legend=field?.querySelector('legend')?.innerText||field?.querySelector('.ashby-application-form-question-title')?.innerText;
   const wrapper=el.closest('[class*=form-field],[class*=field-entry],[class*=application-question],.field');
-  const lever=el.closest('.application-question');
-  const leverHeading=labelText(lever?.querySelector('.application-label'));
+  const leverHeading=leverLabel(el);
   return (el.getAttribute('description')||el.getAttribute('aria-label')||aria||leverHeading||direct||legend||labelText(wrapper?.querySelector('label'))||el.getAttribute('placeholder')||'').trim();
  }
  controls.forEach((el,index)=>{
@@ -71,7 +80,7 @@ SNAPSHOT=r"""selector => {
    indices=group.map(x=>controls.indexOf(x)); options=group.map(x=>Array.from(x.labels||[]).map(l=>l.innerText).join(' ').trim()||x.value);
    const parent=el.closest('fieldset');
    if(ashbyGroup)required=required||!!ashbyGroup.querySelector('label[class*=_required_]');
-   question=ashbyGroup?.querySelector('.ashby-application-form-question-title')?.innerText||el.getAttribute('description')||parent?.querySelector('legend')?.innerText||labelText(el.closest('.application-question')?.querySelector('.application-label'))||el.closest('[class*=field],[class*=question]')?.querySelector('label')?.innerText||question;
+   question=ashbyGroup?.querySelector('.ashby-application-form-question-title')?.innerText||el.getAttribute('description')||parent?.querySelector('legend')?.innerText||leverLabel(el)||el.closest('[class*=field],[class*=question]')?.querySelector('label')?.innerText||question;
    // Ashby's SMS radios are nested inside the Phone field. The enclosing
    // heading describes the phone input, not this separate consent control.
    if(type==='radio'&&el.closest('.ashby-application-form-texting-consent-description'))question='Consent to receiving text messages';
