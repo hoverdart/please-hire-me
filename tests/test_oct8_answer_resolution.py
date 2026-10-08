@@ -205,11 +205,13 @@ def test_lever_generic_instruction_uses_one_question_card_heading_only(store):
     with Browser(store,test_url='http://127.0.0.1:12345') as b:
         b.page.set_content('''<div class="application-form" data-qa="additional-cards"><h4 data-qa="card-name">How did you hear about us?</h4>
             <li class="application-question"><div class="application-label">Select One✱</div>
-            <label><input type="radio" name="source" value="Website">Website</label><label><input type="radio" name="source" value="Other">Other</label></li></div>
+            <label><input type="radio" name="source" value="Website">Website</label><label><input type="radio" name="source" value="Other">Other</label></li>
+            <li class="application-question"><div class="application-label">Other source details</div><input name="details"></li></div>
             <div class="application-form" data-qa="additional-cards"><h4 data-qa="card-name">Ambiguous card</h4>
             <li class="application-question"><div class="application-label">Select One</div><input name="one"></li>
             <li class="application-question"><div class="application-label">Select One</div><input name="two"></li></div>''')
         fields=b._snapshot()
         assert fields[0]['label']=='How did you hear about us?*' and fields[0]['required']
         assert fields[0]['options']==['Website','Other']
-        assert fields[1]['label']==fields[2]['label']=='Select One'
+        assert fields[1]['label']=='Other source details'
+        assert fields[2]['label']==fields[3]['label']=='Select One'

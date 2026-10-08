@@ -7,8 +7,8 @@ from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
-MAPPING_VERSION = 16
-ADAPTER_VERSION = 8
+MAPPING_VERSION = 17
+ADAPTER_VERSION = 9
 
 def field_context(host, field, context=None):
     context = context or {}

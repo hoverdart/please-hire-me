@@ -30,9 +30,12 @@ SNAPSHOT=r"""selector => {
   const question=el.closest('.application-question');
   const heading=labelText(question?.querySelector('.application-label'));
   const card=question?.closest('.application-form[data-qa="additional-cards"]');
-  if(/^(?:select|choose) one[\s*✱:]*$/i.test(heading) && card?.querySelectorAll('.application-question').length===1){
+  const generic=/^(?:select|choose) one[\s*✱:]*$/i;
+  if(generic.test(heading) && card){
    const title=labelText(card.querySelector('h4[data-qa="card-name"]'));
-   if(title)return title+(/[\*✱]/.test(heading)?'*':'');
+   const questions=Array.from(card.querySelectorAll('.application-question'));
+   const sourceCard=/^how did you (?:first )?hear (?:about|of)\b/i.test(title);
+   if(title && (questions.length===1 || sourceCard && questions.filter(q=>generic.test(labelText(q.querySelector('.application-label')))).length===1))return title+(/[\*✱]/.test(heading)?'*':'');
   }
   return heading;
  }
