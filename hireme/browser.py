@@ -98,6 +98,12 @@ def submission_receipt(text):
 PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output','writing_unsupported')
 
 
+def _model_dependent(field, reason):
+    if reason in ('stale_writing_context','writing_upgrade_needed','unsupported_or_stale_sample'):return True
+    # Only a field without its own confirmed-fact rule could have been answered from context.
+    return reason=='missing_fact' and field_key(field['label']) in (None,'school','degree','major','skills','location','city','state')
+
+
 def _prefilled(field):
     # A standalone checkbox always reports Yes/No; unchecked is its empty state.
     return bool(field['value']) and not (field['type']=='checkbox' and field['value']=='No')
@@ -457,6 +463,11 @@ class Browser:
                         # ATS dropdowns may hydrate after opening. An empty early
                         # read must not turn a choice into a free-text fact.
                         with contextlib.suppress(Exception):menu.get_by_role('option').first.wait_for(state='visible',timeout=5000)
+                        if not menu.get_by_role('option').count():
+                            # A menu can miss the first click while the form hydrates; reopen once.
+                            el.press('Escape');self.page.wait_for_timeout(300)
+                            self._open_combobox(el);self.page.wait_for_timeout(200);menu=self._menu(el)
+                            with contextlib.suppress(Exception):menu.get_by_role('option').first.wait_for(state='visible',timeout=8000)
                     f['options']=self._option_labels(menu.get_by_role('option'),f)
                     selected=self._option_labels(menu.get_by_role('option',selected=True),f)
                     ashby_autocomplete='ashby-application-form-input-autocomplete' in (el.get_attribute('class') or '')
@@ -589,7 +600,10 @@ class Browser:
         elif f['type']=='yesno':self._control(f,f['options'].index(value)).click()
         elif f['type']=='radio':self._control(f,f['options'].index(value)).check()
         elif f['type']=='checkbox-group':
-            for i,option in enumerate(f['options']):self._control(f,i).set_checked(option==value)
+            from .answers import selections
+            chosen=selections(value,f['options'])
+            if not chosen:raise Blocked('option_mismatch',f['label'])
+            for i,option in enumerate(f['options']):self._control(f,i).set_checked(option in chosen)
         elif f['type']=='checkbox':el.set_checked(value=='Yes')
         elif f['type']=='combobox':
             from .ats_widgets import select_combobox_exact
@@ -698,10 +712,18 @@ class Browser:
             fields=self._snapshot()
             if not fields:
                 apply=self.page.get_by_role('button',name=re.compile(r'^(?:apply(?: now| for this job)?|application)$',re.I))
-                if apply.count()!=1:apply=self.page.get_by_role('link',name=re.compile(r'^(?:apply(?: now| for this job)?|application)$',re.I))
+                if apply.count()!=1:
+                    apply=self.page.get_by_role('link',name=re.compile(r'^(?:apply(?: now| for this job)?|application)$',re.I))
+                    # Lever repeats one "Apply for this job" link above and below
+                    # the posting; links to the same destination are one entry.
+                    targets=set(apply.evaluate_all('(links)=>links.map(e=>e.closest("form")?"":e.href)')) if apply.count()>1 else set()
+                    if len(targets)==1 and '' not in targets:apply=apply.first
                 if apply.count()!=1 or apply.evaluate('(e)=>!!e.closest("form")'):raise Blocked('unsupported_form','No unambiguous navigation-only application entry')
                 apply.click();self._wait_ready();continue
-            answers=[]; documents=[]; pending=[]; budget_error=None
+            dropdowns=[f for f in fields if f['type']=='combobox' and field_key(f['label']) not in ('school','location')]
+            if len(dropdowns)>=2 and not any(f['options'] for f in dropdowns):
+                raise Blocked('posting_fetch_failed','No dropdown on the application loaded its choices; nothing was submitted')
+            answers=[]; documents=[]; pending=[]; budget_error=None; asked=set()
             for f in fields:
                 self.store.checkpoint()
                 if not f['label']:
@@ -736,13 +758,19 @@ class Browser:
                     elif _prefilled(f):raise Blocked('unknown_prefilled_value',f['label'])
                 except Blocked as e:
                     if e.reason in ('human_work_sample','paused','cycle_timeout','provider_rate_limited','graduation_mismatch'):raise
-                    if e.reason=='model_budget_exhausted':budget_error=e
-                    self.store.event('field_blocked',job['id'],{'label':f['label'],'options':f['options'],'required':f['required'],'reason':e.reason})
+                    reason=e.reason
+                    if reason=='model_budget_exhausted':budget_error=e
+                    # Without a model, a saved draft cannot be refreshed and approved
+                    # context cannot be consulted. That is a wait, not a missing fact.
+                    elif budget_error and _model_dependent(f,reason):reason='model_budget_exhausted'
+                    self.store.event('field_blocked',job['id'],{'label':f['label'],'options':f['options'],'required':f['required'],'reason':reason})
                     if not f['required'] and not _prefilled(f):
                         self.store.resolve_known_question(job['answer_scope'],f['label'],f['options'],field=f,context=job);continue
-                    self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],e.reason,field=f,context=answer_context)
-                    pending.append((f,e.reason))
+                    asked.add(self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],reason,field=f,context=answer_context))
+                    pending.append((f,reason))
             if pending:
+                # This attempt's questions supersede earlier attempts' wording and widgets.
+                self.store.retire_questions(job['id'],asked)
                 labels='; '.join(f['label'] for f,_ in pending)
                 if budget_error:raise Blocked('model_budget_exhausted',labels+' — '+budget_error.detail)
                 # A failed model call is not missing applicant information. Use

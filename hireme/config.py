@@ -106,7 +106,8 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
 # No citizenship, authorization, GPA, experience or preference defaults.
 FACTS = {
     "full_name": "Full legal name", "first_name": "First name", "last_name": "Last name",
-    "preferred_name": "Preferred name", "email": "Personal email", "phone": "Phone",
+    "preferred_name": "Preferred name", "name_pronunciation": "How to pronounce your name, in your own spelling",
+    "email": "Personal email", "phone": "Phone",
     "location": "Current city / state", "street": "Street address", "city": "City",
     "state": "State", "postal_code": "Postal code", "country": "Country of residence",
     "linkedin": "LinkedIn URL", "github": "GitHub URL", "website": "Website",

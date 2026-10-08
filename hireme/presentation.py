@@ -52,6 +52,8 @@ REASON_GUIDANCE = {
     'multi_step_requires_adapter': ('This application flow needs manual completion', 'Open the official posting to complete the remaining steps yourself.'),
     'browser_error': ('The application browser encountered a problem', 'Review the posting and recorded details. Uncertain submissions stay held.'),
     'document_tampered': ('Your stored PDF needs attention', 'Reimport the matching original PDF in Your facts to restore its private copy, then review the application before starting another batch.'),
+    'model_budget_exhausted': ('Waiting for the model allowance', 'The worker retries automatically after the request allowance resets. No action is needed unless a personal answer is also listed.'),
+    'stale_writing_context': ('A saved written answer is being refreshed', 'The worker rewrites it from your current sources on the next attempt.'),
     'missing_answers': ('Some answers are needed', 'Answer them under Needs you, or once for every employer under Your facts → Add context.'),
     'posting_fetch_failed': ('The posting did not load', 'The worker retries this later.'),
     'navigation_failed': ('The posting did not load', 'The worker retries this later.'),

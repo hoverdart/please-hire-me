@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS field_bindings_v2 (id TEXT PRIMARY KEY,context TEXT N
  fact_key TEXT,template_id TEXT,source_revision INTEGER NOT NULL,rule_version INTEGER NOT NULL,created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS option_mappings (id TEXT PRIMARY KEY,fact_key TEXT NOT NULL,fact_revision INTEGER NOT NULL,
  value TEXT NOT NULL,created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS model_abstentions (id TEXT PRIMARY KEY,method TEXT NOT NULL,label TEXT NOT NULL,created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS job_holds (job_id TEXT PRIMARY KEY,category TEXT NOT NULL,reason TEXT NOT NULL,
  dependency TEXT NOT NULL,retry_count INTEGER NOT NULL,retry_at REAL,evidence TEXT NOT NULL,updated TEXT NOT NULL);
 
@@ -322,6 +323,12 @@ class Store:
         self.db.execute("INSERT INTO questions VALUES(?,?,?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET job_id=excluded.job_id,reason=excluded.reason,resolved=0",
                         (key, job_id, host, label, json.dumps(options), reason))
         return key
+
+    def retire_questions(self, job_id, keep):
+        """Hide a job's unanswered questions that its latest attempt did not ask again."""
+        keep=sorted(keep)
+        self.db.execute('UPDATE questions SET resolved=1 WHERE job_id=? AND resolved=0 AND reason!=?'
+                        +(' AND id NOT IN ('+','.join('?' for _ in keep)+')' if keep else ''),(job_id,'legacy_history_review',*keep))
 
     def answer_question(self, qid, value, fact_key=None):
         q = self.db.execute("SELECT * FROM questions WHERE id=?", (qid,)).fetchone()

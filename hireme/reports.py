@@ -30,7 +30,7 @@ def _short(text, limit=140):
 def _questions(store, job_id):
     """Each unresolved question with a readable reason, and a failed draft's review."""
     from .presentation import REASON_GUIDANCE
-    lines = []
+    lines = {}
     for q in store.db.execute('SELECT label,reason FROM questions WHERE job_id=? AND resolved=0 ORDER BY rowid', (job_id,)):
         reason = REASON_GUIDANCE.get(q['reason'], (q['reason'].replace('_', ' ').capitalize(),))[0]
         line = f"{_short(q['label'])} — {reason}"
@@ -40,8 +40,10 @@ def _questions(store, job_id):
                 if review.get('question') == q['label'] and review.get('supported') is False:
                     line += f" (review: {_short(review.get('reason', ''), 200)})"
                     break
-        lines.append(line)
-    return lines
+        # One line per question; an older widget or wording of it is superseded.
+        lines.pop(' '.join(q['label'].casefold().split()), None)
+        lines[' '.join(q['label'].casefold().split())] = line
+    return list(lines.values())
 
 
 def queue_report(store, run_id):
@@ -50,8 +52,9 @@ def queue_report(store, run_id):
         raise ValueError('Only completed or stopped runs can be reported')
     email = owner_email(store)
     from .presentation import REASON_GUIDANCE, WAIT_REASONS
+    waiting = 'Waiting for a company or daily limit — no action needed'
     groups = {'Applied successfully': [], 'Blocked — review or apply manually': [], 'Other outcomes — review before retrying': [],
-              'Waiting for a company or daily limit — no action needed': []}
+              waiting: [], 'Waiting for the model allowance — retried automatically': []}
     terminal={}
     for e in store.db.execute("SELECT subject,detail FROM events WHERE kind='application_finished' AND timestamp>=? ORDER BY seq", (run['started'],)):
         detail = json.loads(e['detail'])
@@ -62,7 +65,8 @@ def queue_report(store, run_id):
         job = store.db.execute('SELECT company,title,url FROM jobs WHERE id=?', (job_id,)).fetchone()
         if job:
             group = ('Applied successfully' if detail['outcome'] == 'confirmed' else
-                     'Waiting for a company or daily limit — no action needed' if detail.get('reason') in WAIT_REASONS else
+                     waiting if detail.get('reason') in WAIT_REASONS else
+                     'Waiting for the model allowance — retried automatically' if detail.get('reason') == 'model_budget_exhausted' else
                      'Blocked — review or apply manually' if detail['outcome'] == 'blocked' else
                      'Other outcomes — review before retrying')
             questions = _questions(store, job_id)

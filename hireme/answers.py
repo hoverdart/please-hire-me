@@ -16,8 +16,8 @@ RULES = [
     (r"^(current )?location( \(city\))?\*?$", "location"), (r"^city\*?$", "city"),
     (r"^state\*?$", "state"), (r"^(zip|zip code|postal code)\*?$", "postal_code"),
     (r"^(street address|address line 1)\*?$", "street"), (r"^country( of residence)?\*?$", "country"),
-    (r"^linkedin( profile)?( url)?\*?$", "linkedin"), (r"^github( profile)?( url)?\*?$", "github"),
-    (r"^(website|personal website|portfolio)( url)?\*?$", "website"),
+    (r"^linkedin( profile)?( url| link)?\*?$", "linkedin"), (r"^github( profile)?( url| link)?\*?$", "github"),
+    (r"^(website|personal website|portfolio)( url| link)?\*?$", "website"),
     (r"^(school|university|college|school name|university name|college\s*/\s*university|university\s*/\s*college)\*?$", "school"),
     (r"^(major|field of study|discipline\s*/\s*field of study)\*?$", "major"), (r"^(cumulative )?gpa\*?$", "gpa"),
     (r"^(expected |anticipated )?graduation( date| semester| term| season| month| year| month\s*/\s*year| month and year)?\*?$", "graduation"),
@@ -58,6 +58,8 @@ def field_key(label):
     if label=='consent to receiving text messages':return 'sms'
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
     if re.fullmatch(r'(?:what are your )?pronouns',label):return 'pronouns'
+    # Applicants often misspell it "pronounciation"; it is never the pronouns question.
+    if re.fullmatch(r'(?:(?:your |legal |preferred )?name )?prono?unciation(?: of your name)?|(?:how (?:do|should) (?:we|you|i) (?:pronounce|say) your name)',label):return 'name_pronunciation'
     # Only the generic question; a named destination stays a separate decision.
     if re.fullmatch(r'(?:are you )?(?:willing|open)(?: and able)? to relocat(?:e|ion)(?: for (?:this|the) (?:role|position|job|internship))?',label):return 'relocate'
     if re.fullmatch(r'what is your gender(?: identity)?',label):return 'gender'
@@ -190,7 +192,7 @@ def _option_value(key, value, options, context=None):
 
 
 # Identity, contact and free-text facts are entered verbatim, never translated into a choice.
-UNMAPPED_FACTS={'full_name','first_name','last_name','preferred_name','native_name','email','phone','street','postal_code',
+UNMAPPED_FACTS={'full_name','first_name','last_name','preferred_name','native_name','name_pronunciation','email','phone','street','postal_code',
                 'linkedin','github','website','skills','business_activity_details'}
 
 
@@ -321,7 +323,63 @@ def _chronological_academic_year(store,label):
                 'graduation_revision':graduation['revision'],'degree_revision':degree['revision'],'fall':match[1]}}}
 
 
-def _context_preference(store, label, options, context):
+def selection_limit(label):
+    """(fewest, most) choices a multi-select question asks for; None when it asks for one."""
+    words={'two':2,'three':3,'four':4,'five':5}
+    count=lambda text:int(words.get(text.casefold(),text))
+    exact=re.search(r'\b(?:select|choose|pick)\s+(?:exactly\s+)?([2-9]|two|three|four|five)\b',label,re.I)
+    if exact:return count(exact[1]),count(exact[1])
+    most=re.search(r'\b(?:select|choose|pick)\s+up to\s+([1-9]|two|three|four|five)\b',label,re.I)
+    if most:return 1,count(most[1])
+    if re.search(r'all that apply|\b(?:indicate|select|check|choose) all\b',label,re.I):return 1,None
+    return None
+
+
+def selections(value, options):
+    """The exact listed choices of an answer, in the form's order; None if any is not listed once."""
+    if options.count(value)==1:return [value]
+    parts=value.split('; ')
+    if len(parts)<2 or len(set(parts))!=len(parts) or any(options.count(part)!=1 for part in parts):return None
+    return [option for option in options if option in parts]
+
+
+def _multiple(field, chosen):
+    """Join several choices when the question asks for that many, in the form's order."""
+    limit=selection_limit(field['label'])
+    if field.get('type')!='checkbox-group' or not limit or not chosen:return None
+    if len(chosen)<limit[0] or limit[1] is not None and len(chosen)>limit[1]:return None
+    return '; '.join(option for option in field['options'] if option in chosen)
+
+
+def _listed_answer(field, value):
+    """Exact listed choices, as many as a multi-select question asks for."""
+    options=field.get('options',[])
+    if field.get('type')=='checkbox-group' and selection_limit(field['label']):
+        chosen=selections(value,options)
+        return bool(chosen) and value==_multiple(field,chosen)
+    return options.count(value)==1
+
+
+def _cohort_answer(store, field, context):
+    """Cohorts that begin within the confirmed start window. Every choice must be a readable date range."""
+    label=field['label']
+    if not field.get('options') or not re.search(r'\bcohorts?\b|\bsessions?\b|\bstart dates?\b',label,re.I) or selection_limit(label)!=(1,None):return None
+    facts=store.facts();early=facts.get('earliest_start');late=facts.get('latest_start')
+    if not early or not late:return None
+    months=('jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec')
+    title_years=set(re.findall(r'\b(20\d{2})\b',context.get('title','')))
+    chosen=[]
+    for option in field['options']:
+        start=re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+20\d{2})?\s*(?:[-–—]|to\b|through\b)',option,re.I)
+        years=re.findall(r'\b(20\d{2})\b',option) or sorted(title_years)
+        if not start or len(set(years))!=1:return None
+        month=f'{years[0]}-{months.index(start[1].casefold())+1:02d}'
+        if early['value']<=month<=late['value']:chosen.append(option)
+    value=_multiple(field,chosen)
+    return {'value':value,'provenance':{'start_window':{'earliest_start_revision':early['revision'],'latest_start_revision':late['revision']}}} if value else None
+
+
+def _context_preference(store, label, options, context, field=None):
     if not store.settings()['contextual_preferences'] or not options:return None
     low=label.casefold();facts=store.facts()
     value=None;evidence={}
@@ -382,6 +440,17 @@ def _context_preference(store, label, options, context):
         if re.search(r'\b(?:Berkeley|San Francisco|Bay Area)\b',location.get('value',''),re.I):
             no=[x for x in options if x.casefold()=='no']
             if len(no)==1:value=no[0];evidence={'location_revision':location['revision'],'already_in_bay_area':True}
+    elif re.search(r'relocat',low) and re.search(r'\blocations?\b|\boffices?\b|\bcities\b',low) and selection_limit(label):
+        # Destinations the applicant already chose to search, when they confirmed relocating.
+        from .policy import LOCATIONS
+        summer=re.search(r'summer\s*2027',context.get('title',''),re.I) and facts.get('summer_2027_relocate')
+        relocate=facts.get('summer_2027_relocate') if summer else facts.get('relocate')
+        settings=store.settings()
+        preferred=[x for x in settings['locations']+(settings['summer_2027_locations'] if summer else []) if not x.casefold().startswith('remote')]
+        if relocate and relocate['value']=='Yes':
+            chosen=[x for x in options if any(re.search(LOCATIONS.get(p,re.escape(p)),x,re.I) for p in preferred)]
+            value=_multiple(field or {'label':label,'options':options},chosen)
+            if value:evidence={'relocation_revision':relocate['revision'],'locations':preferred}
     elif re.search(r'(?:select|choose).*(?:location).*(?:work)|location.*(?:select|choose).*(?:work)|(?:office|location).*(?:prefer|work|based)|(?:prefer|work).*(?:office|location)|which office.*applying|^san francisco hq',low):
         if facts.get('onsite',{}).get('value')=='Yes' and re.search(r'Berkeley|San Francisco|Bay Area',facts.get('location',{}).get('value',''),re.I):
             local=[x for x in options if re.search(r'San Francisco|Bay Area|Berkeley',x,re.I)]
@@ -449,7 +518,7 @@ def _compatible_binding(key, label):
         'college_start':r'(?:college|university|education|school).*start|start.*(?:college|university|education|school)',
         'graduation':r'graduat', 'earliest_start':r'(?:earliest|available|availability).*start|start.*(?:earliest|available|availability)',
         'latest_start':r'latest.*start|start.*latest', 'skills':r'skills|technolog|languages',
-        'race':r'race|ethnic', 'gender':r'gender', 'pronouns':r'pronoun',
+        'race':r'race|ethnic', 'gender':r'gender', 'pronouns':r'\bpronouns?\b', 'name_pronunciation':r'prono?unciation|pronounce',
         'veteran':r'veteran|military', 'disability':r'disabil', 'salary':r'salary|compensation|pay expect|hourly (?:rate|pay)',
         'notice_period':r'notice', 'relocate':r'relocat',
         'summer_2027_relocate':r'relocat', 'summer_2027_available':r'availab|commit',
@@ -557,6 +626,25 @@ def _approved_sentences(store, context):
                 selected.append((index,choice));budget-=len(choice['text'])
         choices=[choice for _,choice in sorted(selected)]
     return choices
+
+
+def _abstention_key(store, method, context):
+    """Every input a structured model call sees. Retrying identical inputs only spends requests."""
+    from .materials import writing_context_hash
+    settings=store.settings()
+    return digest(['model_abstention',method,context['field_context'],writing_context_hash(store,context),
+                   {k:v['revision'] for k,v in store.facts().items()},sorted((t['id'],t['revision']) for t in store.templates()),
+                   [r[0] for r in store.db.execute("SELECT hash FROM documents WHERE kind='resume'")],
+                   [settings[k] for k in ('provider','provider_model','model_effort','model_escalation','tailored_writing')]])
+
+
+def _abstained(store, key):
+    return bool(key and store.db.execute('SELECT 1 FROM model_abstentions WHERE id=?',(key,)).fetchone())
+
+
+def _abstain(store, key, method, label):
+    from .util import now
+    if key:store.db.execute('INSERT OR REPLACE INTO model_abstentions VALUES(?,?,?,?)',(key,method,label,now()))
 
 
 def _validate_writing(store, answer):
@@ -686,11 +774,12 @@ def resolve(store, host, field, provider=None, context=None):
             template=next((t for t in choices if t['id']==selected),None)
         if graduation_confirmation:
             key=None;template=None;derived=graduation_confirmation
-        if not key and not derived:derived=_context_preference(store,label,options,context)
-        if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label) or _current_enrollment(store,label,options) or _us_citizen_or_resident(store,label,options)
+        if not key and not derived:derived=_context_preference(store,label,options,context,field)
+        if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label) or _current_enrollment(store,label,options) or _us_citizen_or_resident(store,label,options) or _cohort_answer(store,field,context)
         if key and key not in store.facts() and provider and store.settings()['tailored_writing'] and key in {'school','degree','major','skills','location','city','state'}:
             key=None  # Approved context may state an ordinary fact not separately entered.
-        if not key and not template and not derived and provider and field.get('required'):
+        match_abstention=_abstention_key(store,'match_field',context) if not key and not template and not derived and provider and field.get('required') else None
+        if match_abstention and not _abstained(store,match_abstention):
             from .config import FACTS
             facts={k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items() if k not in {'worked_outside_resume','contacts_outside_resume'}}
             if not re.search(r'summer\s*2027',context.get('title',''),re.I):facts.pop('summer_2027_relocate',None)
@@ -712,6 +801,7 @@ def resolve(store, host, field, provider=None, context=None):
                     template=next((t for t in store.templates() if t['id']==tid),None)
                     if template and (not is_writing or category(label) not in (None, template['category'])):template=None
                     if template:pending_binding={'template_id':tid}
+            if not pending_binding:_abstain(store,match_abstention,'match_field',label)
         if template and (_foreign_targets(store,template,context) or not _fits_writing_limits(template['body'],field,context)):template=None
         if not template and not key and not derived and provider and is_writing:
             choices=_approved_sentences(store,context)
@@ -727,10 +817,12 @@ def resolve(store, host, field, provider=None, context=None):
         # Ordinary structured fields need the factual source library too. Legal,
         # consent, demographic and assessment questions remain explicit approvals.
         sensitive=r'consent|agree|acknowledge|certif|arbitrat|privacy|authoriz|citizen|sponsor|visa|hispanic|latino|ethnic|race|gender|pronoun|veteran|military|disabil|criminal|government|procurement|proficien|assessment|work sample|18 years|\bage\b|full.time.*availab|availab.*full.time'
-        if (not key and not template and not derived and provider and field.get('required') and not is_writing
+        context_abstention=(_abstention_key(store,'context_answer',context)
+            if (not key and not template and not derived and provider and field.get('required') and not is_writing
                 and store.settings()['tailored_writing'] and hasattr(provider,'context_answer')
                 and field.get('type') in {'text','textarea','number','select','radio','combobox','yesno','checkbox-group'}
-                and not re.search(sensitive,label,re.I)):
+                and not re.search(sensitive,label,re.I)) else None)
+        if context_abstention and not _abstained(store,context_abstention):
             from .config import FACTS
             choices=_approved_sentences(store,{**context,'description':label+' '+context.get('description','')})
             choices += [{'id':'fact:'+k,'text':v['value'],'fact_key':k,'revision':v['revision']}
@@ -738,7 +830,7 @@ def resolve(store, host, field, provider=None, context=None):
             draft=provider.context_answer(field,choices,{k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()},context) if choices else {}
             by_id={x['id']:x for x in choices};ids=draft.get('sentence_ids',[])
             if (isinstance(draft.get('answer'),str) and draft['answer'] and ids and len(ids)==len(set(ids))
-                    and all(x in by_id for x in ids) and (not options or options.count(draft['answer'])==1)):
+                    and all(x in by_id for x in ids) and (not options or _listed_answer(field,draft['answer']))):
                 parts=[{k:v for k,v in by_id[x].items() if k!='id'} for x in ids]
                 writing={'value':draft['answer'],'provenance':{'tailored':True,'context_answer':True,'sample_parts':parts,
                          'text_hash':digest(draft['answer']),'context_hash':writing_context_hash(store,context),'field_hash':digest(context['field_context']),'facts_hash':digest(store.facts())}}
@@ -746,6 +838,7 @@ def resolve(store, host, field, provider=None, context=None):
                 if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
                 store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)
                 return {'field':field,**writing}
+            _abstain(store,context_abstention,'context_answer',label)
         if template:
             value=re.sub(r'[\r\n]+',' ',template['body']).strip() if field.get('type')=='text' else template['body'];provenance={'template_id':template['id'],'revision':template['revision']}
         elif derived:
@@ -765,7 +858,10 @@ def resolve(store, host, field, provider=None, context=None):
                 value=hourly[1]
             value=present(key,value,field)
             provenance={'fact_key':key,'revision':fact['revision']}
-    if field.get('type') in ('radio','select','combobox','checkbox','checkbox-group','yesno') and options:
+    if field.get('type')=='checkbox-group' and options and selection_limit(label) and selections(value,options):
+        # Exact choices for a question that states how many it wants.
+        if not _listed_answer(field,value):raise Blocked('option_mismatch',label)
+    elif field.get('type') in ('radio','select','combobox','checkbox','checkbox-group','yesno') and options:
         try:value=_option_value(key,value,options,context)
         except Blocked:
             mapped=_mapped_option(store,key,field,provider) if key and provenance.get('fact_key')==key else None

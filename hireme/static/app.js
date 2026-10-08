@@ -2233,6 +2233,7 @@ const groups = {
     "first_name",
     "last_name",
     "preferred_name",
+    "name_pronunciation",
     "email",
     "phone",
     "location",
