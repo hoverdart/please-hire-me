@@ -767,6 +767,20 @@ def _explicit_context_answer(store, host, field, key, provider, context):
     return {'field':field,**writing}
 
 
+def _unanswered_demographic_decline(store, field):
+    """An explicit applicant preference may decline a survey without asserting a trait."""
+    preference=store.facts().get('decline_unanswered_demographics')
+    if not preference or preference['value']!='Yes' or not field.get('required'):return None
+    if not re.fullmatch(r'(?:sexual orientation|gender(?: identity)?|pronouns?|race(?:\s*/\s*ethnicity)?|ethnicity|(?:protected )?veteran status|disability status)[? *]*',field['label'].strip(),re.I):return None
+    decline=(r"(?:I (?:do not|don't) (?:wish|want) to answer(?: this question)?|"
+             r"(?:I )?(?:prefer|choose) not to (?:answer|say|disclose|self.identify)|"
+             r"(?:I )?decline to (?:specify|self.identify|identify my protected veteran status))")
+    options=[o for o in field.get('options',[]) if re.fullmatch(decline,o.strip(),re.I)]
+    if len(options)!=1 or not _listed_answer(field,options[0]):return None
+    if not _fits_writing_limits(options[0],field,{}):return None
+    return {'field':field,'value':options[0],'provenance':{'demographic_decline_revision':preference['revision']}}
+
+
 def resolve(store, host, field, provider=None, context=None):
     label=field['label'];options=field.get('options',[]);context=dict(context or {})
     context['max_sentences']=_sentence_cap(field,context)
@@ -959,6 +973,10 @@ def resolve(store, host, field, provider=None, context=None):
         else:
             fact=store.facts().get(key)
             if not fact:
+                declined=_unanswered_demographic_decline(store,field)
+                if declined:
+                    store.resolve_known_question(host,label,options,field=field,context=context)
+                    return declined
                 # Every grounded draft failed review: a model outcome, not a missing personal fact.
                 if field.get('required') and draft_rejection:raise Blocked('writing_unsupported',draft_rejection)
                 if field.get('required'):raise Blocked('missing_fact',label)

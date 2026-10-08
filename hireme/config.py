@@ -144,12 +144,13 @@ FACTS = {
     "nights_weekends": "Willing and able to work nights and weekends (Yes / No)",
     "robots_experience": "Direct experience working with robots (Yes / No)",
     "humanoids_experience": "Direct experience working with humanoid robots (Yes / No)",
+    "decline_unanswered_demographics": "Use an offered decline choice for required demographic questions with no supplied answer (Yes / No)",
 }
 REQUIRED = {"full_name", "first_name", "last_name", "email", "phone", "location", "graduation",
             "work_authorized_us", "needs_sponsorship", "us_person", "professional_years", "skills"}
 BOOLEANS = {"work_authorized_us", "needs_sponsorship", "us_person", "unrestricted_authorization",
             "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent", "temporary_work_authorization", "conflict_disclosures", "government_official", "demographic_data_consent"}
-BOOLEANS |= {'over_18','nights_weekends','robots_experience','humanoids_experience'}
+BOOLEANS |= {'over_18','nights_weekends','robots_experience','humanoids_experience','decline_unanswered_demographics'}
 
 
 def validate_fact(key: str, value: str) -> str:

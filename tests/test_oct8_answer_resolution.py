@@ -183,6 +183,49 @@ def test_export_control_any_of_is_satisfied_by_confirmed_citizenship(store,job,p
     with pytest.raises(Blocked):resolve(store,job['host'],f,context=job)
 
 
+def test_unanswered_demographic_decline_requires_explicit_preference_and_revalidates(store,job,package):
+    f=field('Sexual Orientation*','combobox',['Straight','Gay',"I don't wish to answer"])
+    with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],f,context=job)
+    store.put_facts({'decline_unanswered_demographics':'Yes'})
+    a=resolve(store,job['host'],f,context=job)
+    assert a['value']=="I don't wish to answer"
+    package.update(answers=[a],steps=[],facts_hash=digest(store.facts()))
+    validate_package(store,job,package)
+    store.put_facts({'decline_unanswered_demographics':'No'})
+    with pytest.raises(Blocked):validate_package(store,job,{**package,'facts_hash':digest(store.facts())})
+
+
+def test_demographic_decline_keeps_supplied_answers_and_never_accepts_agreements(store,job):
+    store.put_facts({'decline_unanswered_demographics':'Yes','gender':'Male'})
+    assert resolve(store,job['host'],field('Gender','select',['Male','Female','Prefer not to say']),context=job)['value']=='Male'
+    for label,options in [('Government official status',['No','Prefer not to say']),
+                          ('By applying, I agree to the privacy policy',['Yes','Prefer not to say']),
+                          ('Sexual Orientation',['Straight','Gay']),
+                          ('Sexual Orientation',['Prefer not to say',"I don't wish to answer"])]:
+        with pytest.raises(Blocked):resolve(store,job['host'],field(label,'select',options),context=job)
+
+
+def test_demographic_decline_does_not_override_reviewed_personal_context(store,job):
+    store.update_settings({'tailored_writing':True})
+    store.put_facts({'decline_unanswered_demographics':'Yes'})
+    save_basic_context(store,'Sexual orientation: Straight.',0)
+    class Model:
+        def match_field(self,*a):return {'fact_key':None,'template_id':None}
+        def context_answer(self,f,choices,*a):return {'answer':'Straight','sentence_ids':[choices[0]['id']]}
+    f=field('Sexual Orientation','combobox',['Straight',"I don't wish to answer"])
+    assert resolve(store,job['host'],f,Model(),job)['value']=='Straight'
+    # Optional unanswered surveys can still be left blank.
+    assert resolve(store,job['host'],{**f,'label':'Ethnicity','required':False},context=job) is None
+
+
+@pytest.mark.parametrize('label,decline',[('Disability status','I do not want to answer'),
+                                        ('Veteran status','I decline to identify my protected veteran status'),
+                                        ('Race','Decline to specify')])
+def test_demographic_decline_uses_only_an_exact_opt_out_choice(store,job,label,decline):
+    store.put_facts({'decline_unanswered_demographics':'Yes'})
+    assert resolve(store,job['host'],field(label,'radio',['Yes','No',decline]),context=job)['value']==decline
+
+
 def test_lever_question_heading_and_checkbox_group_use_employer_structure(store):
     from hireme.browser import Browser
     with Browser(store,test_url='http://127.0.0.1:12345') as b:
