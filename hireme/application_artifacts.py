@@ -77,6 +77,9 @@ def validate_links(answer, store=None):
         fact=store.facts().get(provenance.get('fact_key'))
         if fact and fact['revision']==provenance.get('revision'):
             supported |= normalize(links(fact['value']))
+        template=next((item for item in store.templates() if item['id']==provenance.get('template_id')),None)
+        if template and template['revision']==provenance.get('revision'):
+            supported |= normalize(links(template['body']))
     if not normalize(links(answer['value'])) <= supported:
         raise Blocked('writing_link_unverified','Confirm project links in an approved factual source before including them in application materials.')
 

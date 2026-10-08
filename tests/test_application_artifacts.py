@@ -94,3 +94,25 @@ def test_project_links_require_exact_approved_sources_and_extract_from_pdf():
     assert url in PdfReader(io.BytesIO(data)).pages[0].extract_text()
     with pytest.raises(Blocked,match='writing_link_unverified'):
         artifacts.validate_links({**answer,'value':'My project: https://github.com/applicant/invented-project'})
+
+
+def test_template_fallback_preserves_confirmed_project_links(store,job):
+    store.update_settings({'tailored_writing':True})
+    body='I built a Python project: https://github.com/applicant/verified-project'
+    tid=store.put_template('project',body)
+    class AbstainingDraft:
+        def draft_answer(self,*args,**kwargs):return {}
+    artifact=artifacts.generate(store,job,'supplemental_response','Tell us about a project.',AbstainingDraft())
+    assert artifact['content']==body
+    data=artifacts.validate(store,job,artifact)
+    assert 'https://github.com/applicant/verified-project' in PdfReader(io.BytesIO(data)).pages[0].extract_text()
+    import json
+    provenance=json.loads(store.db.execute('SELECT provenance FROM application_artifacts WHERE id=?',(artifact['id'],)).fetchone()[0])['answer']
+    assert provenance['provenance']['template_id']==tid
+    with pytest.raises(Blocked,match='writing_link_unverified'):
+        artifacts.validate_links({**provenance,'value':'https://github.com/applicant/invented-project'},store)
+    store.put_template('project','I built a different Python project.',tid)
+    with pytest.raises(Blocked,match='writing_link_unverified'):
+        artifacts.validate_links(provenance,store)
+    with pytest.raises(Blocked,match='writing_link_unverified'):
+        artifacts.validate(store,job,artifact)
