@@ -522,6 +522,17 @@ class Browser:
                               return values[0].textContent.trim();
                             }
                           }return e.textContent.trim();}""")
+                    chips=el.evaluate("""e=>{
+                        for(let n=e.parentElement,depth=0;n&&depth<5;n=n.parentElement,depth++){
+                            const labels=Array.from(n.querySelectorAll('[class*=multi-value__label],[class*=multiValueLabel]'))
+                                .filter(x=>x.getClientRects().length).map(x=>x.textContent.trim()).filter(Boolean);
+                            if(labels.length)return labels;
+                        }return [];}""")
+                    if chips:
+                        # React-select hides committed multi-select choices from
+                        # its menu. Those visible chips remain valid choices.
+                        f['options']=list(dict.fromkeys([*f['options'],*chips]))
+                        f['value']='\n'.join(chips)
                     if field_key(f['label']) in ('school','location','major') and el.evaluate('(e)=>e.tagName==="INPUT"'):
                         key=field_key(f['label']);fact=self.store.facts().get(key)
                         if fact:

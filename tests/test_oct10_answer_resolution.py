@@ -306,3 +306,27 @@ def test_calendar_requires_a_confirmed_day_and_formats_scoped_answer(store, job,
     fulltime={**job,'title':'Software Engineer, New Grad'}
     # Another job/context cannot reuse the applicant's internship-day approval.
     assert resolve(store,job['host'],f,context=fulltime)['value']==expected.replace('2027','2028')
+
+
+def test_selected_gpa_chip_remains_an_option_when_menu_hides_it(store,job,package):
+    from hireme.browser import Browser
+    label="Please select your GPA range based on a 4.0 scale. If you're on a 5.0 scale, please adjust to a 4.0 scale.*"
+    store.put_facts({'gpa':'3.85'})
+    with Browser(store,test_url='http://127.0.0.1:12345') as b:
+        b.page.set_content('''<label for="gpa">'''+label+'''</label><div id="control"><input id="gpa" role="combobox" aria-controls="menu" required></div>
+            <div id="menu" role="listbox"><div role="option" id="upper">3.6-4.0</div>
+                <div role="option">3.3-3.59</div><div role="option">3.0-3.29</div><div role="option">2.99 or below</div></div>
+            <script>document.getElementById('upper').onclick=()=>{
+                const chip=document.createElement('span');chip.className='select__multi-value__label';chip.textContent='3.6-4.0';
+                document.getElementById('control').append(chip);document.getElementById('upper').remove();
+            };</script>''')
+        before=b._snapshot()[0]
+        answer=resolve(store,job['host'],before,context=job)
+        assert answer['value']=='3.6-4.0'
+        b._fill(answer)
+        after=b._snapshot()[0]
+        assert after['value']=='3.6-4.0' and set(after['options'])==set(before['options'])
+        refreshed=resolve(store,job['host'],after,context=job)
+        assert refreshed['value']=='3.6-4.0'
+    package.update(answers=[refreshed],steps=[],facts_hash=digest(store.facts()))
+    validate_package(store,job,package)

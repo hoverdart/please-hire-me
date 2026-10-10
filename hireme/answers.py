@@ -50,6 +50,7 @@ def field_key(label):
     # Politically exposed person (PEP) declarations ask the same thing.
     if re.search(r'entrusted with (?:a )?(?:prominent )?(?:public )?(?:position|function)|politically exposed|family member of (?:someone|a person) holding such a position',label,re.I):return 'government_official'
     label=" ".join(label.strip().casefold().split()).rstrip(" *?:")
+    if re.fullmatch(r"please select your gpa range based on a 4\.0 scale\. if you['’]re on a 5\.0 scale, please adjust to a 4\.0 scale\.?",label):return 'gpa'
     if re.fullmatch(r'are you (?:currently )?registered with finra',label):return 'finra_registered'
     if re.fullmatch(r'(?:are you actively maintaining|do you (?:actively )?(?:hold|maintain)) (?:any )?securities licenses',label):return 'securities_licenses'
     if re.fullmatch(r'(?:alternate|alternative|secondary|additional|other|backup) e-?mail(?: address)?',label):return 'alternate_email'
