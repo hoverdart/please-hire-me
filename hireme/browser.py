@@ -661,11 +661,14 @@ class Browser:
             result.append(fresh)
         return result
 
+    def _pending_verification_fields(self,fields,documents,body):
+        completed={d['field']['label'] for d in documents if d['hash'] in self.uploaded_files and d['filename'] in body}
+        return [f for f in fields if not (f['type']=='file' and f['label'] in completed)]
+
     def _verify(self,answers,documents,fields):
         fresh=self._snapshot()
         body=self.page.locator('body').inner_text()
-        completed={d['field']['label'] for d in documents if d['hash'] in self.uploaded_files and d['filename'] in body}
-        def remaining(items):return [f for f in items if not (f['type']=='file' and f['label'] in completed)]
+        def remaining(items):return self._pending_verification_fields(items,documents,body)
         compared=self._filled_number_fields(fields,fresh,answers)
         if digest(self._shape(remaining(compared)))!=digest(self._shape(remaining(fields))):
             self.store.event('form_changed',self.current_host,{'before':self._shape(remaining(fields)),'after':self._shape(remaining(fresh))})
@@ -750,7 +753,7 @@ class Browser:
         job={**job,'description':posting_text,'answer_scope':job['host']+'|'+self.store.company(job['company'])}
         eligible(job,self.store.settings(),self.store.facts())
         self.store.upsert_job(job)
-        all_answers=[]; all_docs=[]; steps=[]; refreshes=0
+        all_answers=[]; all_docs=[]; steps=[]; refreshes=0; retained_docs=[]
         for step in range(8):
             try:self._guard(job)
             except Blocked as e:
@@ -773,7 +776,7 @@ class Browser:
             dropdowns=[f for f in fields if f['type']=='combobox' and field_key(f['label']) not in ('school','location')]
             if len(dropdowns)>=2 and not any(f['options'] for f in dropdowns):
                 raise Blocked('posting_fetch_failed','No dropdown on the application loaded its choices; nothing was submitted')
-            answers=[]; documents=[]; pending=[]; budget_error=None; asked=set()
+            answers=[]; documents=list(retained_docs); pending=[]; budget_error=None; asked=set()
             for f in fields:
                 self.store.checkpoint()
                 if not f['label']:
@@ -832,6 +835,7 @@ class Browser:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')
                 self.upload_payloads[d['hash']]=path.read_bytes()
+                if d in retained_docs:continue
                 self._control(d['field']).set_input_files(str(path))
             if documents:
                 with contextlib.suppress(Exception):self.page.wait_for_load_state('networkidle',timeout=8000)
@@ -848,10 +852,19 @@ class Browser:
                 if error.reason!='form_changed':raise
                 fresh=self._snapshot()
                 compared=self._filled_number_fields(fields,fresh,answers)
-                if refreshes>=3 or not self._additional_fields(fields,compared):raise
+                body=self.page.locator('body').inner_text()
+                before_pending=self._pending_verification_fields(fields,documents,body)
+                after_pending=self._pending_verification_fields(compared,documents,body)
+                if refreshes>=3 or not self._additional_fields(before_pending,after_pending):raise
+                # An acknowledged upload may remove its file input while a
+                # conditional question appears. Keep that verified document in
+                # the next pass and its final package; require its acknowledgement
+                # and visible filename again during verification.
+                retained_docs=[d for d in documents if d['hash'] in self.uploaded_files and d['filename'] in body
+                               and not any(f['type']=='file' and f['label']==d['field']['label'] for f in fresh)]
                 self._guard(job)
                 refreshes+=1
-                self.store.event('conditional_fields_revealed',job['id'],{'refresh':refreshes,'added':len(fresh)-len(fields)})
+                self.store.event('conditional_fields_revealed',job['id'],{'refresh':refreshes,'added':len(after_pending)-len(before_pending)})
                 continue
             self._guard(job)
             all_answers.extend(answers);all_docs.extend(documents)

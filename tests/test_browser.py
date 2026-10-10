@@ -423,6 +423,37 @@ def test_acknowledged_upload_can_remove_original_file_input(store,ats):
     assert len(ats[1])==1
 
 
+@pytest.mark.parametrize('acknowledged',[True,False])
+def test_conditional_question_after_removed_upload_preserves_verified_document(store,ats,acknowledged):
+    store.put_facts({'city':'Berkeley'})
+    job=local_job(store,ats)
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</body>','''<script>
+        document.getElementById('resume').addEventListener('change',e=>{
+          const filename=document.createElement('span');filename.textContent=e.target.files[0].name;
+          e.target.replaceWith(filename);
+          const label=document.createElement('label');label.htmlFor='city';label.textContent='City';
+          const city=document.createElement('input');city.id='city';city.name='city';city.required=true;
+          document.getElementById('application').append(label,city);
+        });</script></body>''')
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html') if route.request.method=='GET' else route.fallback())
+        original=b._verify
+        def verify(answers,documents,fields):
+            if acknowledged:b.uploaded_files.update(d['hash'] for d in documents)
+            return original(answers,documents,fields)
+        b._verify=verify
+        if acknowledged:
+            assert b.apply(job,live=False)=='prepared'
+            package=json.loads(store.db.execute('SELECT package FROM applications').fetchone()[0])
+            assert len(package['documents'])==1 and package['documents'][0]['kind']=='resume'
+            assert next(a['value'] for a in package['answers'] if a['field']['label']=='City')=='Berkeley'
+            assert store.db.execute("SELECT count(*) FROM events WHERE kind='conditional_fields_revealed'").fetchone()[0]==1
+        else:
+            with pytest.raises(Blocked,match='form_changed'):b.apply(job,live=False)
+            assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert not ats[1]
+
+
 def test_phone_country_flag_verification_ignores_other_dropdown_options(store,ats):
     store.put_facts({'country':'United States'})
     original=(Path(__file__).parent/'fixtures/application.html').read_text()
