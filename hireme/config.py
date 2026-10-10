@@ -107,7 +107,7 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
 FACTS = {
     "full_name": "Full legal name", "first_name": "First name", "last_name": "Last name",
     "preferred_name": "Preferred name", "name_pronunciation": "How to pronounce your name, in your own spelling",
-    "email": "Personal email", "phone": "Phone",
+    "email": "Personal email", "alternate_email": "Alternate email (different from personal email)", "phone": "Phone",
     "location": "Current city / state", "street": "Street address", "city": "City",
     "state": "State", "postal_code": "Postal code", "country": "Country of residence",
     "linkedin": "LinkedIn URL", "github": "GitHub URL", "website": "Website",
@@ -170,7 +170,7 @@ def validate_fact(key: str, value: str) -> str:
             if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):raise ValueError
             date.fromisoformat(value)
         except ValueError:raise ValueError('Use a valid YYYY-MM-DD date') from None
-    if key == "email" and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+    if key in {"email", "alternate_email"} and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
         raise ValueError("Invalid email")
     if key == "professional_years" and (not re.fullmatch(r"\d+(?:\.\d+)?", value) or float(value) > 80):
         raise ValueError("Invalid experience")

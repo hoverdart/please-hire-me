@@ -2257,6 +2257,7 @@ const groups = {
     "preferred_name",
     "name_pronunciation",
     "email",
+    "alternate_email",
     "phone",
     "location",
     "street",
@@ -2398,7 +2399,7 @@ function renderFacts() {
         input.placeholder = "Choose Yes or No";
       }
       if (monthFacts.has(key)) input.type = "month";
-      if (key === "email") {
+      if (key === "email" || key === "alternate_email") {
         input.type = "email";
         input.autocomplete = "email";
       }

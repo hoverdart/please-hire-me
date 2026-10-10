@@ -7,8 +7,8 @@ from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
-MAPPING_VERSION = 17
-ADAPTER_VERSION = 10
+MAPPING_VERSION = 18
+ADAPTER_VERSION = 11
 
 def field_context(host, field, context=None):
     context = context or {}
@@ -26,6 +26,8 @@ def field_context(host, field, context=None):
             **({'employment_country':employment_country} if GENERIC_WORK_COUNTRY.search(field['label']) and employment_country else {}),
             **({'employment_countries':sorted(context['employment_countries'])} if GENERIC_WORK_COUNTRY.search(field['label']) and context.get('employment_countries') else {}),
             'label': ' '.join(field['label'].casefold().split()).rstrip(' *?:'),
+            **({'help_text':field['help_text']} if field.get('help_text') else {}),
+            **({'help_links':field['help_links']} if field.get('help_links') else {}),
             'widget': field.get('type', ''), 'maxlength': field.get('maxlength', -1),
             'constraints': constraints,
             'options': sorted(zip(options, values))}

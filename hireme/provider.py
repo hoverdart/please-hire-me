@@ -260,7 +260,7 @@ class ClaudeProvider:
         options=field.get('options',[])
         schema={'type':'object','additionalProperties':False,'required':['option'],
                 'properties':{'option':{'type':['string','null'],'enum':[None,*options]}}}
-        data={'question':field['label'],'options':options,'confirmed_fact':fact}
+        data={'question':field['label'],'help_text':field.get('help_text',''),'help_links':field.get('help_links',[]),'options':options,'confirmed_fact':fact}
         rules=("The option must be fully entailed by the confirmed value and add nothing it does not establish: no more specific ethnicity or region, "
                "no gender-identity modifier such as cisgender or transgender, no other time period, country, employer, duration, reason or commitment. "
                "Respect polarity: a question asking whether the applicant does NOT need something inverts Yes and No. "

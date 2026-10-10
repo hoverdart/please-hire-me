@@ -26,6 +26,16 @@ SNAPSHOT=r"""selector => {
   return copy.textContent.trim();
  }
  function reference(el) {return {id:el.id||'',name:el.name||'',tag:el.tagName.toLowerCase()};}
+ function details(el) {
+  const wrapper=el.closest('[data-field-path],.ashby-application-form-field-entry,.application-question,.field');
+  const descriptions=Array.from(wrapper?.querySelectorAll('.ashby-application-form-question-description,.field-description,.helper-text')||[]);
+  for(const id of (el.getAttribute('aria-describedby')||'').split(/\s+/).filter(Boolean)){
+   const node=document.getElementById(id);if(node&&!descriptions.includes(node))descriptions.push(node);
+  }
+  const help_text=descriptions.map(n=>n.innerText||n.textContent).join(' ').replace(/\s+/g,' ').trim();
+  const help_links=descriptions.flatMap(n=>Array.from(n.querySelectorAll('a[href]')).map(a=>({text:a.textContent.trim(),url:a.href})));
+  return {...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {})};
+ }
  function leverLabel(el){
   const question=el.closest('.application-question');
   const heading=labelText(question?.querySelector('.application-label'));
@@ -56,7 +66,7 @@ SNAPSHOT=r"""selector => {
    const entry=el.closest('.ashby-application-form-field-entry');
    const heading=entry?.querySelector('.ashby-application-form-question-title');
    const buttons=controls.filter(x=>x.matches('.ashby-application-form-input-yesno-option')&&x.closest('.ashby-application-form-input-yesno')===group);
-   out.push({index,indices:buttons.map(x=>controls.indexOf(x)),ref:reference(el),refs:buttons.map(reference),label:heading?.textContent.trim()||'',type:'yesno',options:buttons.map(x=>x.textContent.trim()),required:!!heading?.className.includes('_required_'),maxlength:-1,value:buttons.find(x=>x.getAttribute('aria-pressed')==='true')?.textContent.trim()||'',multiple:false});
+   out.push({index,indices:buttons.map(x=>controls.indexOf(x)),ref:reference(el),refs:buttons.map(reference),label:heading?.textContent.trim()||'',...details(el),type:'yesno',options:buttons.map(x=>x.textContent.trim()),required:!!heading?.className.includes('_required_'),maxlength:-1,value:buttons.find(x=>x.getAttribute('aria-pressed')==='true')?.textContent.trim()||'',multiple:false});
    return;
   }
   if(el.disabled || el.closest('[aria-hidden=true]') || (el.readOnly && el.tabIndex<0))return;
@@ -93,7 +103,7 @@ SNAPSHOT=r"""selector => {
   const entrySelector='.education--form,.employment--form,.experience--form,[data-automation-id="educationSection"],[data-automation-id="education"],[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]';
   const entry=el.closest(entrySelector);
   const entryPeers=entry ? Array.from(document.querySelectorAll(entrySelector)).filter(x=>x.getClientRects().length&&x.tagName===entry.tagName&&(entry.getAttribute('data-automation-id') ? x.getAttribute('data-automation-id')===entry.getAttribute('data-automation-id') : x.className===entry.className)) : [];
-  out.push({index,indices,...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),type,options,
+  out.push({index,indices,...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
    ...(el.closest('.education--form,[data-automation-id="educationSection"],[data-automation-id="education"]') ? {section:'education'} : el.closest('.employment--form,.experience--form,[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]') ? {section:'employment'} : {}),
    ...(entryPeers.length>1 ? {section_entry:entryPeers.indexOf(entry)} : {}),
    required:required||/[\*✱]/.test(question),
@@ -116,7 +126,7 @@ PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output'
 def _model_dependent(field, reason):
     if reason in ('stale_writing_context','writing_upgrade_needed','unsupported_or_stale_sample'):return True
     # Only a field without its own confirmed-fact rule could have been answered from context.
-    return reason=='missing_fact' and field_key(field['label']) in (None,'school','degree','major','skills','location','city','state')
+    return reason=='missing_fact' and field_key(field['label']) in (None,'school','degree','major','skills','location','city','state','alternate_email')
 
 
 def _prefilled(field):

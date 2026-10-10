@@ -5,7 +5,7 @@ import re
 
 from .util import Blocked, digest
 from .field_context import binding as contextual_binding, save_binding, present, field_context,validate_numeric
-from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location
+from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
 RULES = [
@@ -19,7 +19,7 @@ RULES = [
     (r"^linkedin( profile)?( url| link)?\*?$", "linkedin"), (r"^github( profile)?( url| link)?\*?$", "github"),
     (r"^(website|personal website|portfolio)( url| link)?\*?$", "website"),
     (r"^(school|university|college|school name|university name|college\s*/\s*university|university\s*/\s*college)\*?$", "school"),
-    (r"^(major|field of study|discipline\s*/\s*field of study)\*?$", "major"), (r"^(cumulative )?gpa\*?$", "gpa"),
+    (r"^(major|field of study|discipline|discipline\s*/\s*field of study)\*?$", "major"), (r"^(cumulative )?gpa\*?$", "gpa"),
     (r"^(expected |anticipated )?graduation( date| semester| term| season| month| year| month\s*/\s*year| month and year)?\*?$", "graduation"),
     (r"^are you (legally )?authorized to work in (the )?(united states|us|u\.s\.)\??\*?$", "work_authorized_us"),
     (r"^will you( now or in the future)? require( visa)? sponsorship( now or in the future)?\??\*?$", "needs_sponsorship"),
@@ -50,6 +50,7 @@ def field_key(label):
     # Politically exposed person (PEP) declarations ask the same thing.
     if re.search(r'entrusted with (?:a )?(?:prominent )?(?:public )?(?:position|function)|politically exposed|family member of (?:someone|a person) holding such a position',label,re.I):return 'government_official'
     label=" ".join(label.strip().casefold().split()).rstrip(" *?:")
+    if re.fullmatch(r'(?:alternate|alternative|secondary|additional|other|backup) e-?mail(?: address)?',label):return 'alternate_email'
     if re.fullmatch(r'(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)',label):return 'over_18'
     if re.fullmatch(r'are you willing and able to work nights and weekends',label):return 'nights_weekends'
     if re.fullmatch(r'do you have experience working with robots',label):return 'robots_experience'
@@ -80,6 +81,7 @@ def field_key(label):
     if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
     if re.search(r"(?:which|what).*(?:college|university|school).*(?:attend|enroll)|name of (?:your |the )?(?:college|university|school)",label):return 'school'
     if re.fullmatch(r"(?:current |pursuing |academic )?degree(?: type)?",label):return 'degree'
+    if re.search(r'\bdegree\b.*\b(?:currently pursuing|pursuing|working (?:toward|towards|on))\b',label) and not re.search(r'completed|earned|obtained',label):return 'degree'
     if re.search(r'when.*(?:expect|plan).*graduat|(?:expected|anticipated).*graduation|what year.*graduat|^when (?:do|will) you graduate$',label):return 'graduation'
     if 'highest' in label and re.search(r'education|degree',label):return 'highest_completed_degree'
     if re.search(r'(?:will|do).*(?:require|need).*sponsor|(?:require|need).*employment visa',label):return 'needs_sponsorship'
@@ -201,13 +203,13 @@ def _option_value(key, value, options, context=None):
 
 
 # Identity, contact and free-text facts are entered verbatim, never translated into a choice.
-UNMAPPED_FACTS={'full_name','first_name','last_name','preferred_name','native_name','name_pronunciation','email','phone','street','postal_code',
+UNMAPPED_FACTS={'full_name','first_name','last_name','preferred_name','native_name','name_pronunciation','email','alternate_email','phone','street','postal_code',
                 'linkedin','github','website','skills','business_activity_details'}
 
 
 def _option_mapping_id(key, fact, field):
     label=' '.join(field['label'].casefold().split()).rstrip(' *?:')
-    return digest(['option_mapping',key,fact['value'],label,field.get('type',''),sorted(field.get('options',[]))])
+    return digest(['option_mapping',key,fact['value'],label,field.get('type',''),sorted(field.get('options',[])),field.get('help_text',''),field.get('help_links',[])])
 
 
 def _mapped_option(store, key, field, provider=None):
@@ -315,6 +317,17 @@ def _us_citizen_or_resident(store,label,options):
     citizenship=store.facts().get('citizenship')
     if not citizenship or re.sub(r'[^a-z]','',citizenship['value'].casefold()) not in {'unitedstates','us','usa','unitedstatesofamerica'}:return None
     return {'value':'Yes','provenance':{'citizenship_revision':citizenship['revision']}}
+
+
+def _export_citizenship_answer(store,label,options):
+    """US citizenship establishes the exact citizen/national export category."""
+    if not re.search(r'\bITAR\b|International Traffic in Arms|export control',label,re.I):return None
+    if not re.search(r'identify|select|which|statement',label,re.I):return None
+    citizenship=store.facts().get('citizenship')
+    if not citizenship or re.sub(r'[^a-z]','',citizenship['value'].casefold()) not in {'us','usa','unitedstates','unitedstatesofamerica'}:return None
+    matches=[o for o in options if re.fullmatch(r'(?:A |I am a )?(?:United States|U\.?S\.?) citizen(?: or national)?\.?',o.strip(),re.I)]
+    if len(matches)!=1:return None
+    return {'value':matches[0],'provenance':{'citizenship_revision':citizenship['revision']}}
 
 
 def _chronological_academic_year(store,label):
@@ -554,7 +567,7 @@ def _compatible_binding(key, label):
         'programming_proficiency':r'(?:programming|program analysis).*proficien|proficien.*(?:programming|program analysis)',
         'full_name':r'\bname\b', 'first_name':r'\bfirst.*name\b', 'last_name':r'\blast.*name\b',
         'preferred_name':r'preferred.*name|nickname|(?:should|may|can) we call you', 'native_name':r'native.*name|name.*native',
-        'email':r'\be.?mail\b', 'phone':r'phone|mobile|dial|calling code',
+        'email':r'\be.?mail\b', 'alternate_email':r'\b(?:alternate|alternative|secondary|additional|other|backup) e.?mail\b', 'phone':r'phone|mobile|dial|calling code',
         'location':r'location|located|based|resid|\bcity\b', 'street':r'street|address',
         'city':r'\bcity\b', 'state':r'\bstate\b|province', 'postal_code':r'postal|\bzip\b',
         'country':r'country|residen', 'linkedin':r'linkedin', 'github':r'github', 'website':r'website|portfolio',
@@ -591,7 +604,9 @@ def _compatible_binding(key, label):
         'robots_experience':r'^do you have experience working with robots[? *]*$',
         'humanoids_experience':r'^have you worked with humanoids[? *]*$',
     }
-    if key=='degree' and re.search(r'highest|completed|earned',label,re.I):return False
+    if key=='degree' and (re.search(r'completed|earned|obtained',label,re.I) or re.search(r'highest',label,re.I) and field_key(label)!='degree'):return False
+    if key=='highest_completed_degree' and field_key(label)=='degree':return False
+    if key=='email' and field_key(label)=='alternate_email':return False
     return key in terms and bool(re.search(terms[key],label,re.I))
 
 
@@ -613,8 +628,8 @@ def _compatible_field(key, field, context=None):
     if key in {'work_authorized_us','needs_sponsorship','unrestricted_authorization'} and re.search(r'temporary.*authoriz',label,re.I):return False
     if key in {'recruitment_data_consent','demographic_data_consent'} and re.search(r'marketing|advertis|sell|sale|third.part',label,re.I):return False
     if key in {'summer_2027_available','summer_2027_relocate'} and not re.search(r'summer\s*2027',label+' '+(context or {}).get('title',''),re.I):return False
-    if key in {'work_authorized_us','unrestricted_authorization'}:
-        if re.search(r'\b(?:not|never)\b.{0,20}\b(?:authorized|eligible)|\b(?:unauthorized|ineligible)\b',label,re.I):return False
+    if key in {'work_authorized_us','needs_sponsorship','unrestricted_authorization'}:
+        if key!='needs_sponsorship' and re.search(r'\b(?:not|never)\b.{0,20}\b(?:authorized|eligible)|\b(?:unauthorized|ineligible)\b',label,re.I):return False
         foreign=r'\b(?:canada|united kingdom|australia|germany|france|india|singapore|japan|china|brazil|mexico|ireland|netherlands)\b'
         if re.search(foreign,label,re.I):return False
         explicit_us=bool(re.search(r'United States|\bU\.?S\.?\b|\bUSA\b',label,re.I))
@@ -627,8 +642,51 @@ def _compatible_field(key, field, context=None):
 
 
 def _us_location(location):
+    if us_city_location(location):return True
     if re.search(r'\b(?:Canada|Costa Rica|Spain|United Kingdom|UK|U\.K\.|Australia|Germany|France|India|Singapore|Japan|China|Brazil|Mexico|Ireland|Netherlands)\b',location,re.I):return False
     return bool(re.search(r'\bUnited States\b|\bUSA?\b|,\s*(?:AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b|,\s*(?:California|Washington|New York)\b',location,re.I))
+
+
+def _work_status_answer(store, field, key, context):
+    """Exact descriptive ATS choices with revision-bound supporting premises.
+
+    General authorization alone does not establish authorization for every
+    employer. Citizenship or an unrestricted declaration supplies that premise.
+    """
+    if key not in {'work_authorized_us','needs_sponsorship','unrestricted_authorization'}:return None
+    if not _compatible_field(key,field,context):return None
+    facts=store.facts();fact=facts.get(key);citizenship=facts.get('citizenship')
+    citizen=bool(citizenship and re.sub(r'[^a-z]','',citizenship['value'].casefold()) in {'us','usa','unitedstates','unitedstatesofamerica'})
+    value=fact['value'] if fact else ('No' if key=='needs_sponsorship' else 'Yes') if citizen else None
+    if value not in {'Yes','No'}:return None
+    if not fact and not re.search(r'United States|\bU\.?S\.?\b|\bUSA\b',field['label'],re.I) and not _us_location(work_country_location(context)):return None
+    if citizen and value!=('No' if key=='needs_sponsorship' else 'Yes'):raise Blocked('mapping_review','Conflicting US citizenship and work-status facts')
+    provenance={key+'_revision':fact['revision']} if fact else {'citizenship_revision':citizenship['revision']}
+    options=field.get('options',[])
+    if not fact and (not options or set(options)=={'Yes','No'}):return {'value':value,'provenance':provenance}
+    # A choice referring to the role's location needs US posting evidence even
+    # when the question itself mentions the United States.
+    if not _us_location(work_country_location(context)):return None
+    patterns={
+        'work_authorized_us':{
+            'Yes':r'Yes, I am currently eligible to work in the location where this role is based\.?',
+            'No':r'No, I am not currently eligible to work in the location where this role is based\.?'},
+        'needs_sponsorship':{
+            'Yes':r'Yes, I will require visa sponsorship now or in the future to continue working in the country where this role is based\.?',
+            'No':r'No, I do not require visa sponsorship now or in the future to continue working in the country where this role is based\.?'}}
+    matches=[o for o in options if re.fullmatch(patterns.get(key,{}).get(value,r'(?!)'),o.strip(),re.I)]
+    if key in {'work_authorized_us','unrestricted_authorization'}:
+        unrestricted=facts.get('unrestricted_authorization')
+        if value=='Yes' and (citizen or unrestricted and unrestricted['value']=='Yes'):
+            if citizen and unrestricted and unrestricted['value']=='No':raise Blocked('mapping_review','Conflicting unrestricted work-status facts')
+            any_employer=[o for o in options if re.fullmatch(r'Yes, I am authorized to work in this country for any employer\.?',o.strip(),re.I)]
+            if any_employer:
+                matches+=any_employer
+                provenance.update({'citizenship_revision':citizenship['revision']} if citizen else {'unrestricted_authorization_revision':unrestricted['revision']})
+        elif value=='No':
+            matches += [o for o in options if re.fullmatch(r'No, I am not authorized to work in this country for any employer\.?',o.strip(),re.I)]
+    if len(matches)!=1:return None
+    return {'value':matches[0],'provenance':provenance}
 
 
 def _employer_scope(store,host,label,context):
@@ -879,6 +937,8 @@ def resolve(store, host, field, provider=None, context=None):
             # Current residence is geography, not citizenship. A North American +1 alone is insufficient.
             if re.fullmatch(r'Berkeley,?\s+(?:CA|California)(?:,?\s+United States)?',location.get('value',''),re.I):
                 derived={'value':'United States','provenance':{'residence_location_revision':location['revision']}}
+        status_answer=_work_status_answer(store,field,key,context)
+        if status_answer:derived=status_answer;key=None
         cat=category(label) if field.get('type') in ('text','textarea') and not options else None
         is_writing=not options and field.get('type') in ('text','textarea') and (cat or re.search(r'example|describe|tell us|why|what.*(?:interests|excites)|share.*(?:work|project)',label,re.I))
         if is_writing and not key and provider and store.settings()['tailored_writing']:
@@ -901,8 +961,8 @@ def resolve(store, host, field, provider=None, context=None):
         if graduation_confirmation:
             key=None;template=None;derived=graduation_confirmation
         if not key and not derived:derived=_context_preference(store,label,options,context,field)
-        if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label) or _current_enrollment(store,label,options) or _us_citizen_or_resident(store,label,options) or _cohort_answer(store,field,context)
-        if key and key not in store.facts() and provider and store.settings()['tailored_writing'] and key in {'school','degree','major','skills','location','city','state'}:
+        if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label) or _current_enrollment(store,label,options) or _us_citizen_or_resident(store,label,options) or _export_citizenship_answer(store,label,options) or _cohort_answer(store,field,context)
+        if key and key not in store.facts() and provider and store.settings()['tailored_writing'] and key in {'school','degree','major','skills','location','city','state','alternate_email'}:
             key=None  # Approved context may state an ordinary fact not separately entered.
         match_abstention=_abstention_key(store,'match_field',context) if not key and not template and not derived and provider and field.get('required') else None
         if match_abstention and not _abstained(store,match_abstention):
@@ -921,7 +981,7 @@ def resolve(store, host, field, provider=None, context=None):
             if bool(proposed_key) != bool(tid):
                 if proposed_key in facts:
                     # These two concepts cannot be conflated even by semantic matching.
-                    if _compatible_field(proposed_key,field,context) and not ('highest' in label.casefold() and proposed_key=='degree'):
+                    if _compatible_field(proposed_key,field,context):
                         key=proposed_key;pending_binding={'key':key}
                 elif tid:
                     template=next((t for t in store.templates() if t['id']==tid),None)
@@ -961,6 +1021,11 @@ def resolve(store, host, field, provider=None, context=None):
                 parts=[{k:v for k,v in by_id[x].items() if k!='id'} for x in ids]
                 writing={'value':draft['answer'],'provenance':{'tailored':True,'context_answer':True,'sample_parts':parts,
                          'text_hash':digest(draft['answer']),'context_hash':writing_context_hash(store,context),'field_hash':digest(context['field_context']),'facts_hash':digest(store.facts())}}
+                if field_key(label)=='alternate_email':
+                    from .config import validate_fact
+                    try:validate_fact('alternate_email',writing['value'])
+                    except ValueError:raise Blocked('writing_unsupported','The alternate email is not a valid address') from None
+                    if writing['value'].casefold()==store.facts().get('email',{}).get('value','').casefold():raise Blocked('missing_fact','Confirm an alternate email different from the primary address')
                 _validate_writing(store,writing);validate_numeric(writing['value'],field)
                 if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
                 store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)

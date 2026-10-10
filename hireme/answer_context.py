@@ -11,6 +11,12 @@ def employment_country_question(label):
                           r'(?:which|what) country.*(?:seeking|wish|intend|would like).*work', label, re.I))
 
 
+def us_city_location(location):
+    """Exact distinctive US city labels; mixed or unknown locations fail."""
+    places=[p.strip().casefold() for p in re.split(r'[,;/]',location)]
+    return bool(places) and all(p in {'new york', 'new york city', 'san francisco', 'seattle', 'chicago'} for p in places)
+
+
 def selected_employment_country(context):
     selections = [a['value'] for a in context.get('previous_answers', [])
                   if employment_country_question(a.get('field', {}).get('label', ''))]
