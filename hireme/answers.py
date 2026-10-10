@@ -50,6 +50,8 @@ def field_key(label):
     # Politically exposed person (PEP) declarations ask the same thing.
     if re.search(r'entrusted with (?:a )?(?:prominent )?(?:public )?(?:position|function)|politically exposed|family member of (?:someone|a person) holding such a position',label,re.I):return 'government_official'
     label=" ".join(label.strip().casefold().split()).rstrip(" *?:")
+    if re.fullmatch(r'are you (?:currently )?registered with finra',label):return 'finra_registered'
+    if re.fullmatch(r'(?:are you actively maintaining|do you (?:actively )?(?:hold|maintain)) (?:any )?securities licenses',label):return 'securities_licenses'
     if re.fullmatch(r'(?:alternate|alternative|secondary|additional|other|backup) e-?mail(?: address)?',label):return 'alternate_email'
     if re.fullmatch(r'(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)',label):return 'over_18'
     if re.fullmatch(r'are you willing and able to work nights and weekends',label):return 'nights_weekends'
@@ -57,6 +59,7 @@ def field_key(label):
     if re.fullmatch(r'have you worked with humanoids',label):return 'humanoids_experience'
     if re.match(r'when will you be available to work as a full.time,? permanent employee\?',label):return 'fulltime_start'
     if re.fullmatch(r'(?:earliest (?:available )?start(?: date)?|available start date|start date availability)',label):return 'earliest_start'
+    if re.fullmatch(r'what is the earliest date you are available to start (?:this|the) (?:position|role|job)',label):return 'earliest_start'
     if re.search(r'\bhigh school\b',label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
@@ -609,6 +612,8 @@ def _compatible_binding(key, label):
         'demographic_data_consent':r'consent.{0,80}(?:collect|stor|process).{0,120}(?:demographic|self.identif|voluntary.{0,20}survey)',
         'conflict_disclosures':r'(?:personal|familial) relationships?(?:.|\n){0,300}outside business activit',
         'government_official':r'government official|public (?:position|function)|politically exposed|holding such a position',
+        'finra_registered':r'^are you (?:currently )?registered with finra[? *]*$',
+        'securities_licenses':r'^(?:are you actively maintaining|do you (?:actively )?(?:hold|maintain)) (?:any )?securities licenses[? *]*$',
         'over_18':r'^(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)[? *]*$',
         'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?',
         'nights_weekends':r'^are you willing and able to work nights and weekends[? *]*$',
@@ -1077,6 +1082,7 @@ def resolve(store, host, field, provider=None, context=None):
                 if explicit:return explicit
                 raise Blocked('option_mismatch',label)
             value=mapped;provenance={**provenance,'option_mapping':True}
+    if field.get('date_format'):value=present(None,value,field)
     if field.get('maxlength',-1)>0 and len(value)>field['maxlength']:raise Blocked('answer_too_long',label)
     validate_numeric(value,field)
     if pending_binding:save_binding(store,host,field,context,**pending_binding)

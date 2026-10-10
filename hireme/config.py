@@ -138,6 +138,8 @@ FACTS = {
     "hispanic_latino": "Hispanic / Latino response (separate from race)",
     "conflict_disclosures": "Have a conflict-of-interest disclosure for employers you apply to: relationships with their staff or vendors, outside business activity, investments over 5% or in their competitors/partners, or retained IP (Yes / No)",
     "government_official": "Within 5 years, a government official or holder of a prominent public function (PEP), referred by one, or closely related to one (Yes / No)",
+    "finra_registered": "Currently registered with FINRA (Yes / No)",
+    "securities_licenses": "Actively maintain securities licenses (Yes / No)",
     "demographic_data_consent": "Consent to employers storing/processing your voluntary demographic survey responses (Yes / No)",
     "over_18": "Currently 18 or older (Yes / No)",
     "fulltime_start": "Earliest permanent full-time start (YYYY-MM-DD)",
@@ -151,6 +153,7 @@ REQUIRED = {"full_name", "first_name", "last_name", "email", "phone", "location"
 BOOLEANS = {"work_authorized_us", "needs_sponsorship", "us_person", "unrestricted_authorization",
             "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent", "temporary_work_authorization", "conflict_disclosures", "government_official", "demographic_data_consent"}
 BOOLEANS |= {'over_18','nights_weekends','robots_experience','humanoids_experience','decline_unanswered_demographics'}
+BOOLEANS |= {'finra_registered','securities_licenses'}
 
 
 def validate_fact(key: str, value: str) -> str:

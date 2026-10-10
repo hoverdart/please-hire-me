@@ -8,7 +8,7 @@ from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
 MAPPING_VERSION = 18
-ADAPTER_VERSION = 12
+ADAPTER_VERSION = 13
 
 def field_context(host, field, context=None):
     context = context or {}
@@ -17,6 +17,7 @@ def field_context(host, field, context=None):
     if len(values) != len(options):
         raise Blocked('invalid_option_metadata', field['label'])
     constraints={key:field.get(key) for key in ('required','min','max','step','pattern','multiple')}
+    if field.get('date_format'):constraints['date_format']=field['date_format']
     if field.get('type')=='number':constraints['step_base']=field.get('step_base')
     employment_country=selected_employment_country(context)
     return {'version': MAPPING_VERSION, 'ats': ats(host), 'scope': host,
@@ -65,6 +66,14 @@ def save_binding(store, host, field, context, key=None, template_id=None):
 def present(key, value, field):
     """Format confirmed facts without deriving citizenship or legal status."""
     label = field['label'].casefold()
+    if field.get('date_format'):
+        from datetime import datetime
+        parsed=None
+        for pattern in ('%Y-%m-%d','%m/%d/%Y','%B %d, %Y','%b %d, %Y'):
+            try:parsed=datetime.strptime(value,pattern).date();break
+            except ValueError:pass
+        if parsed is None:raise Blocked('missing_fact','Confirm an exact date ('+field['date_format']+'); a month alone does not establish the day')
+        return parsed.isoformat() if field['date_format']=='YYYY-MM-DD' else parsed.strftime('%m/%d/%Y')
     if key=='fulltime_start' and re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):
         if field.get('type') in {'text','textarea'} and not field.get('options'):
             from datetime import date

@@ -37,7 +37,8 @@ SNAPSHOT=r"""selector => {
   }
   const help_text=descriptions.map(n=>n.innerText||n.textContent).join(' ').replace(/\s+/g,' ').trim();
   const help_links=descriptions.flatMap(n=>Array.from(n.querySelectorAll('a[href]')).map(a=>({text:a.textContent.trim(),url:a.href})));
-  return {...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {})};
+  const date_format=el.type==='date'?'YYYY-MM-DD':el.classList.contains('ashby-application-form-input-date')?'MM/DD/YYYY':null;
+  return {...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {}),...(date_format?{date_format}: {})};
  }
  function leverLabel(el){
   const question=el.closest('.application-question');

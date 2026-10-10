@@ -2301,6 +2301,8 @@ const groups = {
     "summer_2027_available",
   ],
   "Employer screening questions": [
+    "finra_registered",
+    "securities_licenses",
     "conflict_disclosures",
     "outside_business_activity",
     "business_activity_details",

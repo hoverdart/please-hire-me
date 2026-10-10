@@ -5,6 +5,18 @@ from hireme.config import validate_fact
 from hireme.util import Blocked, digest
 
 
+def test_confirmed_finra_and_securities_status_are_distinct_from_security_credentials(store, job):
+    store.put_facts({'finra_registered':'No','securities_licenses':'No'})
+    for label,key in [('Are you currently registered with FINRA? *','finra_registered'),
+                      ('Are you actively maintaining any securities licenses?','securities_licenses')]:
+        f=field(label,options=['Yes','No'])
+        answer=resolve(store,job['host'],f,context=job)
+        assert answer['value']=='No' and answer['provenance']['fact_key']==key
+    assert field_key('Do you hold a security clearance?') is None
+    assert field_key("If 'Yes' to above, are you actively maintaining any security licenses?*") is None
+    with pytest.raises(ValueError):validate_fact('finra_registered','Maybe')
+
+
 def field(label, options=None):
     return {'label': label, 'type': 'select' if options else 'text',
             'required': True, 'options': options or [], 'maxlength': -1}
@@ -254,3 +266,29 @@ def test_greenhouse_details_include_policy_and_ignore_widget_state(store, job):
         b.page.evaluate("document.getElementById('react-select-terms-placeholder').remove();document.getElementById('terms-error').textContent='Please select a choice'")
         after = b.page.evaluate(SNAPSHOT, CONTROLS)[0]
         assert field_context(job['host'], before, job) == field_context(job['host'], after, job)
+
+
+@pytest.mark.parametrize('native,expected',[(False,'05/19/2027'),(True,'2027-05-19')])
+def test_calendar_requires_a_confirmed_day_and_formats_scoped_answer(store, job, package, native, expected):
+    from hireme.browser import Browser
+    store.put_facts({'earliest_start':'2027-05'})
+    label='What is the earliest date you are available to start this position?'
+    with Browser(store,test_url='http://127.0.0.1:12345') as b:
+        b.page.set_content('<label for="start">'+label+'</label><input id="start" required '+
+                           ('type="date"' if native else 'type="text" placeholder="Pick date..." class="ashby-application-form-input-date"')+'>')
+        f=b._snapshot()[0]
+        assert f['date_format']==('YYYY-MM-DD' if native else 'MM/DD/YYYY')
+        with pytest.raises(Blocked,match='month alone'):
+            resolve(store,job['host'],f,context=job)
+        qid=store.ask(job['id'],job['host'],label,[],field=f,context=job)
+        store.answer_question(qid,'2027-05-19')
+        answer=resolve(store,job['host'],f,context=job)
+        assert answer['value']==expected
+        b._fill(answer)
+        assert b._control(f).input_value()==expected
+    package.update(answers=[answer],steps=[],facts_hash=digest(store.facts()))
+    validate_package(store,job,package)
+    store.put_facts({'fulltime_start':'2028-05-19'})
+    fulltime={**job,'title':'Software Engineer, New Grad'}
+    # Another job/context cannot reuse the applicant's internship-day approval.
+    assert resolve(store,job['host'],f,context=fulltime)['value']==expected.replace('2027','2028')
