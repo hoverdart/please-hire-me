@@ -626,8 +626,21 @@ def _compatible_binding(key, label):
     return key in terms and bool(re.search(terms[key],label,re.I))
 
 
+def _finra_license_followup(label,context):
+    if not re.fullmatch(r"if ['\"’]?yes['\"’]? to above,? are you actively maintaining any securit(?:y|ies) licenses[? *]*",label.strip(),re.I):return False
+    normalize=lambda value:' '.join(value.casefold().split()).rstrip(' *?:')
+    questions=context.get('form_questions',[])
+    matches=[i for i,q in enumerate(questions) if normalize(q)==normalize(label)]
+    if len(matches)==1:
+        i=matches[0]
+        return i>0 and field_key(questions[i-1])=='finra_registered'
+    previous=context.get('previous_answers',[])
+    return bool(previous and field_key(previous[-1]['field']['label'])=='finra_registered')
+
+
 def _field_fact_key(store,label,context):
     key=field_key(label)
+    if not key and _finra_license_followup(label,context):key='securities_licenses'
     if key=='earliest_start' and store.facts().get('fulltime_start') and context.get('title') and not re.search(r'internship|co.op|part.time',label,re.I):
         from .policy import employment_kind
         if employment_kind(context)=='new-grad':return 'fulltime_start'
@@ -636,6 +649,7 @@ def _field_fact_key(store,label,context):
 
 def _compatible_field(key, field, context=None):
     label=field['label']
+    if key=='securities_licenses' and _finra_license_followup(label,context or {}):return True
     if key=='fulltime_start' and _compatible_binding('earliest_start',label):
         from .policy import employment_kind
         return bool((context or {}).get('title') and employment_kind(context)=='new-grad' and not re.search(r'internship|co.op|part.time',label,re.I))

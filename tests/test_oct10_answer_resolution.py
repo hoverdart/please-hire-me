@@ -17,6 +17,20 @@ def test_confirmed_finra_and_securities_status_are_distinct_from_security_creden
     with pytest.raises(ValueError):validate_fact('finra_registered','Maybe')
 
 
+def test_finra_license_followup_requires_its_actual_preceding_question(store,job,package):
+    store.put_facts({'finra_registered':'No','securities_licenses':'No'})
+    registration=field('Are you currently registered with FINRA? *',['Yes','No'])
+    licenses=field("If 'Yes' to above, are you actively maintaining any security licenses?*",['Yes','No'])
+    with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],licenses,context=job)
+    context={**job,'form_questions':[registration['label'],licenses['label']]}
+    answers=[resolve(store,job['host'],f,context=context) for f in (registration,licenses)]
+    assert answers[1]['value']=='No' and answers[1]['provenance']['fact_key']=='securities_licenses'
+    package.update(answers=answers,steps=[],facts_hash=digest(store.facts()))
+    validate_package(store,job,package)
+    context['form_questions']=[registration['label'],'Do you hold a security clearance?',licenses['label']]
+    with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],licenses,context=context)
+
+
 def field(label, options=None):
     return {'label': label, 'type': 'select' if options else 'text',
             'required': True, 'options': options or [], 'maxlength': -1}
