@@ -8,7 +8,7 @@ from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
 MAPPING_VERSION = 18
-ADAPTER_VERSION = 14
+ADAPTER_VERSION = 15
 
 def field_context(host, field, context=None):
     context = context or {}

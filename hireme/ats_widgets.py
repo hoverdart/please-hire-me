@@ -1,6 +1,14 @@
 """Small native-widget operations shared by supported ATS flows."""
 from .util import Blocked
 
+def committed_chips(control):
+    return control.evaluate("""e=>{
+        for(let n=e.parentElement,depth=0;n&&depth<5;n=n.parentElement,depth++){
+            const labels=Array.from(n.querySelectorAll('[class*=multi-value__label],[class*=multiValueLabel]'))
+                .filter(x=>x.getClientRects().length).map(x=>x.textContent.trim()).filter(Boolean);
+            if(labels.length)return labels;
+        }return [];}""")
+
 def select_exact(control, field, label):
     options=field.get('options',[])
     if options.count(label)!=1:raise Blocked('option_mismatch',field['label'])
@@ -15,6 +23,7 @@ def select_exact(control, field, label):
 
 def select_combobox_exact(browser,control,field,label):
     if field.get('options',[]).count(label)!=1:raise Blocked('option_mismatch',field['label'])
+    if committed_chips(control)==[label]:return
     from playwright.sync_api import TimeoutError
     from .answers import field_key
     import re
