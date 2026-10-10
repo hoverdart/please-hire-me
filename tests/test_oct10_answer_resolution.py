@@ -236,3 +236,21 @@ def test_discipline_search_reaches_other_beyond_initial_menu(store, job):
         assert answer['value'] == 'Other' and answer['provenance']['fact_key'] == 'major'
         b._fill(answer)
         assert b._control(f).input_value() == 'Other'
+
+
+def test_greenhouse_details_include_policy_and_ignore_widget_state(store, job):
+    from hireme.browser import Browser, SNAPSHOT, CONTROLS
+    from hireme.field_context import field_context
+    with Browser(store, test_url='http://127.0.0.1:12345') as b:
+        b.page.set_content('''<div class="field-wrapper"><div class="select">
+            <label for="terms">Terms and Conditions*</label>
+            <input id="terms" role="combobox" aria-describedby="react-select-terms-placeholder terms-error">
+            <div id="react-select-terms-placeholder">Select...</div><div id="terms-error"></div></div>
+            <div class="body body__secondary"><p>I agree to the
+                <a href="https://employer.invalid/privacy">privacy policy</a>.</p></div></div>''')
+        before = b.page.evaluate(SNAPSHOT, CONTROLS)[0]
+        assert before['help_text'] == 'I agree to the privacy policy.'
+        assert before['help_links'] == [{'text': 'privacy policy', 'url': 'https://employer.invalid/privacy'}]
+        b.page.evaluate("document.getElementById('react-select-terms-placeholder').remove();document.getElementById('terms-error').textContent='Please select a choice'")
+        after = b.page.evaluate(SNAPSHOT, CONTROLS)[0]
+        assert field_context(job['host'], before, job) == field_context(job['host'], after, job)

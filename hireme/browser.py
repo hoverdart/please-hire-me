@@ -27,10 +27,13 @@ SNAPSHOT=r"""selector => {
  }
  function reference(el) {return {id:el.id||'',name:el.name||'',tag:el.tagName.toLowerCase()};}
  function details(el) {
-  const wrapper=el.closest('[data-field-path],.ashby-application-form-field-entry,.application-question,.field');
-  const descriptions=Array.from(wrapper?.querySelectorAll('.ashby-application-form-question-description,.field-description,.helper-text')||[]);
+  const wrapper=el.closest('[data-field-path],.ashby-application-form-field-entry,.application-question,.field,.field-wrapper');
+  const descriptions=Array.from(wrapper?.querySelectorAll('.ashby-application-form-question-description,.field-description,.helper-text,.body__secondary')||[]);
   for(const id of (el.getAttribute('aria-describedby')||'').split(/\s+/).filter(Boolean)){
-   const node=document.getElementById(id);if(node&&!descriptions.includes(node))descriptions.push(node);
+   // React-select placeholders and validation/live-region text change after
+   // entry. They are widget state rather than employer question wording.
+   if(/-(?:placeholder|error|live-region)$/.test(id))continue;
+   const node=document.getElementById(id);if(node&&!node.matches('[role=alert],[role=log],.select__placeholder')&&!descriptions.includes(node))descriptions.push(node);
   }
   const help_text=descriptions.map(n=>n.innerText||n.textContent).join(' ').replace(/\s+/g,' ').trim();
   const help_links=descriptions.flatMap(n=>Array.from(n.querySelectorAll('a[href]')).map(a=>({text:a.textContent.trim(),url:a.href})));
