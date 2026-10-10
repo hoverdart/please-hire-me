@@ -4,6 +4,7 @@ from .util import Blocked
 def committed_chips(control):
     return control.evaluate("""e=>{
         for(let n=e.parentElement,depth=0;n&&depth<5;n=n.parentElement,depth++){
+            if(n.querySelectorAll('[role=combobox]').length>1)return [];
             const labels=Array.from(n.querySelectorAll('[class*=multi-value__label],[class*=multiValueLabel]'))
                 .filter(x=>x.getClientRects().length).map(x=>x.textContent.trim()).filter(Boolean);
             if(labels.length)return labels;

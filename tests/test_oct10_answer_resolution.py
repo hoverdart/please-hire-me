@@ -331,5 +331,8 @@ def test_selected_gpa_chip_remains_an_option_when_menu_hides_it(store,job,packag
         b._fill(refreshed)
         assert b.page.locator('.select__multi-value__label').count()==1
         assert b._snapshot()[0]['value']=='3.6-4.0'
+        b.page.evaluate("document.body.insertAdjacentHTML('beforeend','<div><input id=neighbor role=combobox></div>')")
+        from hireme.ats_widgets import committed_chips
+        assert committed_chips(b.page.locator('#neighbor'))==[]
     package.update(answers=[refreshed],steps=[],facts_hash=digest(store.facts()))
     validate_package(store,job,package)
