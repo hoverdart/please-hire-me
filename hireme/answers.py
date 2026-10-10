@@ -64,6 +64,7 @@ def field_key(label):
     if re.fullmatch(r'(?:phone )?(?:country|dial|calling) code',label):return 'phone'
     if label=='consent to receiving text messages':return 'sms'
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
+    if re.fullmatch(r'(?:please )?(?:select|indicate|enter) the country where you (?:currently )?(?:reside|live)\.?',label):return 'country'
     if re.fullmatch(r'(?:what are your )?pronouns',label):return 'pronouns'
     # Applicants often misspell it "pronounciation"; it is never the pronouns question.
     if re.fullmatch(r'(?:(?:your |legal |preferred )?name )?prono?unciation(?: of your name)?|(?:how (?:do|should) (?:we|you|i) (?:pronounce|say) your name)',label):return 'name_pronunciation'
@@ -452,6 +453,16 @@ def _context_preference(store, label, options, context, field=None):
                 matches=[x for x in options if normalize(x)==term]
                 if term in languages and len(matches)==1:
                     value=matches[0];evidence={'skills_revision':skills['revision']};break
+    elif (re.search(r'\bcohorts?\b',low) and re.search(r'\binternships?\b',low)
+          and re.search(r'choose which cohort works best for you',low)
+          and facts.get('summer_2027_available',{}).get('value')=='Yes'
+          and facts.get('earliest_start',{}).get('value')=='2027-05'):
+        # This chooses an approximate summer intake; it does not promise a
+        # particular duration or availability for a second cohort.
+        summer=[x for x in options if re.fullmatch(r'Summer \(May\s*[-–—]\s*September\)',x)]
+        if len(summer)==1:
+            value=summer[0];evidence={'summer_2027_available_revision':facts['summer_2027_available']['revision'],
+                                    'earliest_start_revision':facts['earliest_start']['revision']}
     elif seasons and re.search(r'internship.*(?:available|position|season|term)|(?:season|term).*intern',low):
         start=facts.get('earliest_start',{}).get('value','')
         # Choose the explicitly targeted summer intake, not unrelated academic terms.

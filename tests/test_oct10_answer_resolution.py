@@ -103,6 +103,38 @@ def test_unrestricted_declaration_also_establishes_any_employer(store, job):
     assert 'unrestricted_authorization_revision' in a['provenance']
 
 
+def test_nyc_and_residence_use_geography_without_model(store, job, package):
+    store.put_facts({'citizenship': 'United States', 'location': 'Berkeley, CA'})
+    auth = resolve(store, job['host'], field(AUTH, AUTH_OPTIONS), context={**job, 'location': 'NYC'})
+    assert auth['value'] == AUTH_OPTIONS[0]
+    residence = field('Please select the country where you currently reside. *', ['US', 'India', 'Canada'])
+    answer = resolve(store, job['host'], residence, context=job)
+    assert answer['value'] == 'US'
+    package.update(answers=[answer], steps=[], facts_hash=digest(store.facts()))
+    validate_package(store, job, package)
+    store.put_facts({'location': 'Toronto, Canada'})
+    with pytest.raises(Blocked):
+        validate_package(store, job, {**package, 'facts_hash': digest(store.facts())})
+
+
+def test_stripe_summer_cohort_uses_confirmed_availability_not_second_cohort(store, job, package):
+    store.update_settings({'contextual_preferences': True})
+    store.put_facts({'summer_2027_available': 'Yes', 'earliest_start': '2027-05'})
+    f = field('We host cohorts of 12 or 16 week internships over Winter or Summer. Please choose which cohort works best for you.*',
+              ['Winter (January - April)', 'Summer (May - September)'])
+    answer = resolve(store, job['host'], f, context=job)
+    assert answer['value'] == f['options'][1]
+    package.update(answers=[answer], steps=[], facts_hash=digest(store.facts()))
+    validate_package(store, job, package)
+    second = field('Do you have flexibility to consider a second cohort option?',
+                   ['I am not pursuing another cohort at this time', *f['options']])
+    with pytest.raises(Blocked):
+        resolve(store, job['host'], second, context=job)
+    store.put_facts({'summer_2027_available': 'No'})
+    with pytest.raises(Blocked):
+        validate_package(store, job, {**package, 'facts_hash': digest(store.facts())})
+
+
 @pytest.mark.parametrize('location', ['Remote', 'New York / London', 'United States; Canada', 'York', 'Toronto, Canada'])
 def test_citizenship_does_not_authorize_foreign_or_ambiguous_role(store, job, location):
     store.put_facts({'citizenship': 'United States'})

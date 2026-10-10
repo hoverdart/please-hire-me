@@ -14,7 +14,7 @@ def employment_country_question(label):
 def us_city_location(location):
     """Exact distinctive US city labels; mixed or unknown locations fail."""
     places=[p.strip().casefold() for p in re.split(r'[,;/]',location)]
-    return bool(places) and all(p in {'new york', 'new york city', 'san francisco', 'seattle', 'chicago'} for p in places)
+    return bool(places) and all(p in {'new york', 'new york city', 'nyc', 'san francisco', 'seattle', 'chicago'} for p in places)
 
 
 def selected_employment_country(context):
