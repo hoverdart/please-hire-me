@@ -114,7 +114,8 @@ def source_result(store,sid,jobs=None,error=None):
                     try:job=next(pending)
                     except StopIteration:
                         done=True;break
-                    key=store.upsert_job(job);job={**job,'id':key}
+                    key=store.upsert_job(job)
+                    job=json.loads(store.db.execute('SELECT payload FROM jobs WHERE id=?',(key,)).fetchone()[0])
                     # Recorded outcomes and manual decisions remain authoritative.
                     if safe_state(store,key) and not store.db.execute('SELECT 1 FROM job_decisions WHERE job_id=?',(key,)).fetchone():
                         try:listing_scope(job,settings)

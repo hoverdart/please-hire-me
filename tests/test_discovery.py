@@ -64,6 +64,33 @@ def test_rediscovery_preserves_manual_hold_and_does_not_mutate_input(store,job):
     assert job['title']=='Software Engineer Intern Summer 2027'
 
 
+@pytest.mark.parametrize('recorded',[False,True])
+def test_thin_aggregator_does_not_erase_employer_season_or_outcome(store,job,package,recorded):
+    from hireme.policy import eligible
+    official={**job,'source':'gh:acme','title':'Software Engineering Internship - Summer 2027',
+              'location':'Chicago, Illinois, United States','description':'Summer 2027 internship building Python software.'}
+    store.put_facts({'summer_2027_relocate':'Yes'})
+    source_result(store,'gh:acme',[official])
+    if recorded:
+        package['facts_hash']=digest(store.facts())
+        aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    applications=[dict(r) for r in store.db.execute('SELECT * FROM applications')]
+    sparse={**job,'source':'simplify:internships','title':'Software Engineering Intern',
+            'location':'Chicago, IL','description':''}
+    source_result(store,'simplify:internships',[sparse])
+    row=store.db.execute('SELECT * FROM jobs WHERE id=?',(job['id'],)).fetchone()
+    saved=json.loads(row['payload'])
+    assert saved['title']==official['title'] and saved['source']=='gh:acme'
+    assert saved['description']==official['description'] and sparse['description']==''
+    eligible(saved,store.settings(),store.facts())
+    assert [dict(r) for r in store.db.execute('SELECT * FROM applications')]==applications
+    if recorded:assert row['status']=='unknown'
+    else:assert row['status']=='discovered' and row['reason']==''
+    refreshed={**official,'description':'Updated employer requirements for Summer 2027.'}
+    source_result(store,'gh:acme',[refreshed])
+    assert json.loads(store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()[0])['description']==refreshed['description']
+
+
 def test_greenhouse_custom_link_uses_official_requisition():
     from hireme.discovery import probe
     class Net:

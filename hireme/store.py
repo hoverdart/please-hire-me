@@ -502,6 +502,12 @@ class Store:
         with self.transaction():
             existing=self.db.execute('SELECT id,payload FROM jobs WHERE url=?',(job['url'],)).fetchone()
             key=existing['id'] if existing else job['id']
+            if existing and job.get('source','').startswith('simplify:') and not job.get('description'):
+                previous=json.loads(existing['payload'])
+                # Aggregator titles omit seasons and locations. Keep the employer's
+                # complete posting until another employer read refreshes it.
+                if previous.get('description') and previous.get('source','').startswith(('gh:','ash:','lv:')):
+                    job=previous
             payload={**job,'id':key}
             if job.get('answer_scope') and existing:
                 previous=json.loads(existing['payload'])
