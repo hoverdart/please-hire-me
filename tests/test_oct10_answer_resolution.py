@@ -211,3 +211,28 @@ def test_question_details_are_visible_and_bind_agreement_approval(store, job):
     changed = {**f, 'help_text': 'I consent to marketing and selling my information.'}
     with pytest.raises(Blocked):
         resolve(store, job['host'], changed, context=job)
+
+
+def test_discipline_search_reaches_other_beyond_initial_menu(store, job):
+    from hireme.browser import Browser
+    store.put_facts({'major': 'Electrical Engineering and Computer Sciences'})
+    with Browser(store, test_url='http://127.0.0.1:12345') as b:
+        b.page.set_content('''<label for="discipline">Discipline*</label>
+            <input id="discipline" role="combobox" aria-controls="menu" required>
+            <div id="menu" role="listbox"><div role="option">Computer Science</div></div>
+            <script>
+            const input=document.getElementById('discipline'),menu=document.getElementById('menu');
+            input.addEventListener('input',()=>{
+                menu.replaceChildren();
+                const names=input.value==='Other'?['Other']:input.value?[]:['Computer Science'];
+                for(const name of names){const option=document.createElement('div');option.setAttribute('role','option');
+                    option.textContent=name;option.onclick=()=>input.value=name;menu.append(option);}
+            });
+            </script>''')
+        f = b._snapshot()[0]
+        assert f['options'] == ['Computer Science', 'Other']
+        assert b._control(f).input_value() == ''
+        answer = resolve(store, job['host'], f, context=job)
+        assert answer['value'] == 'Other' and answer['provenance']['fact_key'] == 'major'
+        b._fill(answer)
+        assert b._control(f).input_value() == 'Other'

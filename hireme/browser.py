@@ -518,12 +518,16 @@ class Browser:
                               return values[0].textContent.trim();
                             }
                           }return e.textContent.trim();}""")
-                    if field_key(f['label']) in ('school','location') and el.evaluate('(e)=>e.tagName==="INPUT"'):
+                    if field_key(f['label']) in ('school','location','major') and el.evaluate('(e)=>e.tagName==="INPUT"'):
                         key=field_key(f['label']);fact=self.store.facts().get(key)
                         if fact:
                             original=el.input_value()
                             found=list(f['options'])
-                            for query in dict.fromkeys((fact['value'],fact['value'].split(',')[0] if key=='location' else 'Berkeley' if 'berkeley' in fact['value'].casefold() else fact['value'])):
+                            # Greenhouse's discipline menu exposes only its first
+                            # 100 choices until searched. A combined major may
+                            # need the offered Other choice beyond that window.
+                            queries=(fact['value'], 'Other') if key=='major' else (fact['value'],fact['value'].split(',')[0] if key=='location' else 'Berkeley' if 'berkeley' in fact['value'].casefold() else fact['value'])
+                            for query in dict.fromkeys(queries):
                                 self.store.checkpoint();el.fill(query);self.page.wait_for_timeout(1200)
                                 found.extend(self._option_labels(self._menu(el).get_by_role('option'),f))
                             el.fill(original)
