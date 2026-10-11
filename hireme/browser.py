@@ -220,6 +220,11 @@ class Browser:
         if p.scheme!="https" or not host or p.port not in (None,443):return route.abort()
         if host not in self.host_cache:self.host_cache[host]=public_host(host)
         if not self.host_cache[host]:return route.abort()
+        # Known career-site telemetry is discarded, never sent. Its blocked
+        # background POST must not masquerade as a candidate draft write.
+        if (host==self.current_host and host in {'careers.qualcomm.com','explore.jobs.netflix.net','career.mlp.com'}
+                and p.path=='/vslog' and route.request.method=='POST'):
+            return route.abort()
         # Workday's public shell loads its client from shard-specific vendor
         # hosts. Permit static reads for configured tenants, never auth/draft
         # endpoints or another tenant shard. This grants no account writes.
