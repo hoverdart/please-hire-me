@@ -81,6 +81,11 @@ def field_key(label):
     if re.fullmatch(r'what is your disability status',label):return 'disability'
     if re.fullmatch(r'what is your (?:military|veteran|protected veteran) status',label):return 'veteran'
     if re.fullmatch(r'(?:please indicate |what is )?your (?:desired )?hourly (?:rate|pay)(?: requirement| expectation)?',label):return 'salary'
+    # A combined residence field needs the confirmed location, not only its
+    # state component. Keep office preferences separate from current residence.
+    if (re.search(r'\bcity\s*(?:and|/|,)\s*(?:state|province)\b',label)
+            and (re.fullmatch(r'(?:current |home )?city\s*(?:and|/|,)\s*(?:state|province)',label)
+                 or re.search(r'\b(?:reside|live|living|residence)\b',label))):return 'location'
     if re.search(r'(?:which|what|indicate|select|enter).*(?:\bstate\b|province).*(?:resid|live)',label):return 'state'
     if re.search(r'(?:zip|postal) code.*(?:primary residence|home|address)',label):return 'postal_code'
     if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
