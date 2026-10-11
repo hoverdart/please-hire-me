@@ -6,6 +6,7 @@ import pytest
 
 from hireme.util import digest
 from hireme.worker import cycle
+from tests.test_browser import ats
 
 
 SECRET = 'fixture-password-and-signed-upload-token'
@@ -61,3 +62,16 @@ def test_browser_startup_exception_does_not_leak_into_persisted_history(store, j
     with pytest.raises(RuntimeError, match=SECRET):
         cycle(store, Path('.'), discover=False, live=False, browser_factory=FailingBrowser)
     assert SECRET not in persisted_diagnostics(store)
+
+
+def test_redirect_diagnostics_omit_signed_url_values(store, ats):
+    from hireme.browser import Browser
+    from hireme.util import Blocked
+    with Browser(store, test_url=ats[0]) as browser:
+        browser.page.goto(ats[0] + '/application?verification_code=' + SECRET)
+        browser.test_url = None
+        browser.current_host = 'jobs.lever.co'
+        with pytest.raises(Blocked, match='unexpected_redirect') as error:
+            browser._guard({})
+        assert SECRET not in str(error.value) and 'verification_code' not in str(error.value)
+        assert '127.0.0.1' in error.value.detail

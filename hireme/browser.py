@@ -375,7 +375,8 @@ class Browser:
         url=self.page.url; host=urlsplit(url).hostname
         if self.test_url and url.startswith(self.test_url):pass
         elif host!=self.current_host:
-            raise Blocked("unexpected_redirect",url)
+            # Redirect URLs may carry one-use codes or signed query parameters.
+            raise Blocked("unexpected_redirect",'Destination host changed to '+str(host or 'unknown'))
         if self.page.locator('input[type=password]').count():raise Blocked("account_blocked")
         if self.page.locator('iframe[src*="bframe"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare.com"]').count():
             raise Blocked("captcha_blocked")
@@ -716,6 +717,9 @@ class Browser:
 
     def apply(self,job,live=True):
         self.workday_grant=None
+        # A DNS outage is not a permanent private-address verdict. Re-resolve
+        # unavailable destinations at the next attempt, retaining actual denials.
+        self.host_cache={host:allowed for host,allowed in self.host_cache.items() if allowed is not None}
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
         self.store.check_job_decision(job['id'])
         self.current_host=job['host']
@@ -738,6 +742,11 @@ class Browser:
             self.store.checkpoint()
             code=re.search(r'net::(ERR_[A-Z_]+)',str(error))
             transient={'ERR_NAME_NOT_RESOLVED','ERR_CONNECTION_RESET','ERR_CONNECTION_CLOSED','ERR_TIMED_OUT','ERR_NETWORK_CHANGED','ERR_EMPTY_RESPONSE','ERR_ADDRESS_UNREACHABLE'}
+            destination=urlsplit(navigation).hostname
+            unresolved=destination in self.host_cache and self.host_cache[destination] is None
+            if isinstance(error,NavigationError) and code and code[1]=='ERR_FAILED' and unresolved:
+                self.store.event('navigation_destination_unavailable',job['id'],{'host':destination})
+                raise Blocked('navigation_failed','Initial public posting destination could not be resolved; no fields were filled') from None
             if isinstance(error,NavigationTimeout) or isinstance(error,NavigationError) and code and code[1] in transient:
                 raise Blocked('navigation_failed','Initial posting navigation failed before filling or submission') from error
             if isinstance(error,NavigationError):

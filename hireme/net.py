@@ -15,7 +15,9 @@ MAX_BYTES=32*1024*1024
 class SafeRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,req,fp,code,msg,headers,newurl):
         canonical_url(newurl)
-        if not public_host(urlsplit(newurl).hostname): raise Blocked("private_network_denied")
+        public=public_host(urlsplit(newurl).hostname)
+        if public is None:raise Blocked('network_error','Public destination could not be resolved')
+        if not public: raise Blocked("private_network_denied")
         return super().redirect_request(req,fp,code,msg,headers,newurl)
 
 
@@ -29,7 +31,9 @@ class Network:
     def fetch(self,url,data=None,headers=None,opener=None):
         if self.checkpoint:self.checkpoint()
         canonical_url(url)
-        if not public_host(urlsplit(url).hostname): raise Blocked("private_network_denied")
+        public=public_host(urlsplit(url).hostname)
+        if public is None:raise Blocked('network_error','Public destination could not be resolved')
+        if not public: raise Blocked("private_network_denied")
         if time.monotonic()>self.deadline: raise Blocked("discovery_deadline")
         req=urllib.request.Request(url,data=json.dumps(data).encode() if data is not None else None,
              headers={"User-Agent":"please-hire-me/0.3 (+job discovery)",**({"Content-Type":"application/json"} if data is not None else {}),**(headers or {})})

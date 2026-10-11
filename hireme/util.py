@@ -106,11 +106,14 @@ def application_identity(url: str):
     return ('url', normalized)
 
 
-def public_host(host: str) -> bool:
+def public_host(host: str) -> bool | None:
+    """True grants public access; False denies it; None means DNS unavailable."""
     try:
         addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
         return bool(addresses) and all(ipaddress.ip_address(a[4][0]).is_global for a in addresses)
-    except (OSError, ValueError):
+    except OSError:
+        return None
+    except ValueError:
         return False
 
 
