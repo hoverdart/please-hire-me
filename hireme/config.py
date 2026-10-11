@@ -111,7 +111,7 @@ FACTS = {
     "location": "Current city / state", "street": "Street address", "city": "City",
     "state": "State", "postal_code": "Postal code", "country": "Country of residence",
     "linkedin": "LinkedIn URL", "github": "GitHub URL", "website": "Website",
-    "high_school": "High school attended", "school": "University", "degree": "Degree in progress", "major": "Major",
+    "high_school": "High school attended", "high_school_graduation_year": "High school graduation year (YYYY)", "school": "University", "degree": "Degree in progress", "major": "Major",
     "graduation": "Expected graduation (YYYY-MM)", "college_start": "College start (YYYY-MM)",
     "highest_completed_degree": "Highest completed degree", "gpa": "GPA",
     "work_authorized_us": "Currently authorized to work in the US (Yes / No)",
@@ -165,6 +165,8 @@ def validate_fact(key: str, value: str) -> str:
         raise ValueError("Replace placeholder values")
     if key in BOOLEANS and value not in ("Yes", "No"):
         raise ValueError("Answer exactly Yes or No")
+    if key=='high_school_graduation_year' and not re.fullmatch(r'(?:19|20)\d{2}',value):
+        raise ValueError('Use a four-digit high school graduation year')
     if key in {"graduation", "college_start", "earliest_start", "latest_start"} and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):
         raise ValueError("Use YYYY-MM")
     if key=='fulltime_start':

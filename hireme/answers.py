@@ -62,6 +62,7 @@ def field_key(label):
     if re.fullmatch(r'(?:earliest (?:available )?start(?: date)?|available start date|start date availability)',label):return 'earliest_start'
     if re.fullmatch(r'what is the earliest date you are available to start (?:this|the) (?:position|role|job)',label):return 'earliest_start'
     if re.search(r'\bhigh school\b',label):
+        if re.search(r'graduat',label) and re.search(r'\byear\b',label):return 'high_school_graduation_year'
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
         if re.fullmatch(pattern,label): return key
@@ -591,7 +592,7 @@ def _compatible_binding(key, label):
         'location':r'location|located|based|resid|\bcity\b', 'street':r'street|address',
         'city':r'\bcity\b', 'state':r'\bstate\b|province', 'postal_code':r'postal|\bzip\b',
         'country':r'country|residen', 'linkedin':r'linkedin', 'github':r'github', 'website':r'website|portfolio',
-        'high_school':r'high school', 'school':r'school|university|college|studying|institution',
+        'high_school':r'high school', 'high_school_graduation_year':r'high school.*graduat|graduat.*high school', 'school':r'school|university|college|studying|institution',
         'degree':r'degree|education|qualification', 'highest_completed_degree':r'(?:highest|completed|earned).*(?:degree|education|qualification)',
         'major':r'major|field of study|discipline', 'gpa':r'\bgpa\b|grade point',
         'college_start':r'(?:college|university|education|school).*start|start.*(?:college|university|education|school)',
@@ -887,7 +888,10 @@ def resolve(store, host, field, provider=None, context=None):
     from .materials import writing_context,writing_context_hash
     context.update(writing_context(store))
     if REFUSE.search(label):raise Blocked('human_work_sample',label)
-    writing=store.writing_answer(host,label,options)
+    # This historical date cannot be inferred from a college start date. It
+    # must use the explicit fact, including when older model writing is cached.
+    explicit_year=field_key(label)=='high_school_graduation_year'
+    writing=None if explicit_year else store.writing_answer(host,label,options)
     if writing:
         try:
             _validate_writing(store,writing)
@@ -1122,6 +1126,8 @@ def validate_package(store, job, package):
         prov=answer.get("provenance",{})
         if not _fits_writing_limits(answer["value"],field,writing_context):raise Blocked("answer_too_long",field["label"])
         if 'sample_parts' in prov:
+            if field_key(field['label'])=='high_school_graduation_year':
+                raise Blocked('unsupported_or_stale_answer',field['label'])
             _validate_writing(store,answer)
             if prov.get('tailored') and prov.get('context_hash')!=writing_context_hash(store,job):raise Blocked('stale_writing_context')
             if prov.get('context_answer') and prov.get('field_hash')!=digest(field_context(job.get('answer_scope',job['host']),field,job)):raise Blocked('stale_writing_context')
