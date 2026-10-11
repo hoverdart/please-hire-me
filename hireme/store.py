@@ -116,6 +116,7 @@ CREATE INDEX IF NOT EXISTS applications_company_state ON applications(company_ke
 CREATE INDEX IF NOT EXISTS applications_state_attempted ON applications(state,attempted);
 CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(first_seen DESC,id);
 CREATE INDEX IF NOT EXISTS jobs_fit ON jobs(score DESC,first_seen DESC,id);
+CREATE INDEX IF NOT EXISTS jobs_dashboard_rank ON jobs(status,reason,score DESC,first_seen DESC,id);
 CREATE INDEX IF NOT EXISTS questions_unresolved_job ON questions(resolved,job_id);
 CREATE INDEX IF NOT EXISTS events_kind_subject_seq ON events(kind,subject,seq DESC);
 CREATE INDEX IF NOT EXISTS employer_accounts_state ON employer_accounts(state);
@@ -742,7 +743,13 @@ class Store:
         from .saved_views import list_views
         from .context_inbox import open_needs
         return {"basic_context":basic_context(self),"context_needs":open_needs(self),"saved_views":list_views(self),"settings":self.settings(),"templates":self.templates(),"facts":self.facts(False),"missing_setup":self.missing_setup(),
-                "jobs":rows(f"SELECT j.* FROM jobs j ORDER BY {priority} DESC,j.score DESC,j.first_seen DESC LIMIT 500",(*parameters,*question_parameters)),
+                # Rank compact metadata first. Fetch the large posting payload
+                # only for the selected page, preserving attention and fit order.
+                "jobs":rows(f"""WITH ranked AS (
+                    SELECT j.id,{priority} AS attention,j.score,j.first_seen FROM jobs j
+                    ORDER BY attention DESC,j.score DESC,j.first_seen DESC LIMIT 500
+                ) SELECT j.* FROM ranked JOIN jobs j ON j.id=ranked.id
+                  ORDER BY ranked.attention DESC,ranked.score DESC,ranked.first_seen DESC""",(*parameters,*question_parameters)),
                 "applications":rows(f"SELECT {'*' if include_packages else APPLICATION_METADATA} FROM applications ORDER BY (state IN ('unknown','awaiting_verification')) DESC,created DESC LIMIT 500"),
                 "questions":rows("SELECT q.* FROM questions q WHERE "+question_condition+" ORDER BY q.rowid" + (" LIMIT ?" if question_limit is not None else ''), (*question_parameters,question_limit) if question_limit is not None else question_parameters),
                 "runs":rows("SELECT * FROM runs ORDER BY started DESC LIMIT 30"),
