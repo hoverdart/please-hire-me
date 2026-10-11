@@ -107,7 +107,10 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail)
                             except Exception as e:
                                 store.checkpoint()
-                                store.event('application_finished',job['id'],{'run_id':rid,'outcome':'error','error':type(e).__name__,'detail':str(e)[:1200]})
+                                # Browser call logs can contain filled values, signed
+                                # URLs and credentials. Persist the failure category,
+                                # never arbitrary exception text (also used in mail).
+                                store.event('application_finished',job['id'],{'run_id':rid,'outcome':'error','error':type(e).__name__})
                                 reasons['browser_error']=reasons.get('browser_error',0)+1
                                 if safe_job_state(store,job['id']):
                                     store.block(job['id'],'browser_error',type(e).__name__);hold(store,job,'browser_error',type(e).__name__)
@@ -118,7 +121,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         except Exception as e:
             store.recover()
             status='paused' if isinstance(e,Blocked) and e.reason=='paused' else 'blocked'
-            store.db.execute("UPDATE runs SET finished=?,status=?,submitted=?,detail=? WHERE id=?",(now(),status,count if live else 0,json.dumps({'confirmed':count if live else 0,'prepared':count if not live else 0,'attempts':attempts,'reason':str(e),'mode':'live' if live else 'prepare','discovered':discovered_count,'eligible':eligible_count}),rid))
+            reason=str(e) if isinstance(e,Blocked) else type(e).__name__
+            store.db.execute("UPDATE runs SET finished=?,status=?,submitted=?,detail=? WHERE id=?",(now(),status,count if live else 0,json.dumps({'confirmed':count if live else 0,'prepared':count if not live else 0,'attempts':attempts,'reason':reason,'mode':'live' if live else 'prepare','discovered':discovered_count,'eligible':eligible_count}),rid))
             raise
         finally:
             store.run_generation=None
