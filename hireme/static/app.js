@@ -276,31 +276,41 @@ const note = (text, error = false) => {
   notice.setAttribute("role", error ? "alert" : "status");
 };
 async function api(path, data, raw = false, extraHeaders = {}) {
-  let response;
+  let response, value, timedOut = false;
+  const controller = new AbortController();
+  // A lost read must release polling and pagination. Writes may still be
+  // running on the server and must never be presented as cancelled/retryable.
+  const timer = data === undefined ? setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 30000) : null;
+  const timeoutMessage = "The dashboard took too long to respond. Check that it is still running, then reconnect.";
   try {
-    response = await fetch(path, {
-      method: data === undefined ? "GET" : "POST",
-      headers: {
-        ...extraHeaders,
-        "X-Hireme-Token": token,
-        ...(!raw && data !== undefined
-          ? { "Content-Type": "application/json" }
-          : {}),
-      },
-      body: data === undefined ? undefined : raw ? data : JSON.stringify(data),
-    });
-  } catch {
-    throw new Error(
-      "Cannot reach your application desk. Check that the dashboard is still running, then try again.",
-    );
-  }
-  let value;
-  try {
-    value = await response.json();
-  } catch {
-    throw new Error(
-      "The dashboard returned an unexpected response. Refresh the page and try again.",
-    );
+    try {
+      response = await fetch(path, {
+        method: data === undefined ? "GET" : "POST",
+        headers: {
+          ...extraHeaders,
+          "X-Hireme-Token": token,
+          ...(!raw && data !== undefined
+            ? { "Content-Type": "application/json" }
+            : {}),
+        },
+        body: data === undefined ? undefined : raw ? data : JSON.stringify(data),
+        signal: timer === null ? undefined : controller.signal,
+      });
+    } catch {
+      throw new Error(timedOut ? timeoutMessage :
+        "Cannot reach your application desk. Check that the dashboard is still running, then try again.");
+    }
+    try {
+      value = await response.json();
+    } catch {
+      throw new Error(timedOut ? timeoutMessage :
+        "The dashboard returned an unexpected response. Refresh the page and try again.");
+    }
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
   if (!response.ok) throw new Error(value.error || "Request failed");
   // Successful saves release draft protection only for the form that was saved.
