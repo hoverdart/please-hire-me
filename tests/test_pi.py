@@ -6,6 +6,7 @@ def test_pi_units_are_owner_local_quoted_and_include_no_credentials(store,tmp_pa
     units=service_units(store,Path('/repo with spaces/100% done'),'/venv with spaces/python')
     worker=units['please-hire-me-worker.service']
     assert '100%% done' in worker and '"/venv with spaces/python"' in worker
+    assert 'WorkingDirectory=/repo with spaces/100%% done\n' in worker
     assert 'Type=oneshot' in worker and 'UMask=0077' in worker
     assert not any(line.startswith('Environment=') and ('API_KEY' in line or 'OAUTH_TOKEN' in line) for line in worker.splitlines()) and 'client_secret' not in worker and 'User=root' not in worker
     assert 'UnsetEnvironment=ANTHROPIC_API_KEY' in worker

@@ -21,11 +21,19 @@ def _quote(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
 
 
+def _literal_path(value):
+    value=str(value)
+    _quote(value)  # Apply the same control-character validation.
+    return value.replace('%','%%')
+
+
 def service_units(store, repo, executable=None):
     python = executable or sys.executable
     command = ' '.join(_quote(x) for x in (python, '-m', 'hireme', '--data-dir', store.root.resolve()))
     common = ('[Unit]\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\n'
-              f'WorkingDirectory={_quote(repo.resolve())}\nUMask=0077\nNoNewPrivileges=yes\n'
+              # WorkingDirectory is a literal path directive, unlike ExecStart
+              # arguments. Quotes become part of the path and invalidate it.
+              f'WorkingDirectory={_literal_path(repo.resolve())}\nUMask=0077\nNoNewPrivileges=yes\n'
               'TimeoutStopSec=30\nKillMode=control-group\n'
               f'Environment={_quote("PATH="+str(Path.home()/".local/bin")+":"+os.environ.get("PATH","/usr/local/bin:/usr/bin:/bin"))}\n'
               'UnsetEnvironment=ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN\n')
