@@ -55,7 +55,7 @@ def find_opportunities(store, repo, deadline_seconds=300, requested_generation=N
         except Exception as error:
             status = 'paused' if isinstance(error, Blocked) and error.reason == 'paused' else 'blocked'
             added = store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] - before
-            detail = {'mode': 'discovery', 'reason': str(error), 'added': added, 'submissions': 0,
+            detail = {'mode': 'discovery', 'reason': str(error) if isinstance(error, Blocked) else type(error).__name__, 'added': added, 'submissions': 0,
                       'sources_checked': len(results), 'sources_failed': sum(status == 'error' for status in results.values())}
             store.db.execute('UPDATE runs SET finished=?,status=?,submitted=0,detail=? WHERE id=?',
                              (now(), status, json.dumps(detail), rid))

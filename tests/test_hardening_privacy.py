@@ -75,3 +75,18 @@ def test_redirect_diagnostics_omit_signed_url_values(store, ats):
             browser._guard({})
         assert SECRET not in str(error.value) and 'verification_code' not in str(error.value)
         assert '127.0.0.1' in error.value.detail
+
+
+def test_discovery_only_failure_payload_does_not_enter_run_history(store, monkeypatch):
+    from hireme.opportunity_search import find_opportunities
+    def fail(*args): raise RuntimeError(SECRET)
+    monkeypatch.setattr('hireme.opportunity_search.sweep_lists', fail)
+    with pytest.raises(RuntimeError, match=SECRET): find_opportunities(store, Path('.'))
+    assert SECRET not in persisted_diagnostics(store)
+    assert json.loads(store.db.execute('SELECT detail FROM runs').fetchone()[0])['reason'] == 'RuntimeError'
+
+
+def test_discovery_source_errors_omit_unknown_exception_payloads(store):
+    from hireme.discovery import source_result
+    source_result(store, 'fixture:private', error=RuntimeError(SECRET))
+    assert store.db.execute('SELECT error FROM sources').fetchone()[0] == 'RuntimeError'

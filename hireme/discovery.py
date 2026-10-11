@@ -99,6 +99,7 @@ def probe(net,ats,slug):
 
 
 def source_result(store,sid,jobs=None,error=None):
+    if isinstance(error,BaseException) and not isinstance(error,Blocked):error=type(error).__name__
     # Full snapshots eliminate lossy global timestamp watermarks; partial failures keep existing jobs.
     if jobs is not None:
         from .policy import listing_scope
@@ -151,7 +152,7 @@ def sweep_boards(store,repo,ats=None,limit=None,deadline_seconds=1800):
                 sid=":".join(batch[future])
                 try:
                     jobs=future.result(); source_result(store,sid,jobs); n+=len(jobs)
-                except Exception as e: source_result(store,sid,error=f"{type(e).__name__}: {e}")
+                except Exception as e: source_result(store,sid,error=e)
     return n
 
 

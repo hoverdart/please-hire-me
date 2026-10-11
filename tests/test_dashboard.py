@@ -143,6 +143,12 @@ def launch_worker_failure_fixture(root, repo, port, failure_mode):
         return original_store(path)
     server.Store = store_factory
     worker.cycle = lambda store, repo: store.event('fixture_dashboard_cycle', 'fixture', {})
+    if failure_mode == 'cycle':
+        def cycle(store, repo):
+            if not store.db.execute("SELECT 1 FROM events WHERE kind='dashboard_run_failed'").fetchone():
+                raise RuntimeError('synthetic-private-error-detail')
+            store.event('fixture_dashboard_cycle', 'fixture', {})
+        worker.cycle = cycle
     if failure_mode == 'thread-start':
         original_start = threading.Thread.start
         def start(thread):
@@ -154,7 +160,7 @@ def launch_worker_failure_fixture(root, repo, port, failure_mode):
     launch(root, repo, port)
 
 
-@pytest.mark.parametrize('failure_mode', ['initialize', 'cleanup', 'thread-start'])
+@pytest.mark.parametrize('failure_mode', ['initialize', 'cleanup', 'thread-start', 'cycle'])
 def test_dashboard_worker_failure_is_visible_and_retryable(store, failure_mode):
     from playwright.sync_api import sync_playwright, expect
     sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
@@ -180,6 +186,7 @@ def test_dashboard_worker_failure_is_visible_and_retryable(store, failure_mode):
             assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='fixture_dashboard_cycle'").fetchone()[0] == (2 if failure_mode == 'cleanup' else 1)
             assert not store.db.execute('SELECT * FROM applications').fetchone()
             assert not store.db.execute('SELECT * FROM model_requests').fetchone()
+            assert not any('synthetic-private-error-detail' in row[0] for row in store.db.execute('SELECT detail FROM events'))
             assert not errors and page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             browser.close()
     finally: process.terminate(); process.join(5)

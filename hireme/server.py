@@ -74,7 +74,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
             except Exception as e:
                 failure=_action_failure(e,discovery_only)
                 if worker is not None and failure is not None:
-                    try:worker.event('dashboard_run_failed','worker',{'type':type(e).__name__,'message':str(e)[:500]})
+                    try:worker.event('dashboard_run_failed','worker',{'type':type(e).__name__,'message':failure})
                     except Exception:pass
             finally:
                 try:
