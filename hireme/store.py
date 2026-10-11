@@ -576,6 +576,19 @@ class Store:
 
     def _check_budget(self, job, s):
         self.check_job_decision(job["id"])
+        from .util import application_identity
+        identity=application_identity(job['url'])
+        # Different feeds use /application, /apply, embed and tracked links for
+        # the same requisition. Company cooldowns expire; duplicate protection
+        # must remain, including rejected and unresolved attempts.
+        history=self.db.execute("""SELECT a.job_id,j.url FROM applications a
+            JOIN jobs j ON j.id=a.job_id WHERE a.state!='prepared' AND a.job_id!=?
+            UNION ALL SELECT d.job_id,j.url FROM job_decisions d
+            JOIN jobs j ON j.id=d.job_id WHERE d.decision='manually_applied' AND d.job_id!=?""",
+            (job['id'],job['id']))
+        for previous in history:
+            if application_identity(previous['url'])==identity:
+                raise Blocked('duplicate_or_uncertain','This requisition already has a recorded attempt under another link')
         ck=self.company(job["company"],s)
         if ck in {self.company(x,s) for x in s["skip_companies"]+s["interview_companies"]}:
             raise Blocked("company_blocked")

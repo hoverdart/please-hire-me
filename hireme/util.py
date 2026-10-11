@@ -78,6 +78,34 @@ def canonical_url(url: str) -> str:
     return urlunsplit(("https", host, path, urlencode(q), ""))
 
 
+def application_identity(url: str):
+    """Compare known requisition aliases without rewriting historical job IDs."""
+    # Comparison is not navigation authorization. Unrecognized legacy links
+    # and HTTP synthetic fixtures retain exact identity and gain no alias.
+    try: normalized = canonical_url(url)
+    except ValueError: return ('url', url)
+    parsed = urlsplit(normalized)
+    host, path = parsed.hostname, parsed.path
+    uuid = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+    if host == 'jobs.ashbyhq.com':
+        match = re.fullmatch(r'/([A-Za-z0-9_-]+)/(' + uuid + r')(?:/application)?', path, re.I)
+        if match: return ('ashby', match[1], match[2].lower())
+    if host in {'jobs.lever.co', 'jobs.eu.lever.co'}:
+        match = re.fullmatch(r'/([A-Za-z0-9_-]+)/(' + uuid + r')', path, re.I)
+        if match: return (host, match[1], match[2].lower())
+    if host in {'job-boards.greenhouse.io', 'job-boards.eu.greenhouse.io'}:
+        match = re.fullmatch(r'/([A-Za-z0-9_-]+)/jobs/(\d+)', path)
+        if match: return (host, match[1], match[2])
+        if path == '/embed/job_app':
+            query = parse_qsl(parsed.query, keep_blank_values=True)
+            boards = [value for key, value in query if key == 'for']
+            ids = [value for key, value in query if key == 'token']
+            if (len(boards) == len(ids) == 1 and re.fullmatch(r'[A-Za-z0-9_-]+', boards[0])
+                    and re.fullmatch(r'\d+', ids[0])):
+                return (host, boards[0], ids[0])
+    return ('url', normalized)
+
+
 def public_host(host: str) -> bool:
     try:
         addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
