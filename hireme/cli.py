@@ -27,7 +27,7 @@ def main(argv=None):
     p=sub.add_parser('open-dashboard');p.add_argument('--port',type=dashboard_port,default=8766)
     p=sub.add_parser('demo',help='Explore a disposable, read-only sample workspace');p.add_argument('--port',type=dashboard_port,default=8767);p.add_argument('--open',action='store_true',help='Open the preview in your default browser')
     p=sub.add_parser('export-ledger',help='Save job metadata as a CSV spreadsheet');p.add_argument('path',type=Path)
-    p=sub.add_parser('dashboard');p.add_argument('--port',type=dashboard_port,default=8766);p.add_argument('--open',action='store_true',help='Open the workspace in your default browser')
+    p=sub.add_parser('dashboard');p.add_argument('--port',type=dashboard_port,default=8766);p.add_argument('--open',action='store_true',help='Open the workspace in your default browser');p.add_argument('--hide-token',action='store_true',help=argparse.SUPPRESS)
     p=sub.add_parser('doctor',help='Check local setup without sending applications');p.add_argument('--verify-login',action='store_true');p.add_argument('--json',action='store_true')
     sub.add_parser('model-probe',help='Make one synthetic structured inference request; consumes model allowance')
     p=sub.add_parser('import-material');p.add_argument('path',type=Path);p.add_argument('--kind',choices=['writing_sample','cover_letter','context'],required=True)
@@ -77,7 +77,7 @@ def main(argv=None):
         if args.command=='dashboard':
             from .server import serve
             store.close()
-            try:serve(args.data_dir.expanduser().absolute(),REPO,args.port,open_browser=args.open)
+            try:serve(args.data_dir.expanduser().absolute(),REPO,args.port,open_browser=args.open,hide_token=args.hide_token)
             except OSError as error:
                 print(f'Could not open the dashboard on port {args.port}: {error.strerror}. Choose another port with --port.',file=sys.stderr);return 2
             return 0

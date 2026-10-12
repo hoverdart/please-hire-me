@@ -41,7 +41,13 @@ def dashboard_url(root,port=8766):
     return f'http://127.0.0.1:{port}/#token={token}'
 
 
-def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
+def dashboard_startup_message(url,hide_token=False):
+    if not hide_token:return f'Dashboard: {url}'
+    origin=urlsplit(url)
+    return f'Dashboard is running at {origin.scheme}://{origin.netloc}/; use `.venv/bin/python -m hireme open-dashboard` on the Pi desktop to open it.'
+
+
+def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_token=False):
     token=token or (secrets.token_urlsafe(32) if demo else dashboard_url(root,port).split('#token=',1)[1]); state={'running':False,'mode':None,'error':None,'lock':threading.Lock()}
     assets=Path(__file__).parent/'static'
     def start_cycle(discovery_only=False,preparation_only=False):
@@ -515,7 +521,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False):
             except Exception as e:return self.send(500,{'error':type(e).__name__})
     server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     url=f'http://127.0.0.1:{port}/#token={token}'
-    print(f'Dashboard: {url}',flush=True)
+    print(dashboard_startup_message(url,hide_token),flush=True)
     if open_browser:
         import webbrowser
         try:
