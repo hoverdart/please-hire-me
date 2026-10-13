@@ -1,32 +1,28 @@
-# Documentation map
+# Documentation
 
-Start with the [README](../README.md) for installation, guided setup, provider choices, scheduling, Gmail, and Raspberry Pi Connect deployment.
+Start with the [README](../README.md) for installation and onboarding.
 
-| Reference | Purpose |
+| Guide | Purpose |
 | --- | --- |
-| [Architecture](architecture.md) | Component boundaries, state, concurrency, and external verification limits |
-| [Readiness audit](readiness.md) | Fresh-environment proof and outstanding live/account requirements |
+| [User guide](guide.md) | Documents, drafts, questions, models, schedules, backups, Gmail and troubleshooting |
+| [Raspberry Pi](pi.md) | Setup, background services, restarts and upgrades |
+| [Platform connections](connected-workspace.md) | Optional Handshake/Work at a Startup connections and capability gates |
+| [Release status](public-release.md) | Candidate scope, verification boundaries and remaining release gates |
+| [Architecture](architecture.md) | Component authority, persistence, concurrency, browser boundaries and recovery |
 | [Worker contract](worker-contract.md) | Executable policy and submission invariants |
-| [Configuration examples](../config/README.md) | Public reference formats; never applicant defaults |
-| [Discovery data](../data/README.md) | Runtime seed inputs and historical public research |
-| [Compatibility scripts](../scripts/README.md) | Existing wrappers and read-only tools |
-| [Contributing](../CONTRIBUTING.md) | Local checks and safe fixture testing |
-| [Archive](archive/README.md) | Retired recipes and disabled helpers, kept only for provenance |
+| [Configuration examples](../config/README.md) | Public reference formats for private facts and settings |
+| [Discovery data](../data/README.md) | Seed inputs and public research |
+| [Scripts](../scripts/README.md) | Managed-worker wrappers, research tools and release checks |
+| [Contributing](../CONTRIBUTING.md) | Local validation and safe fixture development |
 
 ## Source layout
 
-The `hireme/` package stays flat so existing imports and command wrappers remain stable.
+- `hireme/`: Python worker, CLI, local server and persistence. The package stays flat to preserve imports and command compatibility.
+- `hireme/static/`: framework-free dashboard assets, with no runtime build step.
+- `hireme/resources/`: discovery seeds bundled into installed distributions.
+- `tests/`: synthetic ATS, email, browser, PDF and state fixtures.
+- `requirements/`: pinned runtime and development dependencies.
+- `config/` and `data/`: public examples, seeds and research; applicant state belongs outside the checkout.
+- `scripts/`: compatibility wrappers, read-only research and distribution validation.
 
-| Responsibility | Modules |
-| --- | --- |
-| Entry points and local desk | `cli.py`, `server.py`, `setup_status.py`, `demo.py`, `doctor.py`, `recovery.py`, `ledger.py`, `saved_views.py`, `outcome_ledger.py`, `run_ledger.py`, `source_ledger.py`, `document_controls.py`, `document_downloads.py`, `posting_check.py`, `presentation.py`, `static/` |
-| Applicant documents, writing and question review | `onboarding.py`, `materials.py`, `material_ledger.py`, `letters.py`, `answers.py`, `saved_answers.py`, `question_ledger.py` |
-| Inference and credentials | `provider.py`, `connections.py` |
-| Employer accounts, metadata review and encrypted transfer | `accounts.py`, `account_ledger.py`, `account_transfer.py`, `account_transfer_web.py` |
-| Application execution and company boundaries | `worker.py`, `browser.py`, `policy.py`, `company_controls.py` |
-| Discovery | `discovery.py`, `posting_import.py`, `opportunity_search.py`, `portals.py`, `net.py` |
-| Persistence and migration | `store.py`, `config.py`, `backup.py`, `backup_inspection.py`, `migration.py`, `util.py` |
-| Email | `gmail.py`, `reports.py` |
-| Local/Pi scheduling | `scheduler.py`, `pi.py` |
-
-`tests/` mirrors these responsibilities and uses synthetic ATS/mail fixtures. Dependency locks live in `requirements/`: runtime for installation, development for CI and local tests. Private applicant state lives outside the repository; see the main README for its location and migration commands.
+[PRODUCT.md](../PRODUCT.md) and [DESIGN.md](../DESIGN.md) describe product and interface conventions. Superseded repair reports and retired helpers remain available in Git history rather than the current guide.

@@ -5,7 +5,6 @@ import html
 import json
 import re
 import time
-from pathlib import Path
 from urllib.parse import urlsplit
 
 from .net import Network,SafeRedirect

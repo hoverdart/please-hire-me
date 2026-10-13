@@ -6,7 +6,6 @@ import json
 import re
 import shutil
 import time
-from pathlib import Path
 from urllib.parse import urlsplit, parse_qsl
 
 from .answers import resolve,REFUSE,field_key

@@ -1,128 +1,44 @@
-# v0.5.0 release candidate
+# Release status
 
-## October 12 engineering update
+The configured version is **0.5.0rc1**. This is a candidate for a private, single-applicant installation. Release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
 
-The Pi dashboard unit now runs with `--hide-token`, so systemd startup output contains only the loopback address; the foreground dashboard command still prints the copyable capability URL. The dashboard capability was rotated during deployment. Verification passed locally (**1,273 tests**, five existing PyMuPDF/SWIG warnings), on all four CI platforms, and in the isolated wheel/source artifact audits. The Pi-focused service tests passed (**3 tests**). The update is deployed at `d83661d`; Pi dashboard checks returned **200 / 403 / 200** for the page, unauthenticated API, and authenticated API. The token file remains mode `0600`, and the existing six-hour cron remains the only application schedule.
+## Capability boundaries
 
-Four scheduled cycles completed after the Oct. 11 worker hardening. Each ended blocked with zero submissions. The cycle-count part of the scheduled-run gate is met; auditing unchanged blockers, uncertainty exclusions, and attempted-only report emails remains open.
-
-This engineering fix does not close the release gates below. The candidate remains `0.5.0rc1`; no stable `v0.5.0` release has been published.
-
-> **October 5 pipeline update: release remains blocked.** The context, filtering and verification repairs supersede the earlier `1103b28` runtime report below. Basic context, source-grounded ordinary fields, separate eligibility holds and provider/model usage are implemented. HP IQ has an employer-confirmed application after all 21 answers and the resume were prepared; its live submission made zero further model calls. Another application remains pending email verification. Runtime `4f6b08d` adds an indexed employer-credential revision lookup, passed 1,012 tests on each of four CI platforms and 115 focused tests on the physical Pi, and is deployed. Owner-supplied Pi Connect output verified all 65 runtime files, dashboard/authentication checks, database integrity and restored six-hour live scheduling. Model limits remain 300/day and 100/cycle. The current ledger contains four confirmed, ten not submitted, seven unknown and one awaiting verification. Five outcomes were added since the preceding check, with no additional confirmations; their causes remain under investigation, and uncertain outcomes must not be retried automatically. Real-queue performance, Workday transport and two final-runtime scheduled cycles remain unfinished. See [the pipeline repair report](pipeline-repair-2026-10-04.md) for the causes, tests, deployed checks and remaining boundaries. No stable release was published. The [earlier answer-resolution report](answer-resolution-2026-10-04.md) remains historical evidence.
-
-This document tracks current release gates. It is not a public readiness certificate.
-
-Baseline: `5c864cb`; candidate version: `0.5.0rc1`. Existing application outcomes remain authoritative. The release target is a self-hosted installation for one applicant, with a private loopback dashboard.
-
-## Current implementation evidence
-
-- Model controls explicitly select Sonnet/medium, with an opt-in bounded Opus/high mapping reconsideration. The same provenance and conversion rules apply to both.
-- Durable model metadata records selected model, effort, duration, success and available token counts. Counters do not represent vendor credits.
-- Temporary 500/day, 200/cycle limits have a persisted expiry and restore prior settings after restart. The Pi's permanent limits were changed to 300/day and 100/cycle; company and submission limits were preserved.
-- HP IQ's graduation question was incorrectly included in screening text. Posting/form separation and month/year comparisons now have regression coverage.
-- Roblox’s direct board URL redirects to its custom careers domain. A narrow adapter verifies the Greenhouse posting ID/title through the public API and navigates its Greenhouse embedded form instead; the original ledger URL remains unchanged. Read-only form inspection succeeded without employer writes.
-- Required discovery data is bundled into the wheel. The first wheel passed installation, source discovery, dashboard resource and private fresh-onboarding checks outside the checkout, without credentials or model requests.
-- Workday write protocol tests cover exact one-use grants, remote-draft opt-in, source revision checks and interrupted-save holds. This is protocol evidence, not proof of an authenticated employer application adapter.
-
-The outcome-diagnostic implementation at `2e22b10` passed **745 local tests** (224.37 seconds, five existing PDF-library warnings) and all four CI jobs: macOS 14/Python 3.12, Ubuntu x86-64/Python 3.11 and 3.14, and Ubuntu ARM64/Python 3.11. Each CI job builds distributions and installs the wheel with declared dependencies in a fully isolated environment. Artifact private-file/path audits and fresh-onboarding checks passed. Desktop and 390/320-pixel controls preserved drafts without overflow or JavaScript errors.
-
-The physical Pi passed the 725-test dropdown baseline (663.35 seconds), followed by 11 scheduler tests, eight numeric/browser tests, and 76 answer reliability tests covering subsequent changes. The outcome diagnostics passed three focused Pi browser tests and isolated wheel installation/private-file audits. The physical Pi full run exposed a cancellation-fixture race: fake preparation ended after five seconds before the slower browser loaded. The interrupted run recorded 221 passes and one failure. Commit `53bd93f` waits for actual cancellation (bounded at 60 seconds); both focused Pi cancellation/preparation checks passed in 14.72 seconds, followed by 745 passing local checks (226.48 seconds). The final physical-Pi wheel passed isolated dependency installation, bundled discovery/dashboard-resource checks and conservative private onboarding. The physical full-suite rerun passed **745 tests in 727.81 seconds**. The custom-receipt revision `0fe52f3` passed **751 local tests in 227.80 seconds**, its isolated wheel installation/private-file audit, and **11 focused Pi tests in 89.32 seconds**. All four CI jobs passed full suites and isolated artifact installation at `0fe52f3`; the final physical full-suite run passed **751 tests in 706.81 seconds**. Synthetic restricted Sonnet/medium subscription inference passed both the worker environment and a cron-style environment; durable reservations record requests and available token metadata. No API-key fallback or vendor billing changes were made.
-
-A private backup restored to a separate directory with identical counts: 87,723 jobs, 10 applications, 20 approved answers and 82 questions; outcomes remained one confirmed, five not submitted and four unknown. Additive migrations preserved the original ledger. The latest restored copy also matched the current 87,723 jobs, 13 applications, 22 approved answers, 84 questions, 132 model reservations and nine metadata records; it remains paused. Later pre-deployment backups passed full ZIP CRC validation, including the 156,848,096-byte backup retaining the new ID.me receipt, Veeam uncertainty and local prepared package (credentials excluded). These are private operational artifacts, not public downloads. The final pre-deployment backup passed full CRC validation (158,235,333 bytes, 44 ZIP members). Its restored copy matched 87,723 jobs, 13 applications, 23 answers, 85 questions, 132 model reservations and nine metadata records, retaining three confirmed applications and all five unknown outcomes.
-
-The verified runtime revision `2c9c309` is deployed on the Pi. Post-deployment checks passed: loopback dashboard and authenticated APIs, subscription-only Claude connection, Gmail owner authentication, worker setup, five configured Workday discovery tenants, and the six-hour schedule. Permanent limits are 300 requests/day and 100/cycle with no temporary override. Submission/company limits and all uncertain outcomes were preserved. A private read-only observer is waiting for the 06:00 and 12:00 Pacific scheduled cycles; those cycles have not yet been observed.
-
-### Supervised live evidence on October 4
-
-Six supervised browser attempts produced two fresh confirmations at different Greenhouse employers:
-
-| Employer | Attempt | Outcome | Evidence / next action |
-| --- | --- | --- | --- |
-| Veeam | 1 | Blocked before submission | Delayed dropdown options were not hydrated; fixed with real-form readback and regression fixtures. |
-| Veeam | 2 | Blocked before submission | Controlled graduation year changed the HTML value attribute; effective numeric-constraint comparison now preserves genuine change detection. |
-| Veeam | 3 | Unknown after final action | Employer displayed a generic processing error. No receipt found; exclude from automatic retry and inspect manually. |
-| ID.me | 4 | **Confirmed** | Email verification completed; employer stated “We’ve received your application.” Private receipt screenshot and ledger confirmation retained. |
-| Amperesand | 5 | Prepared locally | Seven source-grounded model requests; no employer submission. |
-| Amperesand | 6 | **Confirmed after receipt inspection** | Email verification completed. The saved employer receipt promised Talent-team review and thanked the applicant for applying. Initially recorded unknown because custom wording was missed; reconciled from the screenshot without another employer write. |
-
-Every completed attempt report was sent through Gmail with its attempted job link. A real-ledger worker check of the held prepared job and all five uncertain jobs produced zero browser attempts and zero model requests, preserving every application state. Known ID.me graduation/GPA facts resolved without model calls, and the five-day onsite statement was explicitly approved. The new Veeam uncertainty joins the existing protected uncertain applications; it has not been retried. Read-only candidate inspections and local form fixtures are not employer submissions. Amperesand’s five-day onsite requirement was explicitly approved for San Francisco and saved only in that employer context. The sixth attempt selected San Francisco and reused approved writing; it consumed no additional model requests. A correction email reported the inspected confirmation. The original run’s unknown event remains as historical evidence; reconciliation is recorded separately. Six of the twelve supervised attempts remain. Veeam remains uncertain and excluded.
-
-- [ID.me posting](https://job-boards.greenhouse.io/idmeuniversityrecruiting/jobs/7980429003)
-- [Amperesand posting](https://job-boards.greenhouse.io/amperesand/jobs/4381214009)
-
-The owner approved NVIDIA remote draft saves for supervised validation, but cannot perform the required manual account login now. Authenticated Workday transport inspection and live confirmation remain unavailable; no Workday automation capability is claimed. Veeam’s three business/consent questions were explicitly approved and saved privately. Confirmed employer history was updated privately; the conflict disclosure remains scoped to Veeam.
-
-## Owner-supplied employer credentials
-
-The candidate now accepts employer-scoped passwords through **Needs you → Employer accounts → Supply credentials for an employer**. Submissions must be paused and the worker idle. The confirmed applicant email is reused; matching passwords must contain 20–128 characters. Saving credentials creates no employer account and never replaces existing account history. Recognized native registration forms reuse the supplied password; their separate registration intent and exact write grant remain required. Explicit and implicit account agreements stop before credentials are accessed. Passwords remain outside models, ledger events, reports and ordinary backups.
-
-Supplied-password and agreement fixtures passed locally and on the Pi. The configured Workday shards now permit narrowly scoped first-party static assets; this permits rendering resources, not account or application writes. Workday JavaScript registration is still unverified. No real credentials were supplied or employer accounts created during this change. Four-platform CI at `747c882` passed **769 tests per platform**, including artifact installation and privacy checks. A filtered-ledger browser fixture was subsequently corrected to wait for the replacement table and resolve its element inside the same browser task, avoiding a detached-row race without weakening evidence assertions.
-
-The final supplied-credential candidate passed **769 local tests in 232.24 seconds** and **769 physical-Pi tests in 768.50 seconds**. All four CI platforms passed 769 tests and isolated artifact checks at `86dfe5f`. The Pi suite used `e6846bf`, whose runtime and tests are identical to `86dfe5f`; only this release document differs. A new private backup passed full CRC validation (158,235,350 bytes, 44 members), and its restored copy preserved all job/application/answer/question/model counts and all three confirmed and five uncertain outcomes. Post-deployment checks verified the new credential form, rejection of unauthenticated credential writes, private loopback dashboard, subscription/Gmail authentication, 300/100 request limits and the restored six-hour schedule. Workday coverage still reports manual completion. The supervised attempt count remains six; this update performed no new live application or account creation.
-
-A synthetic credential-fill failure exposed a pre-write error path that could include a typed password in the worker's error detail. Credential retrieval, filling, native validation and payload serialization now share a sanitized boundary. Failures stop with `account_fields_unavailable` before any registration intent or remote write. Three injected-error regressions prove no secret enters the ledger and no account/application is created. The complete local suite passed **784 tests in 237.87 seconds**; 34 account and 69 reliability tests also passed separately. Pi and platform checks for this follow-up remain pending; the Pi remains on verified `2c9c309`.
-
-### Workday public navigation inspection
-
-Read-only NVIDIA inspection reproduced a browser-policy defect: its public `/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs` POST was treated as a draft write, so the site falsely displayed zero jobs. A bounded, empty-facet search schema now permits this specific read for each configured tenant/site, without consuming a draft/account grant. Other ungranted Workday mutations remain blocked even after a browser attempt starts. A private Pi probe with the revised policy displayed NVIDIA's advertised job list, reached email sign-in and the expanded registration view, and performed no account or application write. Local checks passed **775 tests in 232.66 seconds**; **31 focused Pi tests passed in 62.45 seconds**. All four CI platforms subsequently passed 775 tests and artifact checks; the physical Pi passed 775 tests in 727.12 seconds. The combined candidate was subsequently verified and deployed as `2c9c309`.
-
-NVIDIA registration requires an authentic, non-duplicate candidate profile and an explicit checkbox accepting its linked [Terms and Conditions](https://www.nvidia.com/en-us/about-nvidia/terms-of-service/) and acknowledging its [Applicant Privacy Policy](https://www.nvidia.com/en-us/about-nvidia/careers/applicant-privacy-policy/). The linked terms include arbitration and class-action/jury-trial waivers. A consolidated owner packet asks whether an existing account should be reused and whether these account terms are approved. This is independent of the previously approved NVIDIA draft-save permission. No agreement checkbox was selected, password entered or account created. Authenticated application transport and its live confirmation remain unverified.
-
-### Public Workday posting inspection boundary
-
-The application browser now verifies a configured Workday posting through its public CXS detail response before navigation and screening. Requisition, posting ID, career-site ID, title, external destination and explicit availability must match; employer form questions and sign-in text cannot become eligibility requirements. Only public GET reads are added. Unknown paths/sites, identity changes and unverified availability stop for review; an explicitly closed posting uses the existing quiet `expired_posting` status. Cancellation and the worker deadline are passed to the network read. TLS and unknown connection failures require review rather than receiving speculative retries.
-
-The final revision passed **811 local tests in 237.51 seconds**, including 27 posting-boundary fixtures and browser control propagation. Read-only live inspection verified NVIDIA requisitions JR2023495 and JR2023492 and Intel JR0287544, with zero employer writes or model requests. The Salesforce JR340771 link uses `Futureforce_Internships` rather than the configured `External_Career_Site`; its public response also has a more specific title than the cached listing, so this site/posting requires explicit review before application support. No eligible Arrowstreet or G-Research candidate was found in the sampled local queue. Authenticated application transport remains unfinished, and no Workday submission capability is enabled.
-
-The earlier credential revision `2291fd0` passed 784 tests on all four CI platforms, with isolated installation and artifact audits. Its physical-Pi suite remains running alongside the 06:00 scheduled worker and has reported failures whose final diagnostics are not yet available. Neither this revision nor the posting follow-up has been deployed. The Pi stays on verified `2c9c309`; the scheduled observer is still running. These outstanding checks are release gates, not accepted failures.
-
-### Pi failure diagnosis and receipt-viewer recovery
-
-The physical-Pi run at `2291fd0` finished with **780 passes and four failures in 997.53 seconds** while the scheduled worker was running. Its CAPTCHA fixture waited for a deliberately blocked remote iframe's load event; the demo fixture exceeded an implicit five-second startup window; a worker-control assertion ran before client readiness; and receipt-image error feedback was lost. The first three fixtures now use explicit bounded HTTP/client readiness or a DOM-ready synthetic CAPTCHA document whose external frame remains blocked. Authorization, cancellation and outcome assertions remain intact.
-
-The receipt viewer had a reproduced application defect: filtering the ledger during an image request replaced the row, and the response updated its detached predecessor. Image state now follows the latest connected row, prevents duplicate pending fetches, preserves errors and retry controls across filtering, and validates an image before caching it. Temporary image URLs are released even when a refresh detaches their view. Desktop and 390-pixel phone fixtures check decoded image dimensions, focus, evidence preservation, uncertainty state and overflow. Both captured error layouts were inspected together; no additional design ignores were added.
-
-The seven focused failure/recovery scenarios passed locally and on the loaded physical Pi (**44.78 seconds**). The complete local suite passed **812 tests in 237.56 seconds**. The complete Pi suite is running against `373ea4f` plus source/test patch SHA-256 `434374d45cb666b5e7344e855f6e32d67d607919251ebf432a103d80a7068c40`; runtime/tests match this follow-up, with only documentation subsequently updated. Four-platform CI at `373ea4f` passed 811 tests and artifact checks. Full Pi and CI verification of the follow-up remain required before deployment. The scheduled 06:00 cycle and its read-only observer are still running; no new live confirmation or account creation is claimed.
-
-### Exact credential readback before account intent
-
-A native input with `maxlength=20` reproduced a separate account defect: a longer owner-supplied password was silently truncated, the registration POST used the truncated value, and the vault retained the original. Credential controls now require exact email/password readback, stable input type and enabled state. Serialized FormData must contain one matching value per credential field, and the confirmed applicant email is checked again before any account intent. Changed values stop with an actionable account hold; secrets remain outside the ledger and error messages. Fixtures cover native truncation, email transformation, FormData transformation and an applicant-email change before creation. No remote registration intent or write occurs in any rejected case, and compatible supplied passwords retain their existing success path.
-
-The final local suite passed **816 tests in 245.85 seconds**. An earlier full run had 815 passes and one Chromium startup timeout before its degree-choice fixture executed; the launched process was gone, the focused degree fixture passed, and the final full run passed without changing degree mapping. The preceding receipt-viewer revision `5e96059` passed 812 tests on the loaded physical Pi in 1000.48 seconds and all four CI platforms, including artifact checks. The credential follow-up still needs CI and Pi verification.
-
-Automatic employer-account operations were temporarily disabled on the Pi before its scheduled run reached a browser attempt, because deployed `2c9c309` contains the reproduced truncation defect. Live applications, existing signed-in sessions, permanent 300/100 request ceilings and the six-hour schedule remain enabled. A private control record preserves the prior account setting and requires checking the latest explicit account-setting event before restoration after verified deployment. This update created no employer account and made no model request.
-
-### Reviewed outcomes and authenticated sessions
-
-The latest-cycle funnel lost Amperesand's inspected confirmation after reconciliation: it showed neither confirmed nor uncertain while the current application record was confirmed. The correction scopes later reconciliation to the latest cycle's attempted application, updates its displayed result and explicitly notes review. Original finish events and reports remain unchanged, with additive `recorded_outcomes`, `reconciled` and `not_submitted` API fields. Older reviews and unrelated applications do not count toward the current cycle. Domain and phone-width browser regressions passed in the 70-test focused check. The combined revision `2c9c309` passed **781 local tests in 231.54 seconds**, **781 physical-Pi tests in 741.85 seconds**, and 781 tests plus isolated artifact checks on all four CI platforms. Its deployed API shows one reviewed confirmation while retaining the original unknown finish event. The new private backup passed full CRC validation (158,235,538 bytes, 44 members); restored migrations preserved original events and complete application, fact, answer, question, document, binding, hold, account and model records. Post-deployment dashboard, subscription, Gmail and six-hour scheduling checks passed with permanent 300/100 request limits.
-
-A read-only probe of the dedicated browser found no verified applicant session across the five configured Workday tenants. NVIDIA, Salesforce, Arrowstreet and G-Research returned empty profile objects; Intel's profile response was not observed. This does not prove the owner has no account elsewhere. No password, consent checkbox or final registration action was used. NVIDIA account existence and registration-term approval remain pending in the consolidated packet. Read-only posting inspection verified requisition JR2023495, “NVIDIA 2027 Internships: Software Engineering,” in Santa Clara. Its current posting passes local eligibility checks with fit 90; it has not been applied to. The authenticated transport and confirmation gate remain pending. Supervised validation remains at six attempts and two fresh Greenhouse confirmations.
-
-## Release gates still pending
-
-1. Finish authenticated Workday adapter inspection and browser fixtures. NVIDIA account setup still needs a verified JavaScript registration/login flow or manual setup; remote draft saves require separate owner opt-in. Unknown agreements remain review items.
-2. Obtain the remaining new Workday confirmation within the four remaining supervised attempts. Both distinct Greenhouse confirmations have been obtained. Never retry prior uncertain outcomes or count draft saves/preparation as submissions.
-3. Audit the four observed post-repair cycles for unchanged blockers/uncertainty exclusions and attempted-only report emails. Permanent model caps are already restored.
-4. Publish v0.5.0 only if every gate passes. Otherwise retain a clearly marked candidate and exact outstanding blockers.
-
-Versioned source archive, wheel and source distribution at `0.5.0rc1` pass private-file/path audits. CI retains all three as downloadable candidate artifacts for 30 days. No v0.5.0 release has been published.
-
-## Installation and upgrade contract
-
-Install the source archive using `./setup.sh`, or install the wheel with Python 3.11+ and provision Playwright Chromium (`python -m playwright install chromium`). On Pi use system Chromium and the `hireme pi` setup commands. Optional Gmail dependencies are installed through the `gmail` extra.
-
-Start `hireme dashboard` locally. Confirm applicant facts and documents; authorize model processing explicitly; submissions start paused. `hireme model-probe` sends one synthetic structured request and consumes model allowance. Claude subscription login is required for subscription mode; unsupported CLI isolation/model/effort flags stop rather than falling back.
-
-Before upgrades, pause submissions, suspend scheduling, wait for worker locks, and create/validate a private history backup. Test migrations on a restored copy. Preserve browser sessions and OAuth credentials separately because normal history backups exclude them. Roll back using a verified previous code release and a private restored history copy; never erase uncertain outcomes to retry them.
-
-## Support matrix
-
-| Platform / ATS | Candidate capability | Release proof still required |
+| Area | Implemented scope | Required external evidence |
 | --- | --- | --- |
-| macOS / Linux x86-64 / Linux ARM64 | Source and wheel installation; private single-applicant workspace | Four-platform CI and physical Pi full suite passed at `0fe52f3` (751 tests) |
-| Greenhouse | Existing guarded single-step submissions; segmented verification; approved contextual answers | Both required fresh employer confirmations obtained; custom-receipt regression passed |
-| Workday configured tenants | Discovery, manual session handoff, contextual snapshot and guarded write-protocol foundation | Authenticated transport, uploads, step acknowledgements and posting-specific receipt |
-| Ashby / Lever | Existing guarded functionality, preview support | Separate employer confirmation evidence |
-| Unknown tenants / widgets | Manual completion with actionable review | A recognized adapter and matching evidence |
+| macOS / Linux / Raspberry Pi | Source installation, packaged dashboard and discovery resources, private onboarding, local scheduling and portable history | Installation and operation on the target machine |
+| Greenhouse / Ashby / Lever | Guarded supported forms, confirmed facts, scoped answers, hash-verified uploads, durable submission intents and outcome handling | Posting-specific employer acceptance; recognized hosts do not certify every form |
+| Workday configured tenants | Public discovery and posting inspection, manual sign-in handoff, default-off draft-write protocol | Authenticated step/save/upload transport and a posting-specific receipt; application completion remains manual |
+| Handshake / Work at a Startup | Separate profiles, disabled connection/discovery/native-apply controls, immutable materials and fixture-validated machinery | Authorized access and independently validated platform endpoints, payloads, document acknowledgements and receipts |
+| Gmail | Owner-bound OAuth, recognized Greenhouse codes and independent batch-report outbox | Actual authorization, code binding and delivery; broader recruiter/interview/rejection synchronization is not implemented |
+| Employer accounts | Optional supported native signup/sign-in, exact credential readback, separate intents and manual reconciliation | Verified account transport and agreements; JavaScript/SSO and unsupported verification remain manual |
+| Unknown portals / controls | Discovery where recognized, with actionable holds for unsupported application behavior | A bounded adapter with matching form and outcome evidence |
 
-No authenticated Workday browser step/save/upload/receipt transport has been enabled in this candidate. The protocol controller is scaffolding, and fixtures cannot substitute for live employer proof. NVIDIA draft-save authorization is limited to supervised validation; it does not authorize account registration or new agreements.
+Models can still make factual mistakes. Grounding reviews, confirmed sources and deterministic validators reduce risk but do not establish universal answer correctness. Unknown personal/legal facts require applicant input. An HTTP 200 response, prepared draft or saved remote draft is not an accepted application.
+
+## Release gates
+
+Before publishing a stable release:
+
+1. Pass the complete local suite, synthetic browser fixtures and supported CI matrix at the release revision. Verify isolated wheel installation and source/wheel archive contents.
+2. Validate upgrades and restoration using a private restored history copy. Preserve original outcomes, facts, approved answers, documents and uncertain holds.
+3. Verify the dashboard, authentication boundaries, selected model connection, Gmail if enabled, and a single working scheduler on the target machine.
+4. Complete authenticated multi-step adapter validation before enabling the corresponding capability. Workday transport and additional portal flows remain outstanding; fixtures alone do not close these gates.
+5. Obtain fresh, separately authorized employer confirmations across the claimed supported flows. Preserve pending verification, rejection and ambiguous outcomes without automatic retries.
+6. Audit scheduled cycles for correct limits, stable uncertainty exclusions, actionable blockers and attempted-only report emails. Record operational evidence separately from test results.
+
+Native platform capabilities require reviewed, machine-bound flow evidence. A login or setting cannot manufacture that evidence. A hosted multi-tenant offering requires independent identity, tenant, deployment and recovery validation.
+
+## Installation and upgrades
+
+Use the [README](../README.md) for source installation and the [Pi guide](pi.md) for Raspberry Pi services. Wheels require Python 3.11+, Chromium provisioning and optional Gmail dependencies through the `gmail` extra.
+
+Before upgrades, pause submissions, suspend scheduling, wait for active work to finish, and create and validate a private history backup. Test database migrations on a restored copy. Browser sessions and OAuth/provider credentials are excluded from history backups and need separate recovery.
+
+Rollback uses a verified previous code release and a private restored history copy. Never erase uncertain outcomes to retry them. Restore starts paused; inspect history and reconnect integrations before resuming.
+
+## Verification records
+
+[Contributing](../CONTRIBUTING.md) lists reproducible local checks. CI builds the wheel and source distribution, creates a versioned source archive, audits private-file/path classes and installs the wheel outside the checkout.
+
+Record checks against the exact revision, including pass/fail/skip results. Keep local, hosted CI, browser, device, scheduled-operation and employer-acceptance evidence distinct. Test totals and an old deployment report do not establish the state of a current installation. Personal application details, runtime logs, credentials and screenshots belong in private storage.

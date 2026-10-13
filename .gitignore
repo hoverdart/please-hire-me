@@ -56,12 +56,16 @@ venv/
 !config/profile.example.json
 !config/answers.example.md
 !config/settings.example.json
-!data/queue.example.md
 !data/sources.md
 
 # Packaging, local verification, and design tool artifacts
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
 .kiss-worktrees/
 .impeccable/
 output/

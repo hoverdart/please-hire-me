@@ -1,4 +1,10 @@
-include README.md LICENSE
+include README.md LICENSE CONTRIBUTING.md CLAUDE.md PRODUCT.md DESIGN.md
+include config/README.md config/*.example.*
+include data/README.md data/boards.md data/slug-candidates.txt data/sources.md
+include scripts/README.md scripts/check_release_artifacts.py scripts/check_install_artifact.py
+include scripts/ashby_form_fields.sh scripts/dupe_check.sh scripts/fetch_hn_hiring.sh scripts/probe_boards.sh scripts/schedule.sh scripts/scheduled_run.sh
+include scripts/delta_sweep.py scripts/list_sweep.py scripts/portal_sweep.py scripts/render_boards.py scripts/tracker_companies.py
+recursive-include docs *.md *.png
 recursive-include hireme/resources *.md *.txt
 recursive-include hireme/static *.html *.css *.js
 recursive-include requirements *.lock

@@ -1,13 +1,52 @@
 # Contributing
 
-The worker must never invent facts, retry uncertain submissions, exceed company/application budgets or bypass login/CAPTCHA. Keep those properties executable and tested, not in model prompts.
+The worker must never invent facts, retry uncertain submissions, exceed company/application budgets or bypass login/CAPTCHA. Keep these properties executable and tested. All side-effectful browser and mail checks use synthetic local fixtures; contributor checks must not submit to real employers.
 
-Run `.venv/bin/python -m pytest -q`, `node --check hireme/static/app.js`, and `bash -n` on each changed shell file individually. Browser tests must use synthetic local ATS fixtures. Never test a submission against a real employer as a contributor check.
+## Set up a development environment
 
-No personal data belongs in git: facts, documents, screenshots, logs, credentials and application history stay private. Before committing, inspect `git diff --cached` and `git status --short`. Source research is public evidence only; do not write candidate answers into tracked notes.
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements/development.lock
+.venv/bin/python -m pip install --no-deps -e .
+.venv/bin/python -m playwright install chromium
+```
 
-Every adapter must declare its trusted destinations and bounded actions, demonstrate unknown-field handling, record exact Q&A, and preserve UNKNOWN after ambiguous submission. Unsupported widgets/portals become exceptions rather than broader agent authority.
+On Linux, install missing Chromium system libraries with `playwright install-deps chromium` using an account allowed to install OS packages. This setup does not start the dashboard or change applicant preferences.
 
-The frontend is framework-free and has no runtime build step. Keep `hireme/static/` readable and formatted. Optional formatting: `npm exec --yes --package=prettier@3.6.2 -- prettier --write hireme/static/app.js hireme/static/index.html hireme/static/style.css`. Use `hireme demo` for a disposable, read-only sample workspace when reviewing layouts. Its data is invented and never touches an applicant’s real directory.
+## Validate changes
 
-Display metadata belongs in `presentation.py`, separate from executable eligibility policy. Quiet eligibility decisions must remain recorded, while uncertain outcomes and unanswered questions remain actionable. The overview counts the full ledger; the main dashboard table queries the complete ledger in pages of 50 records; auxiliary state snapshots are bounded to 500 and prioritize unresolved questions and uncertain submissions and CSV exports cover all records.
+```bash
+.venv/bin/python -m pytest -q
+for file in hireme/static/*.js; do node --check "$file"; done
+for file in run.sh setup.sh scripts/*.sh; do bash -n "$file"; done
+git diff --check
+```
+
+Run checks appropriate to the change and record failures and skips. Full-suite success is local fixture evidence; keep hosted CI, device operation, authenticated sessions and employer acceptance separate. See [release status](docs/public-release.md).
+
+For packaging changes, build and inspect fresh distributions:
+
+```bash
+.venv/bin/python -m pip install build
+.venv/bin/python -m build
+.venv/bin/python scripts/check_release_artifacts.py dist/*
+.venv/bin/python scripts/check_install_artifact.py dist/*.whl
+```
+
+The installed-wheel check uses a temporary isolated environment outside the checkout. It installs declared dependencies and verifies resource loading and conservative onboarding without applicant credentials or employer connections. Build outputs, caches and local review files are ignored; they do not belong in source commits.
+
+## Keep state and authority bounded
+
+Personal facts, documents, screenshots, logs, credentials and application history stay in private storage. Before committing, inspect `git diff --cached` and `git status --short`. Public source research must not contain candidate answers.
+
+Every adapter declares trusted destinations and bounded actions, handles unknown fields, records exact answers and preserves uncertain outcomes after ambiguous submissions. Unsupported controls become review items rather than broader model authority.
+
+Display metadata belongs in `presentation.py`, separate from eligibility policy. Quiet eligibility decisions remain recorded; uncertain outcomes and unanswered questions stay actionable. The main job ledger queries the complete history in pages of 50. Auxiliary snapshots are bounded and prioritize unresolved records; CSV exports cover all jobs.
+
+## Frontend and documentation
+
+The frontend is framework-free and has no runtime build step. Keep `hireme/static/` readable. Use `hireme demo` for a disposable read-only workspace with invented data during layout review. It does not touch the applicant directory.
+
+Update the relevant [guide](docs/README.md) when commands or user behavior change. Keep installation concise in the README, everyday tasks in the user guide, and Pi operations in the Pi guide. Put current verification limits in release status rather than appending dated development transcripts to user documentation. Private runtime reports remain outside Git.
+
+[PRODUCT.md](PRODUCT.md) and [DESIGN.md](DESIGN.md) describe product and visual conventions. Historical repair reports and retired helpers are available in Git history.

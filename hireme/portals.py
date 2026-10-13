@@ -1,5 +1,5 @@
 """Read-only company portal adapters. Full snapshots; no premature seen-ID consumption."""
-import datetime, re, time, urllib.parse, html as _html
+import datetime, re, urllib.parse, html as _html
 
 UTC=datetime.timezone.utc
 WORKDAY = [  # (label, tenant, wd-host, site, host for signed_in_portals)
@@ -9,8 +9,8 @@ WORKDAY = [  # (label, tenant, wd-host, site, host for signed_in_portals)
     ('Arrowstreet', 'arrowstreetcapital', 'wd5', 'Campus_Careers', 'arrowstreetcapital.wd5.myworkdayjobs.com'),
     ('G-Research', 'gresearch', 'wd103', 'G-Research', 'gresearch.wd103.myworkdayjobs.com'),
 ]
-# Portals whose apply form needs NO account (checked 2026-09-24, data/manual-portals.md): rows here are the
-# agent's to apply to, same as a signed-in portal.
+# Discovery candidates outside the configured signed-in portals.
+# Eligibility and browser inspection still determine whether a job can be applied to.
 OPEN_PORTALS = {'www.deshaw.com', 'explore.jobs.netflix.net', 'career.mlp.com', 'jobs.uber.com', 'www.rentec.com'}
 AMAZON_QUERIES = ['software development engineer', 'software engineer university', 'sde 2027']
 WORKDAY_QUERIES = ['new college grad software', 'new college graduate software engineer', 'software engineer intern 2027']

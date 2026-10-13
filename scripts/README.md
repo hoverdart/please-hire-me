@@ -1,9 +1,16 @@
-# Script compatibility
+# Scripts
 
-`delta_sweep.py`, `portal_sweep.py`, `list_sweep.py`, `schedule.sh`, `scheduled_run.sh` and `dupe_check.sh` delegate to the managed worker. Discovery stores full snapshots in the private ledger; it does not advance legacy timestamp files. Use `python -m hireme --help` for current flags.
+Run current commands from the repository root with `.venv/bin/python -m hireme`; use `--help` for supported flags.
 
-`ashby_form_fields.sh` validates slugs and uses structured GraphQL JSON. `probe_boards.sh` discovers into the ledger; `render_boards.py` prints source health. `tracker_companies.py PATH` extracts explicit wikilinks. The HN helper remains a public read-only research tool.
+| Scripts | Purpose |
+| --- | --- |
+| `delta_sweep.py`, `portal_sweep.py`, `list_sweep.py` | Compatibility wrappers for managed discovery |
+| `schedule.sh`, `scheduled_run.sh`, `dupe_check.sh` | Compatibility wrappers for scheduling, batches and duplicate checks |
+| `probe_boards.sh`, `render_boards.py` | Discover into the private ledger and print source health |
+| `ashby_form_fields.sh` | Validate slugs and inspect public form fields through structured GraphQL |
+| `tracker_companies.py` | Extract explicit company wikilinks from a supplied tracker |
+| `fetch_hn_hiring.sh` | Read-only public HN research |
+| `check_release_artifacts.py` | Reject private-file classes, unsafe paths and source-archive links in distributions |
+| `check_install_artifact.py` | Install a wheel outside the checkout and check dependencies, bundled resources and conservative onboarding defaults |
 
-The old Gmail broker, resume HTTP server and unrestricted Claude launcher are disabled. There is no arbitrary post-run script integration.
-
-Retired helper placeholders have moved to [docs/archive](../docs/archive/README.md) as non-executable text. Existing managed-worker wrappers remain at their original paths for compatibility.
+Discovery stores snapshots in the private ledger. Wrappers retain their existing paths for compatibility and do not advance legacy timestamp files. Release checks are used by CI; see [Contributing](../CONTRIBUTING.md).

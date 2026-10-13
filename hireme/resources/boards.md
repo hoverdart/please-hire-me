@@ -1,13 +1,12 @@
 # Live ATS boards
 
 Every org slug this project has ever touched, re-probed against the ATS APIs on **2026-08-06**.
-A board appears here only if it returned at least one posting that day. This exists to save
-you the slug-guessing game described in `data/ats-field-notes.md`, and to give a new install
-somewhere concrete to start sourcing.
+A board appears here only if it returned at least one posting that day. This historical
+snapshot gives new installations a public set of seed slugs to start sourcing.
 
-Regenerate with `./scripts/probe_boards.sh`. Boards die and come back, so re-probe rather than
-trusting this file forever. Requests are paced on purpose: live orgs return unparseable bodies
-under rate limiting and read as dead.
+Use `./scripts/probe_boards.sh` to check current sources and save source health in the private
+ledger. It does not regenerate this historical snapshot. Boards can change, and rate limiting
+can make an available source temporarily unreadable.
 
 ```bash
 curl -s "https://api.ashbyhq.com/posting-api/job-board/<slug>?includeCompensation=true"
@@ -277,8 +276,7 @@ Counts are from that day's probe.
   8419303002 and 8599644002 are INTERNSHIPS despite the identical title, and 8594541002 and
   4274288002 are the full-time ones. Read the body before opening a form.
 - **`squarepointcapital` — 87 jobs, LIVE.** Completely unmined.
-- **`imc` — 165 jobs, LIVE.** Note the one-application-per-role-per-year limit in
-  `ats-field-notes.md`.
+- **`imc` — 165 jobs on the probe date.** Verify current candidate limits before applying.
 - **`jumpcrypto` — 5 jobs, LIVE.** Distinct board from `jumptrading`.
 
 Slugs probed the same day that returned nothing: `hudsonrivertrading`, `headlandstech`, `sig`,
@@ -290,5 +288,5 @@ Slugs probed the same day that returned nothing: `hudsonrivertrading`, `headland
 ## Not listed
 
 A slug missing from this file was dead, renamed, or never on that ATS on the probe date.
-Before writing one off, try the variants in `data/ats-field-notes.md`: `fal` against
+Before writing one off, verify current slug variants: `fal` against
 `fal-ai`, `sierra` against `sierraai`, Greenhouse against Ashby for the same company.

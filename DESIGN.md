@@ -112,11 +112,11 @@ components:
 
 ## Overview
 
-**Creative North Star: "Applicant operations workspace"**
+**Applicant operations workspace**
 
 The private local dashboard organizes progress and actionable exceptions on neutral paper. White work surfaces, graphite type and restrained teal actions keep the applicant's records and next decision prominent. This is a framework-free HTML/CSS/JavaScript interface served by the local Python application.
 
-This document replaces the discarded blue direction with the implemented operations direction, as explicitly authorized in the redesign. Its authority is the final cascade in `hireme/static/style.css`, markup in `index.html`, and behavior in `app.js` and `workspace.js`; the approved textual direction is recorded in `.impeccable/surfaces/hireme-static-index-html.md`. No approved image comp or QUALITY BAR card exists, so this is a source-derived system, not a certified reproduction. Eight synthetic fixture captures under `.impeccable/review/` record Today, Connections, Jobs and Materials at desktop and mobile sizes; final captures include the flattening, SVG and spacing correction. They prove neither actual platform sign-in nor Pi operation nor native application submission. Connections start disabled. No generative raster asset was created. The shipping README screenshot comes from the synthetic desktop fixture and carries provenance in `docs/images/application-desk-demo.provenance.md`.
+The implementation lives in `hireme/static/style.css`, `index.html`, `app.js` and `workspace.js`. The README screenshot uses the synthetic desktop fixture; its origin and verification limits are recorded in [screenshot provenance](docs/images/application-desk-demo.provenance.md).
 
 **Key Characteristics:**
 
@@ -236,7 +236,7 @@ Motion is limited to control transitions (150ms, default CSS ease); no decorativ
 
 ### Don't:
 
-- **Don't** reintroduce the discarded blue action theme or decorative eyebrow hierarchy.
+- **Don't** add decorative eyebrows or replace the teal action palette.
 - **Don't** replace the authored SVG icon system with ornamental text glyphs.
 - **Don't** promote nested card stacks or hard offset illustration shadows into reusable workspace patterns.
 - **Don't** treat synthetic fixtures as proof of live connections, Pi operation or accepted submissions.

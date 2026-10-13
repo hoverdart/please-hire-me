@@ -1,18 +1,18 @@
 # Connected application workspace
 
-The local dashboard now groups work into Today, Jobs, Materials, Profile and Connections. Preferences and Setup remain utilities. The persistent worker strip exposes pause, discovery and batch controls across views. Today prioritizes progress and exceptions; Jobs uses one filtered, paginated ledger with adjacent desktop details and full-width mobile details. Existing answers, notes, reconciliation, reports, backups, model selection and request limits retain their existing contracts.
+The local dashboard groups work into Today, Jobs, Materials, Profile and Connections. Preferences and Setup remain utilities. The persistent worker strip exposes pause, discovery and batch controls across views. Today prioritizes progress and exceptions; Jobs uses one filtered, paginated ledger with adjacent desktop details and full-width mobile details. Existing answers, notes, reconciliation, reports, backups, model selection and request limits retain their existing contracts.
 
 ## Optional platforms
 
 Handshake and Work at a Startup start disabled. Each has separate connection, automatic-discovery and native-application settings. Posting inspection, preparation, submission and verification also have independent, versioned capability evidence. A successful login or checked setting does **not** establish support for any application flow.
 
-On the machine running the worker:
+From the repository directory on the machine running the worker:
 
 ```bash
-hireme connection handshake connect
-hireme connection handshake status
-hireme connection handshake discover
-hireme connection handshake disconnect
+.venv/bin/python -m hireme connection handshake connect
+.venv/bin/python -m hireme connection handshake status
+.venv/bin/python -m hireme connection handshake discover
+.venv/bin/python -m hireme connection handshake disconnect
 ```
 
 Replace `handshake` with `workatastartup` for the second platform. Dashboard Connect opens a dedicated visible browser window; finish sign-in yourself, close the window, then choose Check connection. On a Pi, do this on its desktop through Raspberry Pi Connect. Each platform uses its own private profile under the worker's private data directory, separate from the employer browser and personal browsers. Disconnect clears that platform's local session and remote-document mappings while preserving application history. Portable restores disable connections and require fresh sign-in and machine-bound validation.
@@ -43,22 +43,6 @@ SQLite additions cover connection settings, versioned flow evidence, listing ori
 
 ## Verification boundaries
 
-| Capability or gate | Evidence in this change | Remaining evidence |
-| --- | --- | --- |
-| Additive storage, identity conflicts and history | Local migrations, exact requisition deduplication, conflict candidates, artifact revisions and restore fixtures | Worker migration on the physical Pi |
-| Dashboard and materials | Desktop/mobile browser fixtures, draft/focus and authenticated-route checks; PDF extraction/character/layout/size checks | Physical Pi desktop and system Chromium behavior |
-| Native forms | Local Handshake/Startup fixtures: exact immutable private uploads, stale selections, supplemental documents, acknowledgements, Quick Apply, profile-changing controls and external routing | Actual platform transport and account-specific requirements |
-| Discovery | Disabled/access gates, session expiry, failure isolation, pagination limits and preserved jobs in fixtures | Authorized Handshake route; signed-in discovery for each platform |
-| Submission and recovery | Local durable-intent, exact-payload, pause/budget, unknown-write and restart/no-retry fixtures | Separately authorized live upload/send and acknowledgement checks |
-| Packaging | Wheel/sdist privacy audit and isolated wheel installation; JavaScript, Python and shell syntax checks | New runtime on the worker machine |
-| Visual finish | Impeccable detector and independent desktop/mobile finish review of synthetic fixtures | No approved image comp or QUALITY BAR reference was supplied; no comp fidelity claim |
+Local fixtures cover identity conflicts, revisions, immutable uploads, exact payload grants, pause/budget handling, interrupted operations and conservative restores. They do not establish live platform access, actual transport compatibility or employer acceptance.
 
-No real application was submitted, profile edited or follow-up sent during implementation. Dedicated-platform authenticated inspection and physical Pi validation were not performed: no dedicated signed-in session or configured Pi connection was available in this checkout. Both connections remain disabled and production native submission remains gated.
-
-Final local verification on October 7, 2026:
-
-- Complete pytest suite: **1,138 passed**, five third-party PyMuPDF deprecation warnings, 317.75 seconds.
-- Final desktop/mobile workspace regressions: **3 passed**, including visible metric labels, draft/focus preservation, filters and authenticated API validation.
-- Wheel and sdist builds, private-file audits and isolated wheel installation passed. Python compilation, JavaScript syntax, shell syntax, dependency consistency and whitespace checks passed.
-- Impeccable detector found one small-text warning; it was corrected. Independent finish disposition: **ship**, covering the scored corrections. The documentation and synthetic screenshot provenance are recorded. No approved comp fidelity, live account, Pi or employer submission proof is implied.
-- Dedicated-platform authenticated inspection, authorized discovery and physical Pi operation remain **not verified**. Actual platform submissions: **zero**.
+Both connections start disabled. Production capabilities remain gated until the dedicated session has independently validated access and matching machine-bound flow evidence. The [release status](public-release.md) records the outstanding gates; [Contributing](../CONTRIBUTING.md) lists reproducible local checks.

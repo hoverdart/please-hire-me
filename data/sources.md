@@ -1,7 +1,10 @@
 # Sourcing List — where to find internship / new-grad / program openings
 
 Research date: 2026-07-22. Written for a new-grad SWE / AI / infra search. Adjust the filters below to
-your own cycle, visa status, and target list in `config/settings.json`.
+your own cycle, visa status, and target list in the dashboard Preferences.
+
+This is historical research. Verify current postings, access conditions and candidate limits;
+these notes do not authorize platform access or establish applicant facts.
 
 ## How to use this file
 
@@ -143,7 +146,7 @@ ones; it is easy to miss.
 | IMC Trading | https://careers.imc.com | Highest pay of the three Dutch firms (IMC, Optiver, Flow Traders) |
 | Flow Traders | https://www.flowtraders.com/careers | US engineering skews senior. |
 | SIG | https://careers.sig.com | Custom portal. |
-| Akuna Capital | https://akunacapital.com/careers | Accepts F-1 OPT/STEM OPT. One application per season, see ats-field-notes. |
+| Akuna Capital | https://akunacapital.com/careers | Accepts F-1 OPT/STEM OPT. Verify the current application limit before applying. |
 | DRW | https://drw.com/careers | Check the graduation window before applying; it is narrow. |
 | Jump Trading | https://www.jumptrading.com/careers/ | Greenhouse `jumptrading`. Campus track sponsors and accepts CPT/OPT. |
 | Chicago Trading Company | https://www.chicagotrading.com/campus | Campus page. Form requires a street address. |

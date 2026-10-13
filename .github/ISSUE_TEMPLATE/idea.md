@@ -9,4 +9,4 @@ labels: enhancement
 **What you would do instead**
 
 **Does it require the agent to guess at anything?**
-If yes, it will not be accepted. See CONTRIBUTING.md, "The one rule".
+If yes, it will not be accepted. See the confirmed-fact and authority requirements in CONTRIBUTING.md.
