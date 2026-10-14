@@ -247,6 +247,30 @@ def test_login_captcha_and_personal_tab_isolation(store,ats):
     assert not ats[1]
 
 
+@pytest.mark.parametrize('style',['display:none','visibility:hidden','width:0;height:0;border:0'])
+def test_hidden_recaptcha_frame_does_not_prevent_submission(store,ats,style):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text()
+    html=html.replace('</body>',f'<iframe src="about:blank#bframe" style="{style}"></iframe></body>')
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html) if route.request.method=='GET' else route.fallback())
+        assert b.apply(job)=='confirmed'
+        with pytest.raises(Blocked):b.apply(job)
+    assert len(ats[1])==1
+
+
+@pytest.mark.parametrize('src',['about:blank#bframe','about:blank#hcaptcha','about:blank#challenges.cloudflare.com'])
+def test_visible_captcha_prevents_submit_intent(store,ats,src):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text()
+    html=html.replace('</body>',f'<iframe src="{src}"></iframe></body>')
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
+        with pytest.raises(Blocked,match='captcha_blocked'):b.apply(local_job(store,ats))
+    assert not ats[1]
+    assert not store.db.execute('SELECT 1 FROM applications WHERE attempted IS NOT NULL').fetchone()
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 def test_required_transcript_blocks_until_imported_then_attaches(store,ats,tmp_path):
     import hashlib
     from pypdf import PdfWriter

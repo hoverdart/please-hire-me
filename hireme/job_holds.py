@@ -4,7 +4,7 @@ import json
 import time
 from datetime import datetime,timezone,timedelta
 from zoneinfo import ZoneInfo
-from .field_context import MAPPING_VERSION, ADAPTER_VERSION
+from .field_context import MAPPING_VERSION, ADAPTER_VERSION, CAPTCHA_DETECTION_VERSION
 from .presentation import NOT_MATCH_REASONS, WAIT_REASONS
 from .util import digest, now, Blocked
 
@@ -78,6 +78,7 @@ def dependency(store, job, kind, reason=None):
             data['citizenship_policy']=CITIZENSHIP_VERSION
         return digest(data)
     data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION}
+    if reason in {'captcha','captcha_blocked'}:data['captcha_detection']=CAPTCHA_DETECTION_VERSION
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})
     if kind in {'information','mapping','documents','eligibility','account'}:
         data['facts']={k:v['revision'] for k,v in store.facts().items()}

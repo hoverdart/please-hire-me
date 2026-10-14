@@ -48,6 +48,24 @@ def test_hold_releases_on_facts_answers_documents_or_rules(store,job):
     assert ready(store,job)
     assert recheck(store,job['id'])['ready'] is True
 
+@pytest.mark.parametrize('reason',['captcha_blocked','captcha','account_blocked','missing_answers'])
+def test_captcha_detection_update_only_releases_captcha_holds(store,job,monkeypatch,reason):
+    hold(store,job,reason)
+    assert not ready(store,job)
+    monkeypatch.setattr('hireme.job_holds.CAPTCHA_DETECTION_VERSION',3)
+    assert ready(store,job)==(reason in {'captcha','captcha_blocked'})
+
+
+@pytest.mark.parametrize('state',['prepared','unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'])
+def test_captcha_detection_update_preserves_submission_outcomes(store,job,package,monkeypatch,state):
+    hold(store,job,'captcha_blocked')
+    store.prepare(job,package)
+    store.db.execute('UPDATE applications SET state=?',(state,))
+    monkeypatch.setattr('hireme.job_holds.CAPTCHA_DETECTION_VERSION',3)
+    assert ready(store,job)==(state=='prepared')
+    if state!='prepared':
+        with pytest.raises(ValueError):recheck(store,job['id'])
+
 @pytest.mark.parametrize('reason',['navigation_failed','provider_timeout','provider_error'])
 def test_transient_retry_only_two_delayed_retries(store,job,reason):
     hold(store,job,reason,at=1000)

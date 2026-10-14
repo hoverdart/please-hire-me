@@ -382,7 +382,10 @@ class Browser:
             # Redirect URLs may carry one-use codes or signed query parameters.
             raise Blocked("unexpected_redirect",'Destination host changed to '+str(host or 'unknown'))
         if self.page.locator('input[type=password]').count():raise Blocked("account_blocked")
-        if self.page.locator('iframe[src*="bframe"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare.com"]').count():
+        # Passive CAPTCHA scoring can preload a hidden challenge frame. Only
+        # an exposed widget/challenge requires human intervention.
+        captcha_frames=self.page.locator('iframe[src*="bframe"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare.com"]')
+        if any(frame.is_visible() for frame in captcha_frames.all()):
             raise Blocked("captcha_blocked")
         text=self.page.locator('body').inner_text(timeout=5000)
         if re.search(r"(?:job|position|posting).{0,40}(?:no longer available|no longer accepting|has expired|has been filled|(?:was )?not found)",text,re.I):raise Blocked("expired_posting")
