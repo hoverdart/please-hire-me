@@ -4,6 +4,7 @@ import os
 import plistlib
 from hireme.scheduler import install,LABEL
 from hireme.scheduler import status, apply_saved_interval
+from hireme.scheduler import start_scheduled_worker
 from hireme.store import Store, worker_lock
 from hireme.util import Blocked
 import pytest
@@ -59,6 +60,17 @@ def test_schedule_interval_can_be_applied_without_resuming_or_running(store, tmp
 def test_running_worker_blocks_schedule_changes(store, tmp_path):
     with worker_lock(store.root):
         with pytest.raises(Blocked, match='worker_busy'): apply_saved_interval(store, tmp_path)
+
+
+def test_immediate_pi_run_uses_scheduled_unit_without_starting_another_dashboard(store,monkeypatch):
+    monkeypatch.setattr('hireme.scheduler.check_owner',lambda s:{'kind':'systemd','enabled':True})
+    calls=[]
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',lambda args,**kwargs:calls.append(args))
+    assert start_scheduled_worker(store)
+    assert calls==[['systemctl','--user','start','--no-block','please-hire-me-worker.service']]
+    monkeypatch.setattr('hireme.scheduler.check_owner',lambda s:{'kind':'systemd','enabled':False})
+    with pytest.raises(ValueError,match='Enable the worker timer'):start_scheduled_worker(store)
+    assert len(calls)==1
 
 
 def test_cron_status_identifies_applicant_with_spaces_and_percent(store, tmp_path, monkeypatch):

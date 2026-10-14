@@ -31,6 +31,8 @@ loginctl enable-linger "$USER"
 
 The dashboard is loopback-only. Access it through the Pi desktop in Connect. Disconnecting Connect leaves background services running.
 
+**Start scheduled applications** installs or updates the worker timer without starting another dashboard on the same port. Wait for an active search or batch to finish first. On a Pi, the first batch and subsequent scheduled batches use the same worker service. Do not also leave `hireme daemon` running alongside the timer.
+
 ## Restart or stop the dashboard
 
 ```bash

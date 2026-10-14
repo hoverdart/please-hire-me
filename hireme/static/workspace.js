@@ -43,6 +43,10 @@
   function feedback(parent, message, error=false) {
     parent.textContent = message; parent.setAttribute('role',error?'alert':'status');
   }
+  function sessionLabel(connection) {
+    if(connection.session_ready)return 'Signed in';
+    return {connecting:'Sign-in window open',not_checked:'Check sign-in',check_failed:'Could not check sign-in',verification_required:'Browser verification needed'}[connection.session_state]||'Sign-in needed';
+  }
   function renderConnections(snapshot) {
     const parent = document.getElementById('platform-connections');
     const signature = JSON.stringify([snapshot.platform_connections,snapshot.demo,snapshot.worker_running]);
@@ -53,7 +57,7 @@
       const section = el('section',undefined,'platform-connection section');
       section.dataset.connectionId = connection.id;
       const head = el('div',undefined,'section-head');
-      head.append(el('h2',connection.name),el('span',connection.session_ready?'Signed in':connection.session_state==='connecting'?'Sign-in window open':'Sign-in needed','state'));
+      head.append(el('h2',connection.name),el('span',sessionLabel(connection),'state'));
       section.append(head,el('p',connection.detail || 'Sign in on the computer running the worker. Connections start disabled.','help'));
       const form = el('form',undefined,'connection-controls');
       for (const [key,labelText] of [['enabled','Enable connection'],['discovery_enabled','Search automatically'],['native_apply_enabled','Apply automatically on this platform']]) {
@@ -90,7 +94,7 @@
         finally{form.dataset.saving='false';pendingConnections.delete(connection.id);restoreConnectionControls(section,connection.id);if(!dirtyForms.has(form)){connectionsSignature='';renderConnections(state);} }
       };
       section.append(actions,statusLine,el('p',connection.checked?`Last checked: ${date(connection.checked)}`:'Not checked on this machine yet.','help'));
-      const help=el('details');help.append(el('summary','Connect from the Pi or terminal'),el('p','On a Pi, open its desktop through Pi Connect and run this command there. Finish sign-in, then return here to check the connection.','help'));
+      const help=el('details');help.append(el('summary','Connect from the Pi or terminal'),el('p','Run this from the project folder on the computer running the worker. On a Pi, use a terminal on its desktop through Pi Connect. Finish sign-in in the browser this command opens, then press Enter in that terminal to verify the connection. Signing in does not enable unvalidated automatic search or applications.','help'));
       const pre=el('pre');pre.tabIndex=0;pre.append(el('code',connection.connect_command));help.append(pre);section.append(help);
       parent.append(section);
     }
@@ -104,7 +108,7 @@
     const health=document.getElementById('today-connections');
     const healthKey=JSON.stringify([snapshot.platform_connections,snapshot.provider,snapshot.gmail]);
     if(healthKey!==healthSignature){healthSignature=healthKey;health.replaceChildren();
-      for(const c of snapshot.platform_connections||[]){const row=el('div',undefined,'health-row');row.append(el('strong',c.name),el('span',!c.enabled?'Disabled':!c.session_ready?'Sign-in needed':!c.capabilities.submission.available?'Validation needed':'Ready','help'));health.append(row);}
+      for(const c of snapshot.platform_connections||[]){const row=el('div',undefined,'health-row');row.append(el('strong',c.name),el('span',!c.enabled?'Disabled':!c.session_ready?sessionLabel(c):!c.capabilities.submission.available?'Validation needed':'Ready','help'));health.append(row);}
       const services=el('p','Model and email settings are available in Connections.','help');health.append(services);
     }
     const parent=document.getElementById('today-attention');

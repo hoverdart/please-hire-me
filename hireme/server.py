@@ -129,7 +129,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
             if path in ('/','/app.js','/notes.js','/workspace.js','/style.css'):
                 name={'/':'index.html','/app.js':'app.js','/notes.js':'notes.js','/workspace.js':'workspace.js','/style.css':'style.css'}[path]
                 return self.send(200,(assets/name).read_bytes(),'text/html; charset=utf-8' if path=='/' else 'text/css' if path=='/style.css' else 'text/javascript')
-            if not self._auth():return self.send(403,{'error':'Open the dashboard URL printed by hireme dashboard'})
+            if not self._auth():return self.send(403,{'error':'Open the dashboard URL printed by .venv/bin/python -m hireme dashboard'})
             store=Store(root)
             try:
                 if path=='/api/state':
@@ -454,6 +454,11 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     elif path=='/api/resume-worker':store.update_settings({'live_enabled':True});result={'enabled':True}
                     elif path=='/api/settings':result=store.update_settings(data)
                     elif path=='/api/complete-setup':
+                        if data.get('start') is True:
+                            with state['lock']:
+                                if state['running']:raise ValueError('Wait for the current search or batch to finish before starting scheduled applications.')
+                            from .recovery import worker_status
+                            if worker_status(store)['running']:raise ValueError('Wait for the current search or batch to finish before starting scheduled applications.')
                         if store.missing_setup():raise ValueError('Missing: '+', '.join(store.missing_setup()))
                         from .setup_status import readiness
                         checks=readiness(store,verify=True)
@@ -463,18 +468,19 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                             store.update_settings({'onboarding_complete':True,'live_enabled':False})
                             result={'message':'Setup saved. Applications remain paused. Resume when ready.'}
                         else:
-                            store.update_settings({'onboarding_complete':True,'live_enabled':True})
-                            from .scheduler import install
+                            store.update_settings({'onboarding_complete':True})
+                            from .scheduler import apply_saved_interval, start_scheduled_worker
                             try:
-                                if store.settings()['deployment']=='pi':
-                                    from .pi import install as install_pi
-                                    installed=install_pi(store,repo,enable=True)['directory']
-                                else:installed=install(store,repo)
-                                start_cycle()
-                                result={'message':'Automatic applications enabled; schedule installed: '+installed+'. First cycle started.'}
+                                installed=apply_saved_interval(store,repo)
+                                store.update_settings({'live_enabled':True})
+                                if not start_scheduled_worker(store):start_cycle()
+                                result={'message':'Automatic applications enabled; schedule installed: '+installed['location']+'. First cycle started.'}
                             except Exception as e:
+                                if isinstance(e,Blocked) and e.reason=='worker_busy':
+                                    raise ValueError('Wait for the current search or batch to finish before starting scheduled applications.') from None
                                 store.update_settings({'live_enabled':False})
-                                result={'message':'Setup saved; scheduling failed. Submissions paused. Run hireme daemon or fix the scheduler: '+type(e).__name__}
+                                detail=str(e) if isinstance(e,(ValueError,Blocked)) else 'The operating system could not start the worker schedule.'
+                                result={'message':'Setup saved; scheduled applications could not start. Submissions paused. '+detail}
                     elif path=='/api/reconcile':
                         if type(data.get('submitted')) is not bool:raise ValueError('Choose submitted or not submitted')
                         store.reconcile(data['id'],data['submitted'],data['note']);result={'saved':True}

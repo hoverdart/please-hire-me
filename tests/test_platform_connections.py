@@ -19,6 +19,42 @@ def test_connections_default_off_and_additive_reopen(store, job, package):
     finally:reopened.close()
 
 
+@pytest.mark.parametrize('connection',['handshake','workatastartup'])
+@pytest.mark.parametrize('ready',[False,True])
+def test_session_check_gives_runnable_command_without_unlocking_flows(store,monkeypatch,connection,ready):
+    class SessionBrowser:
+        def __init__(self,*args,**kwargs):
+            assert kwargs['session_check'] is True
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def check_session(self):return ready
+    monkeypatch.setattr('hireme.platform_browser.PlatformBrowser',SessionBrowser)
+    pc.configure(store,connection,{'enabled':True,'discovery_enabled':True,'native_apply_enabled':True})
+    result=pc.check(store,connection)
+    assert result['connect_command']==f'.venv/bin/python -m hireme connection {connection} connect'
+    assert result['session_ready'] is ready
+    assert not any(capability['available'] for capability in result['capabilities'].values())
+    if not ready:
+        assert 'showing a sign-in form' in result['detail']
+        assert 'press Enter' in result['detail']
+
+
+@pytest.mark.parametrize('reason,state',[('connection_session_unverified','check_failed'),('connection_verification_required','verification_required'),('browser_unavailable','check_failed')])
+def test_inconclusive_session_check_preserves_profile_and_never_claims_signed_out(store,monkeypatch,reason,state):
+    marker=pc.profile_path(store,'handshake')/'saved-session';marker.write_bytes(b'synthetic-session')
+    pc.session_result(store,'handshake',True)
+    class SessionBrowser:
+        def __init__(self,*args,**kwargs):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def check_session(self):raise Blocked(reason,'Synthetic check could not finish')
+    monkeypatch.setattr('hireme.platform_browser.PlatformBrowser',SessionBrowser)
+    result=pc.check(store,'handshake')
+    assert result['session_state']==state and not result['session_ready']
+    assert marker.read_bytes()==b'synthetic-session'
+    assert not any(capability['available'] for capability in result['capabilities'].values())
+
+
 @pytest.mark.parametrize('data',[{}, {'enabled':1}, {'enabled':'false'}, {'live_verified':True}, {'discovery_enabled':None}])
 def test_configuration_cannot_install_verification(store,data):
     with pytest.raises(ValueError):pc.configure(store,'handshake',data)

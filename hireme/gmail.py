@@ -120,7 +120,7 @@ class GmailClient:
                 raise Blocked('gmail_dependencies_missing', 'Install please-hire-me[gmail]') from None
             path = _secret_path(store, 'gmail-token.json')
             if not path.is_file() or not status(store)['connected']:
-                raise Blocked('gmail_not_connected', 'Run hireme gmail connect locally')
+                raise Blocked('gmail_not_connected', 'Run .venv/bin/python -m hireme gmail connect from the project folder on the worker desktop')
             data = json.loads(path.read_text())
             if data.get('token_uri') not in ('https://oauth2.googleapis.com/token', 'https://accounts.google.com/o/oauth2/token'):
                 raise Blocked('gmail_credentials_invalid')

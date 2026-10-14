@@ -53,7 +53,7 @@ def main(argv=None):
     p=sub.add_parser('login');p.add_argument('url')
     p=sub.add_parser('connection',help='Manage an optional job-platform connection on this machine')
     p.add_argument('platform',choices=['handshake','workatastartup'])
-    p.add_argument('action',choices=['connect','status','disconnect','discover'])
+    p.add_argument('action',choices=['connect','check','status','disconnect','discover'])
     p=sub.add_parser('import-legacy');p.add_argument('path',type=Path,default=REPO,nargs='?')
     args=parser.parse_args(argv)
     os.umask(0o077)

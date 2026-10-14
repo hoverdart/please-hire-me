@@ -14,6 +14,7 @@ from hireme.util import Blocked,digest,now
 from tests.test_letters import setup_letter
 
 TITLE='Software Engineer Intern Summer 2027'
+SESSION_QUERY='query GetCurrentUser { currentUser { id } }'
 
 @pytest.fixture
 def native_site(store):
@@ -24,9 +25,22 @@ def native_site(store):
             self.send_response(200);self.send_header('Content-Type',ctype+'; charset=utf-8');self.end_headers();self.wfile.write(body.encode())
         def do_GET(self):
             path=urlsplit(self.path).path;reads.append(self.path)
+            if path=='/session.js':
+                return self.send('setTimeout(()=>document.body.insertAdjacentHTML("beforeend", \'<button aria-label="Open profile options">Profile</button>\'),100);','text/javascript')
             if path=='/profile':return self.send('<div id="profile">Test Person · Approved resume</div>')
             if mode['value']=='signed_out':return self.send('<label>Password<input type="password"></label>')
             common=f'<a href="/application">Profile</a><button aria-label="Open profile options">Profile</button><h1>{TITLE}</h1><h2>Acme</h2><div id="posting">Build Python and TypeScript software.</div><div id="requirements">Resume and narrative response</div>'
+            if mode['value']=='delayed_session':
+                common='''<script>setTimeout(()=>{document.body.insertAdjacentHTML('beforeend', '<a href="/application">Profile</a><button aria-label="Open profile options">Profile</button>');},300);</script>'''
+            elif mode['value']=='hidden_session':
+                common='<div hidden>'+common+'</div>'
+            elif mode['value']=='password_session':
+                common+='<label>Password<input type="password"></label>'
+            elif mode['value']=='cdn_session':
+                common=f'<script src="http://localhost:{self.server.server_port}/session.js"></script>'
+            elif mode['value'] in {'account_session','signed_out_account'}:
+                body=json.dumps({'operationName':'GetCurrentUser','query':SESSION_QUERY,'variables':{}})
+                common=f'<script>setTimeout(()=>fetch("/hs/graphql",{{method:"POST",body:JSON.stringify({body})}}),100);</script>'
             if path=='/search':
                 page=int(parse_qs(urlsplit(self.path).query).get('page',['1'])[0])
                 count=30 if mode['value']=='hundred' else 2
@@ -55,12 +69,93 @@ def native_site(store):
             db=sqlite3.connect(store.root/'ledger.sqlite3')
             intents=db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0];db.close()
             records.append((self.path,body,intents))
+            if self.path=='/hs/graphql':
+                user=None if mode['value']=='signed_out_account' else {'id':'fixture-user'}
+                return self.send(json.dumps({'data':{'currentUser':user}}),'application/json')
             if self.path=='/upload':
                 self.send(json.dumps({} if mode['value']=='missing_ack' else {'id':'new-'+str(len(records))}),'application/json')
             else:self.send(json.dumps({'accepted':mode['value']!='ambiguous','job_id':'123'}),'application/json')
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
     yield f'http://127.0.0.1:{server.server_address[1]}',records,mode,reads
     server.shutdown();server.server_close()
+
+
+@pytest.mark.parametrize('connection',['handshake','workatastartup'])
+@pytest.mark.parametrize('mode,expected',[('delayed_session',True),('password_session',False)])
+def test_session_waits_for_visible_client_rendered_profile_without_writes(store,native_site,connection,mode,expected):
+    native_site[2]['value']=mode
+    with PlatformBrowser(store,connection,test_url=native_site[0]+'/search') as browser:
+        assert browser.check_session() is expected
+    assert native_site[1]==[]
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+    assert not any(capability['available'] for capability in pc.status(store,connection)['capabilities'].values())
+
+
+def test_session_profile_loads_from_reviewed_external_script_without_write_grants(store,native_site,monkeypatch):
+    from hireme import platform_browser
+    origin=native_site[0].replace('127.0.0.1','localhost')
+    monkeypatch.setitem(platform_browser.PLATFORM_ASSET_ORIGINS,'handshake',{origin})
+    native_site[2]['value']='cdn_session'
+    with PlatformBrowser(store,'handshake',test_url=native_site[0]+'/search') as browser:
+        assert browser.check_session()
+    assert '/session.js' in native_site[3] and not native_site[1]
+
+
+def test_missing_account_control_is_inconclusive_instead_of_signed_out(store,native_site):
+    native_site[2]['value']='hidden_session'
+    with PlatformBrowser(store,'handshake',test_url=native_site[0]+'/search') as browser:
+        with pytest.raises(Blocked,match='connection_session_unverified'):browser.check_session()
+    assert not native_site[1]
+
+
+@pytest.mark.parametrize('mode,ready',[('account_session',True),('signed_out_account',False)])
+def test_pinned_authenticated_account_read_checks_session_without_profile_menu_or_submission(store,native_site,monkeypatch,mode,ready):
+    from hireme import platform_browser
+    monkeypatch.setitem(platform_browser.HANDSHAKE_SESSION_READS,'GetCurrentUser',hashlib.sha256(SESSION_QUERY.encode()).hexdigest())
+    native_site[2]['value']=mode
+    with PlatformBrowser(store,'handshake',test_url=native_site[0]+'/search') as browser:
+        assert browser.check_session() is ready
+    assert len(native_site[1])==1 and native_site[1][0][0]=='/hs/graphql' and native_site[1][0][2]==0
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+    assert not any(cap['available'] for cap in pc.status(store,'handshake')['capabilities'].values())
+
+
+@pytest.mark.parametrize('change',['mutation','extra_field','variables','extra_operation','other_origin','other_path'])
+def test_account_read_name_cannot_authorize_changed_queries_or_writes(store,monkeypatch,change):
+    from types import SimpleNamespace
+    from hireme import platform_browser
+    monkeypatch.setitem(platform_browser.HANDSHAKE_SESSION_READS,'GetCurrentUser',hashlib.sha256(SESSION_QUERY.encode()).hexdigest())
+    data={'operationName':'GetCurrentUser','query':SESSION_QUERY,'variables':{}}
+    url='https://app.joinhandshake.com/hs/graphql'
+    if change=='mutation':data['query']='mutation GetCurrentUser { submitApplication { id } }'
+    elif change=='extra_field':data['unexpected']=True
+    elif change=='variables':data['variables']={'jobId':'fixture'}
+    elif change=='extra_operation':data['query']+=' mutation Submit { submitApplication { id } }'
+    elif change=='other_origin':url='https://unknown.invalid/hs/graphql'
+    elif change=='other_path':url='https://app.joinhandshake.com/submit'
+    browser=PlatformBrowser(store,'handshake');browser.checking_session=True
+    outcomes=[]
+    route=SimpleNamespace(request=SimpleNamespace(url=url,method='POST',resource_type='fetch',post_data_buffer=json.dumps(data).encode()),continue_=lambda:outcomes.append('allowed'),abort=lambda:outcomes.append('blocked'))
+    browser._route(route)
+    assert outcomes==['blocked']
+
+
+@pytest.mark.parametrize('url,method,resource,allowed',[
+    ('https://handshake-production-cdn.joinhandshake.com/dist/consumer/main.js','GET','script',True),
+    ('https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js','GET','script',True),
+    ('https://handshake-production-cdn.joinhandshake.com/dist/main.js','POST','script',False),
+    ('https://handshake-production-cdn.joinhandshake.com/private','GET','fetch',False),
+    ('https://handshake-production-cdn.joinhandshake.com.attacker.invalid/main.js','GET','script',False),
+    ('https://unknown.invalid/main.js','GET','script',False),
+    ('https://app.joinhandshake.com/submit','POST','fetch',False),
+])
+def test_session_assets_never_grant_unknown_reads_or_application_writes(store,url,method,resource,allowed):
+    from types import SimpleNamespace
+    outcomes=[]
+    route=SimpleNamespace(request=SimpleNamespace(url=url,method=method,resource_type=resource),continue_=lambda:outcomes.append('allowed'),abort=lambda:outcomes.append('blocked'))
+    browser=PlatformBrowser(store,'handshake')
+    browser._route(route)
+    assert outcomes==['allowed' if allowed else 'blocked']
 
 
 def fixture_flows(store,browser,monkeypatch,connection='handshake',supplement=False,quick=False):

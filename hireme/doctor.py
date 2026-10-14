@@ -13,7 +13,7 @@ def diagnose(store, verify=False, *, checks=None):
                   'detail': f"{checks['platform']} · {checks['architecture']} · Python {checks['python']}",
                   'action': '' if checks['supported_platform'] else 'Use macOS or Linux. On Windows, use WSL2.'})
     channel = store.settings()['browser_channel']
-    command = 'Install system Chromium.' if channel == 'system-chromium' else 'Install Google Chrome.' if channel == 'chrome' else 'Run: python -m playwright install chromium'
+    command = 'Install system Chromium.' if channel == 'system-chromium' else 'Install Google Chrome.' if channel == 'chrome' else 'Run: .venv/bin/python -m playwright install chromium'
     items.append({'name': 'Application browser', 'ready': checks['browser_ready'],
                   'detail': channel, 'action': '' if checks['browser_ready'] else command})
     provider = checks['provider']
@@ -28,7 +28,7 @@ def diagnose(store, verify=False, *, checks=None):
     worker = worker_status(store)
     items.append({'name': 'Worker history', 'ready': not worker['recovery_needed'],
                   'detail': 'A batch is running.' if worker['running'] else 'Interrupted work needs recovery.' if worker['recovery_needed'] else 'No interrupted work.',
-                  'action': 'Run: hireme recover. Applications stay paused while uncertain outcomes await verification.' if worker['recovery_needed'] else ''})
+                  'action': 'Run: .venv/bin/python -m hireme recover. Applications stay paused while uncertain outcomes await verification.' if worker['recovery_needed'] else ''})
     items.append({'name': 'Submission control', 'ready': True,
                   'detail': 'Automatic submissions enabled.' if settings['live_enabled'] else 'Submissions paused.',
                   'action': ''})
@@ -42,7 +42,7 @@ def format_report(result):
         lines.append(f"{'OK' if item['ready'] else 'NEEDS SETUP'}  {item['name']}: {item['detail']}")
         if item['action']: lines.append('  Next: ' + item['action'])
     lines.extend(['', result['note']])
-    if not result['verified_login']: lines.append('To check subscription CLI login too, run: hireme doctor --verify-login')
+    if not result['verified_login']: lines.append('To check subscription CLI login too, run: .venv/bin/python -m hireme doctor --verify-login')
     return '\n'.join(lines)
 
 

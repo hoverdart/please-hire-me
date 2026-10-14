@@ -104,7 +104,7 @@ def status(store, connection_id):
             'version': VERSION, 'verified_flows': len(verified)}
     return {**config, 'enabled': bool(config['enabled']), 'discovery_enabled': bool(config['discovery_enabled']),
         'native_apply_enabled': bool(config['native_apply_enabled']), 'name': spec['name'],
-        'login_url': spec['login_url'], 'connect_command': f'hireme connection {connection_id} connect',
+        'login_url': spec['login_url'], 'connect_command': f'.venv/bin/python -m hireme connection {connection_id} connect',
         'capabilities': capabilities, 'session_ready': config['session_state'] == 'ready'}
 
 
@@ -133,6 +133,15 @@ def session_result(store, connection_id, ready, detail=''):
                      ('ready' if ready else 'sign_in_required', now(), detail[:500], connection_id))
 
 
+def session_issue(store, connection_id, state, detail):
+    platform(connection_id)
+    if state not in {'check_failed', 'verification_required', 'not_checked'}:
+        raise ValueError('Unknown session check state')
+    store.db.execute('INSERT OR IGNORE INTO platform_connections(id) VALUES(?)', (connection_id,))
+    store.db.execute('UPDATE platform_connections SET session_state=?,checked=?,detail=? WHERE id=?',
+                     (state, now(), detail[:500], connection_id))
+
+
 def connect(store, connection_id):
     """Interactive sign-in on the machine running the worker; no credential copying."""
     from .store import worker_lock
@@ -156,7 +165,7 @@ def connect(store, connection_id):
         finally:
             context.close()
     # Login completion is a claim until an independent read verifies the session.
-    session_result(store, connection_id, False, 'Sign-in window closed. Check the connection to verify the session.')
+    session_issue(store, connection_id, 'not_checked', 'Sign-in window closed. Check the connection to verify the session.')
     return check(store, connection_id)
 
 
@@ -183,15 +192,15 @@ def start_connect(store, connection_id):
                     deadline = time.monotonic() + 600
                     while not browser.page.is_closed() and time.monotonic() < deadline:
                         browser.page.wait_for_timeout(250)
-                session_result(worker, connection_id, False, 'Sign-in window closed. Check the connection to verify it.')
+                session_issue(worker, connection_id, 'not_checked', 'Sign-in window closed. Check the connection to verify it.')
         except Exception:
-            session_result(worker, connection_id, False, 'Could not complete the sign-in window. Close other worker browsers or use the terminal connect command on the Pi desktop.')
+            session_issue(worker, connection_id, 'check_failed', 'Could not complete the sign-in window. Close other worker browsers or use the terminal connect command on the Pi desktop.')
         finally:
             worker.close()
     try:
         threading.Thread(target=run, name='hireme-platform-sign-in', daemon=True).start()
     except Exception:
-        session_result(store, connection_id, False, 'Could not open sign-in. Try connecting again on the worker desktop.')
+        session_issue(store, connection_id, 'check_failed', 'Could not open sign-in. Try connecting again on the worker desktop.')
         raise
     return {'started': True, 'message': 'Sign in in the dedicated browser window. Close it when finished, then check the connection.'}
 
@@ -215,11 +224,20 @@ def disconnect(store, connection_id):
 def check(store, connection_id):
     from .store import worker_lock
     from .platform_browser import PlatformBrowser
+    from playwright.sync_api import Error as PlaywrightError
     platform(connection_id)
     with worker_lock(store.root), worker_lock(store.root, 'browser'):
-        with PlatformBrowser(store, connection_id) as browser:
-            ready = browser.check_session()
-            session_result(store, connection_id, ready, '' if ready else 'Sign in in the dedicated browser on the worker machine.')
+        try:
+            with PlatformBrowser(store, connection_id, session_check=True) as browser:
+                ready = browser.check_session()
+                session_result(store, connection_id, ready, '' if ready else
+                    'The dedicated browser is showing a sign-in form. Run the connect command from the project folder on the worker desktop, finish sign-in, then press Enter in that terminal.')
+        except Blocked as error:
+            if error.reason in {'worker_busy', 'paused', 'cycle_timeout'}:raise
+            state = 'verification_required' if error.reason in {'connection_verification_required', 'captcha_blocked'} else 'check_failed'
+            session_issue(store, connection_id, state, error.detail or 'The session check could not finish. Your saved browser session has been retained; check again on the worker desktop.')
+        except PlaywrightError:
+            session_issue(store, connection_id, 'check_failed', 'The platform page could not load. Your saved browser session has been retained; check again on the worker desktop.')
     return status(store, connection_id)
 
 

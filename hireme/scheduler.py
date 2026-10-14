@@ -38,7 +38,7 @@ def install(store,repo):
             finally:temporary.unlink(missing_ok=True)
         subprocess.run(['launchctl','bootout',f'gui/{os.getuid()}/{LABEL}'],capture_output=True)
         r=subprocess.run(['launchctl','bootstrap',f'gui/{os.getuid()}',str(path)],capture_output=True)
-        if r.returncode:raise ValueError('launchd rejected worker; run hireme daemon in a terminal')
+        if r.returncode:raise ValueError('launchd rejected worker; run .venv/bin/python -m hireme daemon in a terminal')
         return str(path)
     if sys.platform=='linux' and shutil.which('systemctl') and (Path.home()/'.config/systemd/user/please-hire-me-worker.timer').exists():
         from .pi import install as install_pi
@@ -86,7 +86,7 @@ def _details(arguments, store, interval=None, **extra):
 def _query_schedule(args):
     try:return subprocess.run(args,capture_output=True,text=True,timeout=5)
     except (OSError,subprocess.TimeoutExpired) as error:
-        raise ValueError('The system scheduler could not be checked. Check your OS services or use hireme daemon.') from error
+        raise ValueError('The system scheduler could not be checked. Check your OS services or use .venv/bin/python -m hireme daemon.') from error
 
 
 def status(store=None,cron_only=False):
@@ -139,7 +139,7 @@ def apply_saved_interval(store, repo):
                 subprocess.run(['systemctl','--user','enable','--now',WORKER+'.timer'],check=True)
             else:location=install(store,repo)
         except (OSError,subprocess.CalledProcessError) as error:
-            raise ValueError('Schedule activation failed. Check the OS scheduler or run hireme daemon. Application pause settings were not changed.') from error
+            raise ValueError('Schedule activation failed. Check the OS scheduler or run .venv/bin/python -m hireme daemon. Application pause settings were not changed.') from error
         interval=store.settings()['schedule_hours']
         store.event('schedule_installed','worker',{'interval_hours':interval})
     return {'message':f'Schedule applied: every {interval} hours. Paused applications stay paused.', 'location':location,'interval_hours':interval}
@@ -153,3 +153,13 @@ def check_owner(store,cron_only=False):
     if any(record['installed'] and not record.get('matches_applicant') for record in records):
         raise ValueError('The installed schedule belongs to another applicant or cannot be verified. Remove that schedule from its original instance before replacing it.')
     return current
+
+
+def start_scheduled_worker(store):
+    """Let systemd own both immediate and timed runs of the same worker unit."""
+    current=check_owner(store)
+    if current.get('kind')!='systemd':return False
+    if not current.get('enabled'):
+        raise ValueError('Enable the worker timer before starting scheduled applications.')
+    subprocess.run(['systemctl','--user','start','--no-block','please-hire-me-worker.service'],check=True)
+    return True

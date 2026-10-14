@@ -154,7 +154,7 @@ class Browser:
         self.playwright=sync_playwright().start()
         s=self.store.settings(); profile=getattr(self,'profile_directory',None) or private_dir(self.store.root/"browser")
         kwargs={"headless":s["headless"],"accept_downloads":False,"service_workers":"block"}
-        if getattr(self,'interactive',False):kwargs['headless']=False
+        if getattr(self,'interactive',False) or getattr(self,'session_check',False):kwargs['headless']=False
         if s["browser_channel"]=="chrome": kwargs["channel"]="chrome"
         elif s["browser_channel"]=="system-chromium":
             executable=shutil.which('chromium') or shutil.which('chromium-browser')

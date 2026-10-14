@@ -97,7 +97,7 @@ Targets are not promises of throughput. Rate limits stop work without automatic 
 
 Pause stops a cycle at cancellation checkpoints, including active CLI inference. An in-flight browser/API request may finish its timeout first. An employer request already sent cannot be undone. Resume permits a new cycle and cannot revive the cancelled one.
 
-After saving a batch interval, choose **Preferences → Apply saved interval**, then **Check schedule**. The CLI equivalent is `hireme schedule install`. Your computer must be awake for scheduled work. macOS uses a LaunchAgent; Linux uses cron unless Pi systemd units are installed. Cron intervals must divide 24 hours: 1, 2, 3, 4, 6, 8, 12 or 24.
+After saving a batch interval, choose **Preferences → Apply saved interval**, then **Check schedule**. The CLI equivalent is `.venv/bin/python -m hireme schedule install`. Your computer must be awake for scheduled work. macOS uses a LaunchAgent; Linux uses cron unless Pi systemd units are installed. Cron intervals must divide 24 hours: 1, 2, 3, 4, 6, 8, 12 or 24.
 
 To remove a schedule:
 
@@ -105,7 +105,7 @@ To remove a schedule:
 .venv/bin/python -m hireme schedule uninstall
 ```
 
-`hireme daemon` is a foreground scheduler alternative. Use one scheduler per applicant. OS schedule names are shared per OS user, and installation verifies the applicant directory. Use separate OS accounts for independently scheduled applicants.
+`.venv/bin/python -m hireme daemon` is a foreground scheduler alternative. Use one scheduler per applicant. OS schedule names are shared per OS user, and installation verifies the applicant directory. Use separate OS accounts for independently scheduled applicants.
 
 If a worker stopped unexpectedly, use **Recover and stay paused** after the worker lock is free, or:
 
@@ -164,7 +164,7 @@ Employer account automation is off by default. Supported native forms use exact 
 
 To supply employer credentials, pause submissions and wait for active work to finish, then open **Needs you → Employer accounts → Supply credentials for an employer**. Enter the employer, exact HTTPS account origin and matching 20–128-character password. The confirmed applicant email is reused. Saving stores local credentials only and does not create an account, accept terms or replace existing account history.
 
-For manual sign-in, use `hireme login APPROVED_PORTAL_URL` to open the dedicated browser. After verifying an account manually, record confirmation in **Needs you**. Account passwords stay outside model input, reports and ordinary backups.
+For manual sign-in, use `.venv/bin/python -m hireme login APPROVED_PORTAL_URL` to open the dedicated browser. After verifying an account manually, record confirmation in **Needs you**. Account passwords stay outside model input, reports and ordinary backups.
 
 ## Troubleshooting
 

@@ -9,12 +9,25 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit
 
 from .browser import Browser
 from .platform_connections import (VERSION, MAX_JOBS, MAX_PAGES, configuration,
     flows, platform, profile_path, session_result)
 from .util import Blocked, digest, private_dir, safe_document
+
+# Handshake's public app shell loads these assets before its account menu can
+# render. This grants asset GETs only, never platform API or application writes.
+PLATFORM_ASSET_ORIGINS = {
+    'handshake': {'https://handshake-production-cdn.joinhandshake.com'},
+}
+# Exact, variable-free bootstrap queries observed on Handshake's live app.
+# A matching operation name alone cannot authorize a changed query or mutation.
+HANDSHAKE_SESSION_READS = {
+    'GetBaseData': 'f006f06d8c17728cee316d34dde9375ea75ce8017d5c96eccef300e8b6d9d80c',
+    'GetCurrentUser': '4f5497e0a28c80a7b30ebce229593ecfebb1dbcc17174211412eb4f655943d3d',
+}
 
 
 def flow_signature(page, document_selectors=()):
@@ -80,7 +93,7 @@ class OperationGrant:
 
 
 class PlatformBrowser(Browser):
-    def __init__(self, store, connection_id, test_url=None, interactive=False):
+    def __init__(self, store, connection_id, test_url=None, interactive=False, session_check=False):
         super().__init__(store, test_url=test_url)
         self.connection_id = connection_id
         self.spec = platform(connection_id)
@@ -92,7 +105,11 @@ class PlatformBrowser(Browser):
         self.read_protocol = []
         self.active_flow = None
         self.interactive = interactive
+        self.session_check = session_check
         self.stopped_reason = None
+        self.verification_blocked = False
+        self.checking_session = False
+        self.session_identity = None
 
     def __enter__(self):
         super().__enter__()
@@ -117,21 +134,41 @@ class PlatformBrowser(Browser):
         same = origin == self.origin or (not self.test_url and self.connection_id == 'workatastartup' and origin == 'https://workatastartup.com')
         if same and request.method in {'GET', 'HEAD', 'OPTIONS'}:
             return route.continue_()
+        if self.checking_session and self._session_read(request):
+            return route.continue_()
         if same and any(OperationGrant(self.origin, spec, {}).consume(request) for spec in self.read_protocol):
             return route.continue_()
         if self.operation and self.operation.consume(request):
             return route.continue_()
         # Styles/images on reviewed static origins receive no writes or application grant.
-        static = (self.active_flow or {}).get('static_origins', [])
-        if origin in static and request.method == 'GET' and request.resource_type in {'stylesheet', 'image', 'font'}:
+        static = set((self.active_flow or {}).get('static_origins', []))
+        static.update(PLATFORM_ASSET_ORIGINS.get(self.connection_id, set()))
+        polyfill = (self.connection_id == 'handshake' and origin == 'https://cdnjs.cloudflare.com'
+                    and parsed.path == '/polyfill/v3/polyfill.min.js' and request.resource_type == 'script')
+        if (origin in static or polyfill) and request.method == 'GET' and request.resource_type in {'script', 'stylesheet', 'image', 'font'}:
             return route.continue_()
         if same and request.method not in {'GET', 'HEAD', 'OPTIONS'}:
+            if parsed.path.startswith('/cdn-cgi/challenge-platform/'):
+                self.verification_blocked = True
+                return route.abort()
             self.denied_write = True
             self.store.event('connection_request_blocked', self.connection_id,
                              {'path': parsed.path, 'method': request.method})
         return route.abort()
 
     def _platform_response(self, response):
+        if self.checking_session and self._session_read(response.request) == 'GetCurrentUser' and response.status == 200:
+            try:
+                data = response.json()
+                payload = data.get('data') if isinstance(data, dict) else None
+                if not data.get('errors') and isinstance(payload, dict) and 'currentUser' in payload:
+                    user = payload['currentUser']
+                    if user is None:
+                        self.session_identity = False
+                    elif isinstance(user, dict) and isinstance(user.get('id'), (str, int)) and not isinstance(user.get('id'), bool) and str(user['id']) not in {'', '0'}:
+                        self.session_identity = True
+            except (ValueError, TypeError, AttributeError):
+                pass
         if not self.operation or not self.operation.used:
             return
         request = response.request
@@ -139,11 +176,27 @@ class PlatformBrowser(Browser):
         if request == self.operation.request:
             self.operation_response = response
 
+    def _session_read(self, request):
+        if self.connection_id != 'handshake' or request.method != 'POST':return None
+        parsed = urlsplit(request.url)
+        if parsed.scheme + '://' + parsed.netloc != self.origin or parsed.path != '/hs/graphql' or parsed.query:return None
+        try:
+            raw = request.post_data_buffer or b''
+            if len(raw) > 16384:return None
+            data = json.loads(raw)
+            if not isinstance(data, dict) or set(data) != {'operationName', 'query', 'variables'} or data['variables'] != {} or not isinstance(data['query'], str):return None
+            name = data['operationName']
+            if isinstance(name, str) and hashlib.sha256(data['query'].encode()).hexdigest() == HANDSHAKE_SESSION_READS.get(name):return name
+        except (ValueError, TypeError, UnicodeError):pass
+        return None
+
     def _guard_connection(self):
         if self.stopped_reason:
             raise self.stopped_reason
         self.store.checkpoint()
-        if self.denied_write:
+        if self.verification_blocked:
+            raise Blocked('connection_verification_required', 'Complete browser verification yourself in Sign in on the worker desktop, then check again.')
+        if self.denied_write and not self.checking_session:
             raise Blocked('unapproved_draft_write', 'An unrecognized platform write was blocked. Validate this flow before retrying.')
         text = self.page.locator('body').inner_text()[:100000]
         if re.search(r'captcha|verify you are human|security challenge', text, re.I):
@@ -151,11 +204,34 @@ class PlatformBrowser(Browser):
         return text
 
     def check_session(self):
-        self.page.goto(self.test_url or self.spec['search_url'], wait_until='domcontentloaded')
+        self.checking_session = True
+        self.session_identity = None
+        try:return self._check_session()
+        finally:self.checking_session = False
+
+    def _check_session(self):
+        response = self.page.goto(self.test_url or self.spec['search_url'], wait_until='domcontentloaded')
+        text = self.page.locator('body').inner_text()[:100000]
+        if re.search(r'verify you are human|security challenge|just a moment|checking your browser', text, re.I):
+            raise Blocked('connection_verification_required', 'Handshake requires browser verification. Open Sign in on the worker desktop and complete it yourself, then check again.')
+        if response and response.status >= 400:
+            raise Blocked('connection_session_unverified', 'The platform did not load successfully. Your saved sign-in has been retained; check again from the worker desktop.')
         self._guard_connection()
         selector = ('a[href*="/application"]' if self.connection_id == 'workatastartup' else '[aria-label="Open profile options"]')
-        ready = self.page.locator(selector).count() > 0 and not self.page.get_by_role('textbox', name=re.compile('password', re.I)).count()
-        return ready
+        # Client-rendered navigation can appear after DOMContentLoaded. A hidden
+        # profile control, or a password form beside it, is not a signed-in session.
+        profile = self.page.locator(selector + ':visible').first
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            self._guard_connection()
+            if self.session_identity is not None:return self.session_identity
+            path = urlsplit(self.page.url).path.rstrip('/')
+            if self.page.locator('input[type="password"]:visible').count() or (
+                    path in {'/access', '/login', '/users/sign_in'} and self.page.locator('input[type="email"]:visible').count()):
+                return False
+            if profile.count() and profile.is_visible():return True
+            self.page.wait_for_timeout(200)
+        raise Blocked('connection_session_unverified', 'The signed-in account could not be verified. Your saved session has been retained; this is not a confirmed sign-out.')
 
     def _read_flow(self, capability):
         verified = flows(self.store, self.connection_id, capability)

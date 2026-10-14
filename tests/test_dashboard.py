@@ -888,19 +888,31 @@ def test_transcript_upload_replace_invalid_and_responsive_ui(tmp_path):
     finally:process.terminate();process.join(5)
 
 
-def launch_setup(root,repo,port,queue):
+def launch_setup(root,repo,port,queue,scenario='normal'):
     from hireme import scheduler,worker,setup_status
     setup_status.readiness=lambda store,verify=False: {'supported_platform':True,'browser_ready':True,'provider':{'ready':True}}
-    scheduler.install=lambda store,repo:'fixture scheduler'
+    scheduler.apply_saved_interval=lambda store,repo:{'location':'fixture scheduler'}
+    scheduler.start_scheduled_worker=lambda store:False
+    if scenario=='systemd':
+        def start_scheduled(store):queue.put('scheduled unit started');return True
+        scheduler.start_scheduled_worker=start_scheduled
+    elif scenario=='failure':
+        def fail_schedule(*args):raise ValueError('Synthetic schedule belongs to another applicant')
+        scheduler.apply_saved_interval=fail_schedule
+    elif scenario=='busy':
+        from hireme.util import Blocked
+        def busy_schedule(*args):raise Blocked('worker_busy')
+        scheduler.apply_saved_interval=busy_schedule
     scheduler.status=lambda *args, **kwargs: {'installed':False}
     worker.cycle=lambda store,repo:queue.put('first cycle started')
     serve(Path(root),Path(repo),port,token='fixture-capability')
 
 
-def test_complete_setup_installs_schedule_and_starts_first_cycle(store):
+@pytest.mark.parametrize('scenario',['normal','systemd','failure'])
+def test_complete_setup_installs_schedule_and_starts_first_cycle(store,scenario):
     sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
     queue=multiprocessing.Queue()
-    process=multiprocessing.Process(target=launch_setup,args=(str(store.root),str(Path(__file__).parent.parent),port,queue));process.start()
+    process=multiprocessing.Process(target=launch_setup,args=(str(store.root),str(Path(__file__).parent.parent),port,queue,scenario));process.start()
     base=f'http://127.0.0.1:{port}'
     try:
         for _ in range(50):
@@ -908,10 +920,56 @@ def test_complete_setup_installs_schedule_and_starts_first_cycle(store):
             except OSError:time.sleep(.1)
         req=urllib.request.Request(base+'/api/complete-setup',data=b'{"start":true}',headers={'X-Hireme-Token':'fixture-capability','Content-Type':'application/json','Origin':base})
         with urllib.request.urlopen(req) as response:
-            assert 'First cycle started' in json.loads(response.read())['message']
-        assert queue.get(timeout=5)=='first cycle started'
-        assert store.settings()['live_enabled']
+            message=json.loads(response.read())['message']
+        if scenario=='failure':
+            assert 'Synthetic schedule belongs to another applicant' in message
+            assert not store.settings()['live_enabled'] and queue.empty()
+        else:
+            assert 'First cycle started' in message
+            assert queue.get(timeout=5)==('scheduled unit started' if scenario=='systemd' else 'first cycle started')
+            assert store.settings()['live_enabled']
+            assert queue.empty()
     finally:process.terminate();process.join(5);queue.close()
+
+
+def test_start_setup_during_search_does_not_install_schedule_or_pause_existing_work(store):
+    store.update_settings({'live_enabled':False})
+    previous=store.settings()
+    sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+    process=multiprocessing.Process(target=launch_discovery_fixture,args=(str(store.root),str(Path.cwd()),port));process.start()
+    base=f'http://127.0.0.1:{port}'
+    def post(endpoint,data):
+        return urllib.request.urlopen(urllib.request.Request(base+'/api/'+endpoint,data=json.dumps(data).encode(),headers={'X-Hireme-Token':'fixture-capability','Content-Type':'application/json','Origin':base}))
+    try:
+        wait_for_dashboard(process,base)
+        with post('discover',{}):pass
+        with pytest.raises(urllib.error.HTTPError) as error:post('complete-setup',{'start':True})
+        assert error.value.code==400
+        assert 'Wait for the current search or batch' in json.loads(error.value.read())['error']
+        assert store.settings()==previous
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind='schedule_installed'").fetchone()
+    finally:process.terminate();process.join(5)
+
+
+@pytest.mark.parametrize('external_lock',[True,False])
+def test_start_setup_preserves_external_worker_when_busy_before_or_during_schedule_activation(store,external_lock):
+    from contextlib import nullcontext
+    from hireme.store import worker_lock
+    previous=store.settings()
+    sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+    queue=multiprocessing.Queue()
+    process=multiprocessing.Process(target=launch_setup,args=(str(store.root),str(Path.cwd()),port,queue,'normal' if external_lock else 'busy'))
+    base=f'http://127.0.0.1:{port}'
+    with worker_lock(store.root) if external_lock else nullcontext():
+        process.start()
+        try:
+            wait_for_dashboard(process,base)
+            req=urllib.request.Request(base+'/api/complete-setup',data=b'{"start":true}',headers={'X-Hireme-Token':'fixture-capability','Content-Type':'application/json','Origin':base})
+            with pytest.raises(urllib.error.HTTPError) as error:urllib.request.urlopen(req)
+            assert error.value.code==400
+            assert 'Wait for the current search or batch' in json.loads(error.value.read())['error']
+            assert store.settings()==previous and queue.empty()
+        finally:process.terminate();process.join(5);queue.close()
 
 
 def test_material_upload_review_and_context_preferences(tmp_path):
@@ -1039,6 +1097,8 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
     from playwright.sync_api import sync_playwright, expect
     from hireme.discovery import posting
     from hireme.util import now
+    from hireme.platform_connections import session_issue
+    session_issue(store,'handshake','check_failed','The platform page could not load. Your saved browser session has been retained.')
 
     jobs = []
     for index, (company, location, status, score) in enumerate([
@@ -1111,6 +1171,17 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
             expect(page.get_by_role('group', name='Your pace')).to_be_visible()
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             page.screenshot(path=str(captures / 'preferences-mobile.png'), full_page=True)
+            page.locator('[data-view=connections]').click()
+            handshake=page.locator('[data-connection-id=handshake]')
+            expect(handshake.locator('.state')).to_have_text('Could not check sign-in')
+            handshake.get_by_text('Connect from the Pi or terminal',exact=True).click()
+            expect(handshake.locator('pre code')).to_have_text('.venv/bin/python -m hireme connection handshake connect')
+            expect(handshake.locator('details')).to_contain_text('press Enter in that terminal')
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            page.screenshot(path=str(captures / 'connections-mobile.png'), full_page=True)
+            page.set_viewport_size({'width':1440,'height':1000})
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            page.screenshot(path=str(captures / 'connections-desktop.png'), full_page=True)
             assert not errors
             browser.close()
     finally:
