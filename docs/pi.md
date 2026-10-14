@@ -33,6 +33,8 @@ The dashboard is loopback-only. Access it through the Pi desktop in Connect. Dis
 
 **Start scheduled applications** installs or updates the worker timer without starting another dashboard on the same port. Wait for an active search or batch to finish first. On a Pi, the first batch and subsequent scheduled batches use the same worker service. Do not also leave `hireme daemon` running alongside the timer.
 
+The sandboxed dashboard uses a short-lived user service to check and retire its legacy cron entry, since `crontab` needs its normal spool permissions. Other cron entries are preserved, and the dashboard keeps `NoNewPrivileges=yes`. An unreadable cron schedule blocks installation instead of being treated as an empty schedule.
+
 ## Restart or stop the dashboard
 
 ```bash

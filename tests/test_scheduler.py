@@ -73,6 +73,46 @@ def test_immediate_pi_run_uses_scheduled_unit_without_starting_another_dashboard
     assert len(calls)==1
 
 
+def test_sandboxed_dashboard_uses_only_fixed_cron_utility_through_user_manager(monkeypatch):
+    from hireme.scheduler import _crontab
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    original=Path.read_text
+    monkeypatch.setattr(Path,'read_text',lambda path,*args,**kwargs:'NoNewPrivs:\t1\n' if str(path)=='/proc/self/status' else original(path,*args,**kwargs))
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/'+name)
+    calls=[]
+    def run(args,**kwargs):
+        calls.append((args,kwargs));return SimpleNamespace(returncode=0,stdout='unrelated cron entry\n',stderr='')
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',run)
+    _crontab(['-l'],capture_output=True,text=True)
+    _crontab(['-'],input='preserved unrelated entry\n',text=True,check=True)
+    assert calls[0][0]==['/usr/bin/systemd-run','--user','--quiet','--collect','--wait','--pipe','--','/usr/bin/crontab','-l']
+    assert calls[1][0][-2:]==['/usr/bin/crontab','-']
+    assert calls[1][1]['input']=='preserved unrelated entry\n'
+    with pytest.raises(ValueError,match='Unsupported cron operation'):_crontab(['-u','root','-r'])
+    assert len(calls)==2
+
+
+def test_unreadable_cron_fails_closed_instead_of_claiming_no_schedule(store,monkeypatch):
+    from hireme.scheduler import uninstall
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/crontab' if name=='crontab' else None)
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',lambda *args,**kwargs:SimpleNamespace(returncode=1,stdout='',stderr='Permission denied'))
+    with pytest.raises(ValueError,match='could not be read'):status(store)
+    with pytest.raises(ValueError,match='could not be read'):uninstall(cron_only=True,store=store)
+
+
+def test_cron_retirement_does_not_rewrite_other_schedules_when_app_entry_is_absent(store,monkeypatch):
+    from hireme.scheduler import uninstall
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/crontab' if name=='crontab' else None)
+    calls=[]
+    def run(args,**kwargs):
+        calls.append(args);return SimpleNamespace(returncode=0,stdout='0 * * * * foundation-task\n',stderr='')
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',run)
+    uninstall(cron_only=True,store=store)
+    assert calls and all(args==['crontab','-l'] for args in calls)
+
+
 def test_cron_status_identifies_applicant_with_spaces_and_percent(store, tmp_path, monkeypatch):
     import shlex
     monkeypatch.setattr('hireme.scheduler.sys.platform', 'linux')

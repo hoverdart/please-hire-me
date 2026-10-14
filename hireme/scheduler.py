@@ -14,6 +14,27 @@ from .util import private_dir
 LABEL='com.pleasehireme.worker.v3'
 
 
+def _crontab(arguments, **kwargs):
+    if arguments not in (['-l'], ['-']):raise ValueError('Unsupported cron operation')
+    command=['crontab',*arguments]
+    restricted=False
+    if sys.platform=='linux':
+        try:restricted=any(line.split(':',1)[0]=='NoNewPrivs' and line.split(':',1)[1].strip()=='1' for line in Path('/proc/self/status').read_text().splitlines())
+        except OSError:pass
+    if restricted:
+        # crontab needs its normal setgid spool access. Run only this fixed
+        # utility through the user manager, rather than relaxing the dashboard.
+        runner=shutil.which('systemd-run');binary=shutil.which('crontab')
+        if not runner or not binary:
+            raise ValueError('The dashboard cannot manage cron here. Run schedule installation from the worker desktop terminal.')
+        command=[runner,'--user','--quiet','--collect','--wait','--pipe','--',binary,*arguments]
+    kwargs.setdefault('timeout',15)
+    result=subprocess.run(command,**kwargs)
+    if arguments==['-l'] and result.returncode and 'no crontab for' not in getattr(result,'stderr','').casefold():
+        raise ValueError('The existing cron schedule could not be read. Check the user scheduler from the worker desktop terminal.')
+    return result
+
+
 def install(store,repo):
     check_owner(store)
     if store.missing_setup() or not store.settings()['onboarding_complete']:
@@ -44,7 +65,7 @@ def install(store,repo):
         from .pi import install as install_pi
         return install_pi(store,repo,enable=True)['directory']
     if 24%hours:raise ValueError('Cron requires a schedule dividing 24 hours')
-    r=subprocess.run(['crontab','-l'],capture_output=True,text=True)
+    r=_crontab(['-l'],capture_output=True,text=True)
     lines=[l for l in r.stdout.splitlines() if not l.endswith('# '+LABEL)]
     # Cron does not load the interactive shell's PATH; user-installed CLIs must
     # remain discoverable. Forward connection directories, never credentials.
@@ -54,7 +75,7 @@ def install(store,repo):
     command='cd '+shlex.quote(str(repo.resolve()))+' && '+shlex.join(['env',*environment,sys.executable,'-m','hireme','--data-dir',str(store.root.resolve()),'run'])
     command=command.replace('%',r'\%')
     lines.append(f'0 */{hours} * * * {command} # {LABEL}')
-    subprocess.run(['crontab','-'],input='\n'.join(lines)+'\n',text=True,check=True)
+    _crontab(['-'],input='\n'.join(lines)+'\n',text=True,check=True)
     return 'cron'
 
 
@@ -70,9 +91,9 @@ def uninstall(cron_only=False,store=None):
         if not cron_only and sys.platform=='linux' and shutil.which('systemctl') and (Path.home()/'.config/systemd/user/please-hire-me-worker.timer').exists():
             subprocess.run(['systemctl','--user','disable','--now','please-hire-me-worker.timer'],capture_output=True,check=True)
         if not shutil.which('crontab'):return
-        r=subprocess.run(['crontab','-l'],capture_output=True,text=True)
+        r=_crontab(['-l'],capture_output=True,text=True)
         lines=[l for l in r.stdout.splitlines() if not l.endswith('# '+LABEL)]
-        subprocess.run(['crontab','-'],input='\n'.join(lines)+'\n',text=True,check=True)
+        if lines!=r.stdout.splitlines():_crontab(['-'],input='\n'.join(lines)+'\n',text=True,check=True)
 
 
 def _details(arguments, store, interval=None, **extra):
@@ -84,7 +105,9 @@ def _details(arguments, store, interval=None, **extra):
 
 
 def _query_schedule(args):
-    try:return subprocess.run(args,capture_output=True,text=True,timeout=5)
+    try:
+        if args==['crontab','-l']:return _crontab(['-l'],capture_output=True,text=True,timeout=5)
+        return subprocess.run(args,capture_output=True,text=True,timeout=5)
     except (OSError,subprocess.TimeoutExpired) as error:
         raise ValueError('The system scheduler could not be checked. Check your OS services or use .venv/bin/python -m hireme daemon.') from error
 
