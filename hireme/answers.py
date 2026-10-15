@@ -777,16 +777,27 @@ def _approved_sentences(store, context):
             excerpt=excerpt.strip()
             if excerpt:
                 choices.append({'id':'resume:'+str(i),'text':excerpt,'resume_hash':resume_hash})
+    # Current ordinary facts are citable evidence, ahead of older resume values.
+    # Keep these available even when a large source library needs trimming.
+    fact_choices=[];fact_budget=8000
+    if choices and store.settings()['tailored_writing']:
+        facts=store.facts()
+        for key in ('gpa','graduation','school','degree','major','skills','professional_years','full_name','preferred_name'):
+            fact=facts.get(key)
+            if fact and len(fact['value'])<=fact_budget:
+                fact_choices.append({'id':'fact:'+key,'text':fact['value'],'fact_key':key,'revision':fact['revision']})
+                fact_budget-=len(fact['value'])
     # Keep inference cost bounded as an applicant adds a larger source library.
-    if sum(len(x['text']) for x in choices)>24000:
+    source_budget=24000-sum(len(x['text']) for x in fact_choices)
+    if sum(len(x['text']) for x in choices)>source_budget:
         terms=set(re.findall(r'[a-z]{4,}',(context.get('title','')+' '+context.get('description','')).casefold()))
         ranked=sorted(enumerate(choices),key=lambda item:(-len(terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),item[0]))
-        selected=[];budget=24000
+        selected=[];budget=source_budget
         for index,choice in ranked:
             if len(choice['text'])<=budget:
                 selected.append((index,choice));budget-=len(choice['text'])
         choices=[choice for _,choice in sorted(selected)]
-    return choices
+    return choices+fact_choices
 
 
 def _abstention_key(store, method, context):
@@ -843,6 +854,8 @@ def _explicit_context_answer(store, host, field, key, provider, context):
         'robots_experience':r'robot', 'humanoids_experience':r'humanoid',
     }
     if key not in topics or not provider or not hasattr(provider,'explicit_context_answer') or not store.settings()['tailored_writing']:return None
+    from .materials import writing_context_hash
+    source_hash=writing_context_hash(store,context)
     # Only user-approved personal wording is eligible; resume/reference/style
     # sources do not silently establish sensitive declarations or commitments.
     choices=[c for c in _approved_sentences(store,{**context,'description':field['label']+' '+context.get('description','')}) if 'template_id' in c and re.search(topics[key],c['text'],re.I)]
@@ -851,14 +864,14 @@ def _explicit_context_answer(store, host, field, key, provider, context):
     if _abstained(store,abstention):return None
     from .config import FACTS
     draft=provider.explicit_context_answer(field,choices,{k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()},context)
+    if writing_context_hash(store,context)!=source_hash:raise Blocked('stale_writing_context','Confirmed facts or approved sources changed during generation')
     by_id={c['id']:c for c in choices};ids=draft.get('sentence_ids',[]);value=draft.get('answer')
     if (not isinstance(value,str) or not value or not ids or len(ids)!=len(set(ids)) or any(x not in by_id for x in ids)
             or field.get('options') and not _listed_answer(field,value)):
         _abstain(store,abstention,'explicit_context_answer',field['label']);return None
-    from .materials import writing_context_hash
     parts=[{k:v for k,v in by_id[x].items() if k!='id'} for x in ids]
     writing={'value':value,'provenance':{'tailored':True,'context_answer':True,'explicit_context':True,'sample_parts':parts,
-        'text_hash':digest(value),'context_hash':writing_context_hash(store,context),'field_hash':digest(context['field_context']),'facts_hash':digest(store.facts())}}
+        'text_hash':digest(value),'context_hash':source_hash,'field_hash':digest(context['field_context']),'facts_hash':digest(store.facts())}}
     _validate_writing(store,writing);validate_numeric(value,field)
     if not _fits_writing_limits(value,field,context):raise Blocked('answer_too_long',field['label'])
     store.save_writing_answer(host,field['label'],field.get('options',[]),writing)
@@ -890,6 +903,7 @@ def resolve(store, host, field, provider=None, context=None):
         return None
     pending_binding=None
     from .materials import writing_context,writing_context_hash
+    source_hash=writing_context_hash(store,context)
     context.update(writing_context(store))
     if REFUSE.search(label):raise Blocked('human_work_sample',label)
     # This historical date cannot be inferred from a college start date. It
@@ -986,14 +1000,18 @@ def resolve(store, host, field, provider=None, context=None):
         cat=category(label) if field.get('type') in ('text','textarea') and not options else None
         is_writing=not options and field.get('type') in ('text','textarea') and (cat or re.search(r'example|describe|tell us|why|what.*(?:interests|excites)|share.*(?:work|project)',label,re.I))
         if is_writing and not key and provider and store.settings()['tailored_writing']:
+            if writing_context_hash(store,context)!=source_hash:raise Blocked('stale_writing_context','Confirmed facts or approved sources changed before generation')
+            from .config import FACTS
+            context['confirmed_facts']={k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()}
             choices=_approved_sentences(store,context)
             draft=provider.draft_answer(label,choices,context,field.get('maxlength',-1)) if choices else {}
+            if writing_context_hash(store,context)!=source_hash:raise Blocked('stale_writing_context','Confirmed facts or approved sources changed during generation')
             draft_rejection=draft.get('rejected')
             ids=draft.get('sentence_ids',[]);by_id={x['id']:x for x in choices}
             if draft.get('answer') and ids and all(x in by_id for x in ids):
                 parts=[{k:v for k,v in by_id[x].items() if k!='id'} for x in ids]
                 draft['answer']=re.sub(r'[\r\n]+', ' ', draft['answer']).strip() if context['single_line'] else draft['answer']
-                writing={'value':draft['answer'],'provenance':{'tailored':True,'sample_parts':parts,'text_hash':digest(draft['answer']),'context_hash':writing_context_hash(store,context)}}
+                writing={'value':draft['answer'],'provenance':{'tailored':True,'sample_parts':parts,'text_hash':digest(draft['answer']),'context_hash':source_hash}}
                 _validate_writing(store,writing)
                 if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
                 store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)
@@ -1070,18 +1088,21 @@ def resolve(store, host, field, provider=None, context=None):
                 and field.get('type') in {'text','textarea','number','select','radio','combobox','yesno','checkbox-group'}
                 and not re.search(sensitive,label,re.I)) else None)
         if context_abstention and not _abstained(store,context_abstention):
+            if writing_context_hash(store,context)!=source_hash:raise Blocked('stale_writing_context','Confirmed facts or approved sources changed before generation')
             from .config import FACTS
             choices=_approved_sentences(store,{**context,'description':label+' '+context.get('description','')})
+            existing_ids={c['id'] for c in choices}
             choices += [{'id':'fact:'+k,'text':v['value'],'fact_key':k,'revision':v['revision']}
-                        for k,v in store.facts().items() if k not in {'worked_outside_resume','contacts_outside_resume'}]
+                        for k,v in store.facts().items() if k not in {'worked_outside_resume','contacts_outside_resume'} and 'fact:'+k not in existing_ids]
             draft=provider.context_answer(field,choices,{k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()},context) if choices else {}
+            if writing_context_hash(store,context)!=source_hash:raise Blocked('stale_writing_context','Confirmed facts or approved sources changed during generation')
             draft_rejection=draft.get('rejected') or draft_rejection
             by_id={x['id']:x for x in choices};ids=draft.get('sentence_ids',[])
             if (isinstance(draft.get('answer'),str) and draft['answer'] and ids and len(ids)==len(set(ids))
                     and all(x in by_id for x in ids) and (not options or _listed_answer(field,draft['answer']))):
                 parts=[{k:v for k,v in by_id[x].items() if k!='id'} for x in ids]
                 writing={'value':draft['answer'],'provenance':{'tailored':True,'context_answer':True,'sample_parts':parts,
-                         'text_hash':digest(draft['answer']),'context_hash':writing_context_hash(store,context),'field_hash':digest(context['field_context']),'facts_hash':digest(store.facts())}}
+                         'text_hash':digest(draft['answer']),'context_hash':source_hash,'field_hash':digest(context['field_context']),'facts_hash':digest(store.facts())}}
                 if field_key(label)=='alternate_email':
                     from .config import validate_fact
                     try:validate_fact('alternate_email',writing['value'])

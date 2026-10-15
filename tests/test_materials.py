@@ -103,6 +103,82 @@ def test_experience_narrative_uses_repairable_writing_review_instead_of_short_ex
     assert not answer['provenance'].get('context_answer')
 
 
+def test_current_fact_change_invalidates_a_narrative_citing_older_personal_wording(store,job):
+    store.update_settings({'tailored_writing':True});store.put_facts({'gpa':'3.2'})
+    text='My current cumulative GPA is 3.2.'
+    store.put_template('experience',text)
+    class Model:
+        def draft_answer(self,label,choices,context,maxlength):
+            return {'answer':text,'sentence_ids':[next(c['id'] for c in choices if c['text']==text)]}
+    field={'label':'Describe your academic background','type':'textarea','required':True,'options':[]}
+    assert resolve(store,job['host'],field,Model(),job)['value']==text
+    store.put_facts({'gpa':'3.41'})
+    with pytest.raises(Blocked,match='stale_writing_context'):
+        resolve(store,job['host'],field,context=job)
+
+
+def test_narrative_review_repairs_old_resume_value_using_current_citable_fact(store,job):
+    from hireme.provider import ClaudeProvider
+    store.update_settings({'tailored_writing':True});store.put_facts({'gpa':'3.41'})
+    old='My current cumulative GPA is 3.2.'
+    store.put_template('experience',old)
+    model=ClaudeProvider.__new__(ClaudeProvider);model.observer=None;drafts=[];reviews=[]
+    def request(instruction,data,schema):
+        facts=data.get('confirmed_facts',{})
+        if 'answer' in schema['properties']:
+            drafts.append(data)
+            if len(drafts)==1:
+                return {'answer':old,'sentence_ids':[next(c['id'] for c in data['samples'] if c['text']==old)]}
+            assert facts['gpa']['value']=='3.41'
+            assert any(c['id']=='fact:gpa' and c['text']=='3.41' for c in data['samples'])
+            return {'answer':'My current cumulative GPA is 3.41.','sentence_ids':['fact:gpa']}
+        reviews.append(data)
+        current=facts.get('gpa',{}).get('value')
+        supported=current is None or current in data['draft']['answer']
+        return {'supported':supported,'reason':'' if supported else 'Use the current confirmed GPA, not the older sample.'}
+    model.request=request
+    field={'label':'Describe your academic background','type':'textarea','required':True,'options':[]}
+    answer=resolve(store,job['host'],field,model,{**job,'confirmed_facts':{'gpa':{'value':'4.0'}}})
+    assert answer['value']=='My current cumulative GPA is 3.41.'
+    assert len(drafts)==len(reviews)==2
+    assert answer['provenance']['sample_parts']==[{'text':'3.41','fact_key':'gpa','revision':store.facts()['gpa']['revision']}]
+
+
+def test_fact_change_during_generation_cannot_stamp_an_old_draft_as_current(store,job):
+    store.update_settings({'tailored_writing':True});store.put_facts({'gpa':'3.2'})
+    text='My current cumulative GPA is 3.2.';store.put_template('experience',text)
+    class Model:
+        def draft_answer(self,label,choices,context,maxlength):
+            store.put_facts({'gpa':'3.41'})
+            return {'answer':text,'sentence_ids':[next(c['id'] for c in choices if c['text']==text)]}
+    field={'label':'Describe your academic background','type':'textarea','required':True,'options':[]}
+    with pytest.raises(Blocked,match='stale_writing_context'):
+        resolve(store,job['host'],field,Model(),job)
+    assert not store.db.execute('SELECT 1 FROM writing_answers').fetchone()
+
+
+def test_current_facts_remain_available_in_a_bounded_large_factual_library(store,job):
+    from hireme.answers import _approved_sentences
+    store.update_settings({'tailored_writing':True});store.put_facts({'gpa':'3.41'})
+    for i in range(5):store.put_template('experience',f'Project {i}: '+('I build Python software for teams. '*300))
+    choices=_approved_sentences(store,job)
+    assert sum(len(c['text']) for c in choices)<=24000
+    assert any(c['id']=='fact:gpa' and c['text']=='3.41' for c in choices)
+    assert len({c['id'] for c in choices})==len(choices)
+
+
+def test_structured_context_receives_unique_fact_source_ids(store,job):
+    store.update_settings({'tailored_writing':True});store.put_facts({'gpa':'3.41'})
+    store.put_template('experience','I build software while pursuing an undergraduate degree.')
+    class Model:
+        def match_field(self,*args):return {'fact_key':None,'template_id':None}
+        def context_answer(self,field,choices,facts,context):
+            assert len({c['id'] for c in choices})==len(choices)
+            return {'answer':'3.41','sentence_ids':['fact:gpa']}
+    field={'label':'How would you classify your academic performance?','type':'combobox','required':True,'options':['3.41']}
+    assert resolve(store,job['host'],field,Model(),job)['value']=='3.41'
+
+
 def test_large_style_library_has_bounded_model_context(store):
     for i in range(5):
         source=import_material(store,((str(i)+' style ') * 1300).encode(),'example.txt','cover_letter')
