@@ -1016,9 +1016,12 @@ def resolve(store, host, field, provider=None, context=None):
             declined=_unanswered_demographic_decline(store,field)
             # Keep supplied personal context ahead of the opt-out preference,
             # but do not spend inference allowance on an unanswered survey.
-            personal_context=declined and any('template_id' in c and re.search(
-                r'\b(?:sexual orientation|gender|pronouns?|race|ethnic\w*|veteran|military|disabil\w*)\b',c['text'],re.I)
-                for c in _approved_sentences(store,context))
+            personal_context=declined and (
+                any(k in store.facts() and _compatible_field(k,field,context)
+                    for k in ('race','gender','pronouns','veteran','disability'))
+                or any('template_id' in c and re.search(
+                    r'\b(?:sexual orientation|gender|pronouns?|race|ethnic\w*|veteran|military|disabil\w*)\b',c['text'],re.I)
+                    for c in _approved_sentences(store,context)))
             if declined and not personal_context:
                 store.resolve_known_question(host,label,options,field=field,context=context)
                 return declined

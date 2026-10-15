@@ -233,6 +233,16 @@ def test_unanswered_survey_decline_does_not_depend_on_model_availability(store,j
     assert answer['provenance']=={'demographic_decline_revision':store.facts()['decline_unanswered_demographics']['revision']}
 
 
+@pytest.mark.parametrize('label,key,value',[('Pronoun*','pronouns','He/Him'),
+                                          ('Protected veteran status','veteran','I am not a protected veteran')])
+def test_survey_opt_out_keeps_supplied_facts_for_model_matched_labels(store,job,label,key,value):
+    store.put_facts({'decline_unanswered_demographics':'Yes',key:value})
+    class Model:
+        def match_field(self,*args):return {'fact_key':key,'template_id':None}
+    answer=resolve(store,job['host'],field(label,'combobox',[value,"I don't wish to answer"]),Model(),job)
+    assert answer['value']==value and answer['provenance']['fact_key']==key
+
+
 @pytest.mark.parametrize('label,decline',[('Disability status','I do not want to answer'),
                                         ('Veteran status','I decline to identify my protected veteran status'),
                                         ('Race','Decline to specify')])
