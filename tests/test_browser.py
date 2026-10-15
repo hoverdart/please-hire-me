@@ -1086,16 +1086,25 @@ def test_unstable_or_replaced_controls_never_reach_submit(store,ats,unstable,cha
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='conditional_fields_revealed'").fetchone()[0]==(3 if unstable else 0)
 
 
-def test_post_submit_blocker_retains_reason_without_exception_data_or_retry(store,ats,monkeypatch):
+@pytest.mark.parametrize('capture_fails',[False,True])
+def test_post_submit_blocker_retains_reason_without_exception_data_or_retry(store,ats,monkeypatch,capture_fails):
     job=local_job(store,ats)
     with Browser(store,test_url=ats[0]) as b:
         def blocked(*args,**kwargs):raise Blocked('captcha_blocked','https://private.invalid/?secret=do-not-log')
         monkeypatch.setattr(b,'_wait_submission_outcome',blocked)
+        if capture_fails:
+            capture=b.page.screenshot
+            def screenshot(**kwargs):
+                if str(kwargs.get('path','')).endswith('-after.jpg'):raise RuntimeError('capture failed')
+                return capture(**kwargs)
+            monkeypatch.setattr(b.page,'screenshot',screenshot)
         with pytest.raises(Blocked,match='submission_unknown'):b.apply(job)
         with pytest.raises(Blocked):b.apply(job)
     app=store.db.execute('SELECT * FROM applications').fetchone()
     event=json.loads(store.db.execute("SELECT detail FROM events WHERE kind='submission_error'").fetchone()[0])
     assert app['state']=='unknown' and 'captcha_blocked' in app['confirmation']
+    assert bool(app['screenshot']) is not capture_fails
+    if not capture_fails:assert (store.root/'screenshots'/app['screenshot']).is_file()
     assert event=={'stage':'outcome_wait','type':'Blocked','reason':'captcha_blocked'}
     assert 'private.invalid' not in app['confirmation']+json.dumps(event)
     assert len(ats[1])==1

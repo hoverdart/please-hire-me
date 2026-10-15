@@ -975,7 +975,14 @@ class Browser:
                 self.store.event('submission_error',self.aid,{'stage':stage,'type':type(e).__name__,
                                                             **({'reason':reason} if reason else {})})
                 outcome=self.store.db.execute('SELECT state FROM applications WHERE id=?',(self.aid,)).fetchone()
-                if outcome and outcome[0]=='submitting':self.store.finish(self.aid,'unknown',f'{type(e).__name__}'+(f' ({reason})' if reason else '')+': outcome requires verification')
+                if outcome and outcome[0]=='submitting':
+                    # Persist uncertainty before attempting optional evidence:
+                    # a dead page or failed capture must never lose the intent.
+                    self.store.finish(self.aid,'unknown',f'{type(e).__name__}'+(f' ({reason})' if reason else '')+': outcome requires verification')
+                    screenshot=self.store.root/'screenshots'/(self.aid+'-after.jpg')
+                    screenshot_name=self._outcome_screenshot(screenshot)
+                    if screenshot_name:
+                        self.store.db.execute("UPDATE applications SET screenshot=? WHERE id=? AND state='unknown'",(screenshot_name,self.aid))
                 if isinstance(e,Blocked) and e.reason=='paused':raise
                 raise Blocked('submission_unknown')
         raise Blocked('unsupported_form','Step limit reached')
