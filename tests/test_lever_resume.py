@@ -32,15 +32,28 @@ def setup_upload(store,monkeypatch,host='jobs.lever.co'):
         post_data_buffer=multipart(),headers={'content-type':'multipart/form-data; boundary=boundary'})
     route=SimpleNamespace(request=request,action=None)
     route.abort=lambda:setattr(route,'action','abort')
-    route.continue_=lambda:setattr(route,'action','continue')
+    def continue_(**overrides):
+        route.action='continue';route.overrides=overrides
+    route.continue_=continue_
     return browser,route,values
 
 
 @pytest.mark.parametrize('host',['jobs.lever.co','jobs.eu.lever.co'])
-def test_lever_native_resume_upload_requires_matching_storage_acknowledgement(store,monkeypatch,host):
+@pytest.mark.parametrize('omitted_bytes',[False,True])
+def test_lever_native_resume_upload_requires_matching_storage_acknowledgement(store,monkeypatch,host,omitted_bytes):
     browser,route,values=setup_upload(store,monkeypatch,host)
+    if omitted_bytes:route.request.post_data_buffer=multipart(blob=b'')
     browser._route(route)
     assert route.action=='continue' and not browser.submission_requests
+    from email import policy
+    from email.parser import BytesParser
+    payload=route.overrides['post_data'];content_type=route.request.headers['content-type']
+    body=BytesParser(policy=policy.default).parsebytes(b'Content-Type: '+content_type.encode()+b'\r\n\r\n'+payload)
+    parts=list(body.iter_parts())
+    assert len(parts)==2 and parts[0].get_payload(decode=True)==PDF
+    assert parts[1].get_payload(decode=True)==ACCOUNT.encode()
+    # Some Playwright wrappers report the continued body on the response.
+    if omitted_bytes:route.request.post_data_buffer=payload
     with pytest.raises(Blocked,match='upload_verification_failed'):browser.lever_resume.verify()
     response=SimpleNamespace(request=route.request,status=200,json=lambda:{'resumeStorageId':'storage-fixture'})
     browser._upload_response(response)

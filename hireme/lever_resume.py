@@ -3,6 +3,7 @@ from email import policy
 from email.parser import BytesParser
 from urllib.parse import urlsplit
 import re
+import hashlib
 
 from .util import Blocked
 
@@ -11,7 +12,7 @@ HOSTS={'jobs.lever.co','jobs.eu.lever.co'}
 
 class LeverResume:
     def __init__(self,browser,document):
-        self.browser=browser;self.document=document;self.request_key=None;self.storage_id=None
+        self.browser=browser;self.document=document;self.request_keys=set();self.storage_id=None
         account=browser.page.locator('input[type=hidden][name=accountId]')
         storage=browser.page.locator('input[type=hidden][name=resumeStorageId]')
         if account.count()!=1 or storage.count()!=1:raise Blocked('upload_verification_failed','Lever resume controls are unavailable')
@@ -19,16 +20,18 @@ class LeverResume:
         if not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',self.account):
             raise Blocked('upload_verification_failed','Lever account identifier is unavailable')
 
-    def allow(self,request,key):
+    def grant(self,request,key):
         url=urlsplit(request.url);browser=self.browser
         if (browser.current_host not in HOSTS or url.hostname!=browser.current_host or url.scheme!='https'
                 or url.path!='/parseResume' or url.query or url.username or url.password or request.method!='POST'):return False
         blob=browser.upload_payloads.get(self.document['hash']);body=request.post_data_buffer or b''
-        if not blob or not len(blob)<=len(body)<=len(blob)+8192:return False
+        if not blob or not 0<len(body)<=len(blob)+8192:return None
         content_type=request.headers.get('content-type','')
         if not content_type.startswith('multipart/form-data;') or '\r' in content_type or '\n' in content_type:return False
         try:
             message=BytesParser(policy=policy.default).parsebytes(b'Content-Type: '+content_type.encode('ascii')+b'\r\n\r\n'+body)
+            boundary=message.get_boundary()
+            if not isinstance(boundary,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',boundary) or boundary.encode() in blob:return False
             parts=list(message.iter_parts())
             if message.defects or len(parts)!=2:return False
             fields={p.get_param('name',header='content-disposition'):p for p in parts}
@@ -38,14 +41,21 @@ class LeverResume:
                     or len(p.keys())!=len(set(k.lower() for k in p.keys()))
                     or p.get_content_disposition()!='form-data' for p in parts)
                     or resume.get_filename()!=self.document['hash']+'.pdf' or resume.get_content_type()!='application/pdf'
-                    or resume.get_payload(decode=True)!=blob or account.get_filename() is not None
+                    or resume.get_payload(decode=True) not in (b'',blob) or account.get_filename() is not None
                     or account.get_payload(decode=True)!=self.account.encode('ascii')):return False
         except (ValueError,TypeError,UnicodeError):return False
-        self.request_key=key
-        return True
+        # Chromium omits file bytes from intercepted multipart metadata. Build
+        # the actual transport from the hash-checked approved PDF, never trust
+        # an omitted payload or an arbitrary file with the approved filename.
+        payload=(b'--'+boundary.encode()+b'\r\nContent-Disposition: form-data; name="resume"; filename="'+
+                 (self.document['hash']+'.pdf').encode()+b'"\r\nContent-Type: application/pdf\r\n\r\n'+blob+
+                 b'\r\n--'+boundary.encode()+b'\r\nContent-Disposition: form-data; name="accountId"\r\n\r\n'+
+                 self.account.encode()+b'\r\n--'+boundary.encode()+b'--\r\n')
+        self.request_keys={key,(request.url,request.method,hashlib.sha256(payload).hexdigest())}
+        return {'post_data':payload}
 
     def observe(self,response,key):
-        if key!=self.request_key or response.status!=200:return
+        if key not in self.request_keys or response.status!=200:return
         try:result=response.json()
         except Exception:return
         value=result.get('resumeStorageId') if isinstance(result,dict) else None

@@ -282,8 +282,9 @@ class Browser:
             allowed|={"www.google.com","www.recaptcha.net","recaptcha.google.com"}
             if host not in allowed and not hcaptcha:return route.abort()
             if not self.attempted and host not in {"www.google.com","www.recaptcha.net","recaptcha.google.com"} and not hcaptcha:
-                if self.lever_resume and self.lever_resume.allow(route.request,self._request_key(route.request)):
-                    return route.continue_()
+                if self.lever_resume:
+                    grant=self.lever_resume.grant(route.request,self._request_key(route.request))
+                    if grant:return route.continue_(**grant)
                 payload=route.request.post_data or ""
                 reading=False;data=None
                 try:
