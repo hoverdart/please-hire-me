@@ -107,6 +107,7 @@ def field_key(label):
 
 
 def category(label):
+    if re.search(r"^what is your (?:prior |previous |relevant )?experience (?:with|in|related to)\b",label.strip(),re.I):return 'experience'
     if re.search(r'what qualities.{0,150}(?:great|successful).{0,180}(?:how|skills|experiences)|(?:how|why).{0,100}(?:skills|experiences|background).{0,100}(?:best|good|strong|ideal) candidate',label,re.I):return 'experience'
     if re.search(r'what (?:are you )?(?:most )?excited (?:to|about)',label,re.I):return 'motivation'
     if re.search(r"why (?:do you want|are you interested|this (?:role|company))|what interests you|what (?:excites|motivates) you|what excites you|why are you excited|what makes you (?:excited|interested)|why.{0,50}(?:work|join)|why.{0,30}(?:choose|chose)|(?:professional|career|short.term) (?:goals|plans|aspirations)",label,re.I):return "motivation"

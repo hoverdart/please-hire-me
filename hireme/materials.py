@@ -191,5 +191,5 @@ def save_basic_context(store, text, revision):
 def writing_context_hash(store, context):
     revisions = [tuple(r) for r in store.db.execute(
         'SELECT id,revision,role,kind FROM materials WHERE confirmed=1 ORDER BY id')]
-    return digest({'grounding_version': 4, 'posting': {k: context.get(k, '') for k in ('company', 'title', 'description')},
+    return digest({'grounding_version': 5, 'posting': {k: context.get(k, '') for k in ('company', 'title', 'description')},
                    'materials': revisions})

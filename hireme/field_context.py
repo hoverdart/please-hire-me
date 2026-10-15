@@ -7,7 +7,7 @@ from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
-MAPPING_VERSION = 20
+MAPPING_VERSION = 21
 ADAPTER_VERSION = 16
 CAPTCHA_DETECTION_VERSION = 2
 

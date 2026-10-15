@@ -87,6 +87,22 @@ def test_rejected_writing_cannot_fall_back_to_an_incomplete_approved_template(st
     assert not store.db.execute('SELECT 1 FROM writing_answers').fetchone()
 
 
+def test_experience_narrative_uses_repairable_writing_review_instead_of_short_extraction(store,job):
+    text='I build operator-facing software connecting CNC manufacturing workflows and machine telemetry.'
+    store.put_template('experience',text)
+    store.update_settings({'tailored_writing':True})
+    class Model:
+        def draft_answer(self,label,choices,context,maxlength):
+            return {'answer':text,'sentence_ids':[choices[0]['id']]}
+        def match_field(self,*args):raise AssertionError('Experience narrative needs writing review')
+        def context_answer(self,*args):raise AssertionError('Experience narrative needs writing review')
+    field={'label':'What is your experience with human-machine interaction programs?✱',
+           'type':'textarea','required':True,'options':[]}
+    answer=resolve(store,job['host'],field,Model(),job)
+    assert answer['value']==text and answer['provenance']['tailored']
+    assert not answer['provenance'].get('context_answer')
+
+
 def test_large_style_library_has_bounded_model_context(store):
     for i in range(5):
         source=import_material(store,((str(i)+' style ') * 1300).encode(),'example.txt','cover_letter')
