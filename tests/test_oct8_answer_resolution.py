@@ -218,6 +218,21 @@ def test_demographic_decline_does_not_override_reviewed_personal_context(store,j
     assert resolve(store,job['host'],{**f,'label':'Ethnicity','required':False},context=job) is None
 
 
+@pytest.mark.parametrize('label',['Pronoun*','Sexual Orientation*','Gender Identity*','Race/Ethnicity*','Veteran status','Disability status'])
+def test_unanswered_survey_decline_does_not_depend_on_model_availability(store,job,label):
+    store.update_settings({'tailored_writing':True})
+    store.put_facts({'decline_unanswered_demographics':'Yes'})
+    save_basic_context(store,'I build manufacturing software and evaluate coding agents.',0)
+    class UnavailableModel:
+        def __getattr__(self,name):
+            def unavailable(*args,**kwargs):
+                raise AssertionError('Unanswered survey must not call the model: '+name)
+            return unavailable
+    answer=resolve(store,job['host'],field(label,'combobox',['Other',"I don't wish to answer"]),UnavailableModel(),job)
+    assert answer['value']=="I don't wish to answer"
+    assert answer['provenance']=={'demographic_decline_revision':store.facts()['decline_unanswered_demographics']['revision']}
+
+
 @pytest.mark.parametrize('label,decline',[('Disability status','I do not want to answer'),
                                         ('Veteran status','I decline to identify my protected veteran status'),
                                         ('Race','Decline to specify')])

@@ -1012,6 +1012,16 @@ def resolve(store, host, field, provider=None, context=None):
         if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label) or _current_enrollment(store,label,options) or _us_citizen_or_resident(store,label,options) or _export_citizenship_answer(store,label,options) or _cohort_answer(store,field,context)
         if key and key not in store.facts() and provider and store.settings()['tailored_writing'] and key in {'school','degree','major','skills','location','city','state','alternate_email'}:
             key=None  # Approved context may state an ordinary fact not separately entered.
+        if not template and not derived and (not key or key not in store.facts()):
+            declined=_unanswered_demographic_decline(store,field)
+            # Keep supplied personal context ahead of the opt-out preference,
+            # but do not spend inference allowance on an unanswered survey.
+            personal_context=declined and any('template_id' in c and re.search(
+                r'\b(?:sexual orientation|gender|pronouns?|race|ethnic\w*|veteran|military|disabil\w*)\b',c['text'],re.I)
+                for c in _approved_sentences(store,context))
+            if declined and not personal_context:
+                store.resolve_known_question(host,label,options,field=field,context=context)
+                return declined
         match_abstention=_abstention_key(store,'match_field',context) if not key and not template and not derived and provider and field.get('required') else None
         if match_abstention and not _abstained(store,match_abstention):
             from .config import FACTS
