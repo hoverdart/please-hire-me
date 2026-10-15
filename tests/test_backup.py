@@ -198,3 +198,45 @@ def test_ledger_restore_streams_beyond_ordinary_member_limit(store,tmp_path,monk
     monkeypatch.setattr(zipfile.ZipExtFile,'read',bounded)
     restored=tmp_path/'streamed-restore';backup.restore_backup(archive,restored)
     assert len(calls)>1 and (restored/'ledger.sqlite3').stat().st_size>1024
+
+
+def test_backup_streams_ledger_on_private_disk_and_cleans_staging(store,tmp_path,monkeypatch):
+    import tempfile
+    original=tempfile.TemporaryDirectory
+    staging=[]
+    def directory(*args,**kwargs):
+        assert kwargs.get('dir')==store.root/'tmp'
+        result=original(*args,**kwargs);staging.append(Path(result.name));return result
+    original_read=Path.read_bytes
+    def read(path):
+        if path.name=='ledger.sqlite3':raise AssertionError('The ledger must be streamed, not loaded into RAM')
+        return original_read(path)
+    with monkeypatch.context() as patch:
+        patch.setattr('hireme.backup.tempfile.TemporaryDirectory',directory)
+        patch.setattr(Path,'read_bytes',read)
+        create_backup(store,tmp_path/'streamed.zip')
+    assert staging and all(not path.exists() for path in staging)
+    assert (store.root/'tmp').stat().st_mode & 0o777==0o700
+    restore_backup(tmp_path/'streamed.zip',tmp_path/'restored-stream')
+    restored=Store(tmp_path/'restored-stream')
+    try:
+        assert restored.facts()==store.facts()
+        assert not restored.settings()['live_enabled']
+    finally:restored.close()
+
+
+def test_backup_refuses_unrestorable_size_without_publishing_archive(store,tmp_path,monkeypatch):
+    monkeypatch.setattr('hireme.backup.MAX_LEDGER',1)
+    with pytest.raises(ValueError,match='supported backup size'):
+        create_backup(store,tmp_path/'too-large.zip')
+    assert not (tmp_path/'too-large.zip').exists()
+    assert not list((store.root/'tmp').iterdir())
+    assert not list(tmp_path.glob('.backup-*'))
+
+
+def test_backup_cannot_publish_a_manifest_the_restore_would_reject(store,tmp_path,monkeypatch):
+    monkeypatch.setattr('hireme.backup.MAX_MANIFEST',1)
+    with pytest.raises(ValueError,match='manifest exceeds'):
+        create_backup(store,tmp_path/'manifest-too-large.zip')
+    assert not (tmp_path/'manifest-too-large.zip').exists()
+    assert not list((store.root/'tmp').iterdir())

@@ -17,7 +17,7 @@ No routine human approval. One-time setup confirms profile facts; new unknown qu
 
 Every model request reserves a durable per-batch and local-day slot before dispatch, including failed calls and separate grounding reviews. Attempt ceilings bound blocked applications too. Pause increments a cancellation generation; resume cannot revive a cancelled cycle. Unknown or verification-pending applications remain held.
 
-Ashby `ApiSetFormValue` background autosaves are aborted without ending local form preparation. Unrecognized pre-submit mutations still stop the attempt and record request host/path/method without payload values. Final field verification and durable submission intent remain mandatory.
+Ashby preparation suppresses text-field and SMS autosaves. Live runs permit only the reviewed `ApiSetFormValue` operation with exact source-approved values, bound to the current posting, official form/render identifiers and field paths. Every field save must receive a matching server acknowledgement before the final submission intent. Changed sources, a pause, unrecognized mutations or unacknowledged saves stop the attempt. Final field verification and durable submission intent remain mandatory.
 
 Greenhouse and Ashby uploads require a successful response for the approved PDF; Ashby also requires confirmation that its file handle was attached to the form. A visible filename alone is insufficient. Required Ashby question headings apply to radio, checkbox, autocomplete and Yes/No controls.
 

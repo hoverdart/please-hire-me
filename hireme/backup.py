@@ -13,10 +13,12 @@ import zlib
 from pathlib import Path, PurePosixPath
 
 from .store import Store, worker_lock
+from .util import private_dir
 
 MAX_MEMBER = 256*1024*1024
 MAX_EXPANDED = 2*1024*1024*1024
 MAX_LEDGER = MAX_EXPANDED
+MAX_MANIFEST = 8*1024*1024
 COPY_CHUNK = 64*1024
 
 
@@ -90,7 +92,9 @@ def create_backup(store, destination: Path):
     manifest = {}
     with worker_lock(store.root):
         _validate_references(store)
-        with tempfile.TemporaryDirectory() as temporary:
+        # Pi /tmp is commonly a small RAM disk. A real discovery ledger can
+        # exceed it; stage the consistent snapshot on private persistent disk.
+        with tempfile.TemporaryDirectory(prefix='.backup-', dir=private_dir(store.root / 'tmp')) as temporary:
             ledger = Path(temporary)/'ledger.sqlite3'
             db = sqlite3.connect(ledger)
             store.db.backup(db);db.close()
@@ -101,10 +105,21 @@ def create_backup(store, destination: Path):
             try:
                 os.close(fd)
                 with zipfile.ZipFile(tempname, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-                    def add(name, data):
-                        manifest[name] = {'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
-                        archive.writestr(name,data)
-                    add('ledger.sqlite3',ledger.read_bytes())
+                    expanded=0
+                    def add(name, path):
+                        nonlocal expanded
+                        if len(manifest)>=49999:raise ValueError('Private history contains too many backup files')
+                        checksum=hashlib.sha256();length=0
+                        maximum=MAX_LEDGER if name=='ledger.sqlite3' else MAX_MEMBER
+                        with path.open('rb') as source, archive.open(name, 'w', force_zip64=True) as output:
+                            while chunk:=source.read(COPY_CHUNK):
+                                length+=len(chunk)
+                                if length>maximum or expanded+length>MAX_EXPANDED:
+                                    raise ValueError('Private history exceeds the supported backup size')
+                                checksum.update(chunk);output.write(chunk)
+                        manifest[name] = {'sha256':checksum.hexdigest(),'bytes':length}
+                        expanded+=length
+                    add('ledger.sqlite3',ledger)
                     for directory, pattern in (
                         ('documents',r'[a-f0-9]{64}\.(?:pdf|txt)'),
                         ('materials',r'[a-f0-9]{64}\.(?:pdf|docx|pptx|txt|md)'),
@@ -115,11 +130,16 @@ def create_backup(store, destination: Path):
                         for path in sorted(parent.iterdir()):
                             if path.is_symlink():raise ValueError('Unsafe private storage file')
                             if path.is_file() and re.fullmatch(pattern,path.name):
-                                data=path.read_bytes()
-                                if directory!='screenshots' and hashlib.sha256(data).hexdigest()!=path.stem:
+                                name=directory+'/'+path.name
+                                add(name,path)
+                                if directory!='screenshots' and manifest[name]['sha256']!=path.stem:
                                     raise ValueError('Stored document hash does not match its filename')
-                                add(directory+'/'+path.name,data)
-                    archive.writestr('manifest.json',json.dumps({'version':1,'files':manifest}))
+                    manifest_data=json.dumps({'version':1,'files':manifest}).encode()
+                    if len(manifest_data)>MAX_MANIFEST or expanded+len(manifest_data)>MAX_EXPANDED:
+                        raise ValueError('Backup manifest exceeds the supported backup size')
+                    archive.writestr('manifest.json',manifest_data)
+                if Path(tempname).stat().st_size>1024*1024*1024:
+                    raise ValueError('Compressed private history exceeds the supported backup size')
                 # Link is exclusive: never overwrite an archive appearing concurrently.
                 os.link(tempname,destination)
             finally:
@@ -142,7 +162,7 @@ def restore_backup(archive_path: Path, destination: Path):
                 raise ValueError('Invalid or excessive backup archive')
             if any(entry.flag_bits & 1 for entry in entries):
                 raise ValueError('Encrypted ZIP archives are not supported. Choose the original history backup; encrypted employer passwords use the separate transfer.')
-            if 'manifest.json' not in names or archive.getinfo('manifest.json').file_size>8*1024*1024:
+            if 'manifest.json' not in names or archive.getinfo('manifest.json').file_size>MAX_MANIFEST:
                 raise ValueError('Backup manifest is missing or too large')
             manifest=_manifest(_read_member(archive,'manifest.json'))
             if set(manifest['files'])|{'manifest.json'}!=set(names):

@@ -78,7 +78,7 @@ These checks send no model requests or applications. See the [user guide](docs/g
 - Login walls, CAPTCHA, unknown questions, unsupported controls and ambiguous receipts need manual review. Discovering an ATS posting does not establish support for its application form.
 - Optional Gmail handles recognized Greenhouse verification codes and batch reports. Optional platform connections start disabled and require independently verified access and transport.
 
-The version is **0.5.0rc1**. Public-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
+The version is **0.5.0rc2**, a public release candidate for self-hosting. Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
 
 ## Guides and development
 

@@ -9,10 +9,10 @@ from .presentation import NOT_MATCH_REASONS, WAIT_REASONS
 from .util import digest, now, Blocked
 
 FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stale_answer','answer_too_long','numeric_answer_needed','phone_country_review','model_budget_exhausted'}
-MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer','invalid_fields','invalid_single_line_answer','numeric_answer_out_of_range','repeated_entry_review','unsupported_widget'}
+MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer','invalid_fields','invalid_single_line_answer','numeric_answer_out_of_range','repeated_entry_review','unsupported_widget','ashby_draft_unsupported'}
 DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed','writing_link_unverified'}
 ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','account_fields_unavailable','captcha_blocked','account_or_verification_blocked','account_automation_disabled','account_result_uncertain','account_creation_held','account_credentials_unavailable','company_verification_pending','account_blocked','account_required','company_uncertain','email_verification_required','captcha','email_verification_failed'}
-TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output','writing_unsupported'}
+TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output','writing_unsupported','ashby_draft_save_failed'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
 
 ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review'}
@@ -109,7 +109,11 @@ def ready(store, job, at=None):
     if not row:return True
     if row['reason']=='model_budget_exhausted' and model_available(store,at):return True
     if row['category']=='limits':return True # Existing policy checks the current day/company limits.
-    if row['category']=='transient':return row['retry_at'] is not None and (at or time.time())>=row['retry_at']
+    if row['category']=='transient':
+        # A repaired adapter/mapping or a changed posting starts a new bounded
+        # retry sequence. An unchanged exhausted failure stays held.
+        return (row['dependency']!=dependency(store,job,'transient',row['reason'])
+                or row['retry_at'] is not None and (at or time.time())>=row['retry_at'])
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':return False
@@ -175,6 +179,12 @@ def recheck(store,job_id):
     except Blocked as error:
         hold(store,job,error.reason,error.detail,'screening');return {'ready':False,'reason':error.reason}
     available=ready(store,job)
+    previous=store.db.execute('SELECT category,retry_at,retry_count,reason FROM job_holds WHERE job_id=?',(job_id,)).fetchone()
+    if not available and previous and previous['category']=='transient' and previous['retry_at'] is None:
+        # This explicit dashboard action is the review path promised for an
+        # exhausted transient hold. It never reconciles an attempted outcome.
+        available=True
+        store.event('transient_recheck_requested',job_id,{'reason':previous['reason'],'previous_retries':previous['retry_count']})
     if available:
         clear(store,job_id)
         store.db.execute("UPDATE jobs SET status='discovered',reason='' WHERE id=?",(job_id,))

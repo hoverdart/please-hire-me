@@ -37,7 +37,9 @@ SNAPSHOT=r"""selector => {
   const help_text=descriptions.map(n=>n.innerText||n.textContent).join(' ').replace(/\s+/g,' ').trim();
   const help_links=descriptions.flatMap(n=>Array.from(n.querySelectorAll('a[href]')).map(a=>({text:a.textContent.trim(),url:a.href})));
   const date_format=el.type==='date'?'YYYY-MM-DD':el.classList.contains('ashby-application-form-input-date')?'MM/DD/YYYY':null;
-  return {...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {}),...(date_format?{date_format}: {})};
+  const ashby=el.closest('[data-field-path][data-field-entry-id]');
+  return {...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {}),...(date_format?{date_format}: {}),
+    ...(ashby?{ashby_path:ashby.dataset.fieldPath,ashby_entry_id:ashby.dataset.fieldEntryId}:{})};
  }
  function leverLabel(el){
   const question=el.closest('.application-question');
@@ -148,6 +150,7 @@ class Browser:
         self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
         self.workday_grant=None
         self.submission_requests={}
+        self.ashby_draft=None
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
@@ -275,6 +278,13 @@ class Browser:
                     queries=data if isinstance(data,list) else [data]
                     reading=all(isinstance(q,dict) and isinstance(q.get('query'),str) and re.match(r'^\s*query\b',q['query']) for q in queries)
                 except (ValueError,TypeError):pass
+                if host==self.current_host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql' and self.ashby_draft:
+                    try:
+                        if self.ashby_draft.allow(route.request,data,self._request_key(route.request)):
+                            return route.continue_()
+                    except Blocked as error:
+                        self.denied_write=True;self.denied_request={'host':host,'path':p.path,'method':route.request.method,'reason':error.reason}
+                        return route.abort()
                 if host==self.current_host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql' and isinstance(data,dict):
                     variables=data.get('variables',{})
                     if (data.get('operationName')=='ApiCreateFileUploadHandle'
@@ -335,6 +345,9 @@ class Browser:
 
     def _upload_response(self,response):
         request=response.request
+        if self.ashby_draft:
+            with contextlib.suppress(Exception):self.ashby_draft.observe_posting(request,response)
+            with contextlib.suppress(Exception):self.ashby_draft.observe_save(response,self._request_key(request))
         application_id=self.submission_requests.pop(self._request_key(request),None)
         if application_id:
             # Transport success is diagnostic evidence, never a receipt. Do not
@@ -729,7 +742,13 @@ class Browser:
         self.host_cache={host:allowed for host,allowed in self.host_cache.items() if allowed is not None}
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
         self.store.check_job_decision(job['id'])
+        if live:
+            previous=self.store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
+            if previous and previous[0]!='prepared':raise Blocked('duplicate_or_uncertain','This requisition already has a recorded attempt')
+            self.store._check_budget(job,self.store.settings())
         self.current_host=job['host']
+        from .ashby_drafts import AshbyDraft
+        self.ashby_draft=AshbyDraft(self.store,job) if self.current_host=='jobs.ashbyhq.com' and not self.test_url else None
         if self.test_url:self.current_host=urlsplit(self.test_url).hostname
         elif job['host'] not in ATS_HOSTS|PORTAL_HOSTS:raise Blocked('unapproved_destination')
         from .ats_adapters import adapter_for
@@ -775,6 +794,7 @@ class Browser:
         # Read the actual posting again before policy checks: list feeds are not eligibility proof.
         from .policy import eligible
         job={**job,'description':posting_text,'answer_scope':job['host']+'|'+self.store.company(job['company'])}
+        if self.ashby_draft:self.ashby_draft.job=job
         eligible(job,self.store.settings(),self.store.facts())
         self.store.upsert_job(job)
         all_answers=[]; all_docs=[]; steps=[]; refreshes=0; retained_docs=[]
@@ -867,9 +887,17 @@ class Browser:
                     deadline=time.monotonic()+20
                     while any(d['hash'] not in self.uploaded_files for d in documents) and time.monotonic()<deadline:
                         self.store.checkpoint();self.page.wait_for_timeout(250)
+            if live and self.ashby_draft:
+                proof={'job_id':job['id'],'url':job['url'],'answers':all_answers+answers,'documents':all_docs+documents,
+                       'facts_hash':digest(self.store.facts()),'steps':steps+[{'step':step,'fields':fields,'url':self.page.url}]}
+                self.ashby_draft.enable(self,answers,proof)
             for a in answers:
                 self.store.checkpoint()
                 self.store.event('field_filling',job['id'],{'label':a['field']['label']})
+                if live and self.ashby_draft and a['field']['type'] in {'text','textarea','email','tel','url','number','date'}:
+                    # Re-enter restored browser values so React commits them to
+                    # the current server draft rather than trusting DOM state.
+                    self._control(a['field']).fill('')
                 self._fill(a)
             try:self._verify(answers,documents,fields)
             except Blocked as error:
@@ -890,6 +918,12 @@ class Browser:
                 refreshes+=1
                 self.store.event('conditional_fields_revealed',job['id'],{'refresh':refreshes,'added':len(after_pending)-len(before_pending)})
                 continue
+            if live and self.ashby_draft:
+                deadline=time.monotonic()+20
+                while not self.ashby_draft.complete and not self.ashby_draft.failed and time.monotonic()<deadline:
+                    self.store.checkpoint();self.page.wait_for_timeout(100)
+                if not self.ashby_draft.complete:
+                    raise Blocked('ashby_draft_save_failed','The employer has not acknowledged every approved field; no final submission was attempted')
             self._guard(job)
             all_answers.extend(answers);all_docs.extend(documents)
             steps.append({'step':step,'fields':fields,'url':self.page.url})
@@ -935,9 +969,13 @@ class Browser:
                     return self._continue_email_verification(job,submit)
                 return outcome
             except Exception as e:
-                self.store.event('submission_error',self.aid,{'stage':stage,'type':type(e).__name__})
+                # Fixed blocker codes explain a post-click interruption without
+                # recording exception text that may contain URLs or form values.
+                reason=e.reason if isinstance(e,Blocked) else None
+                self.store.event('submission_error',self.aid,{'stage':stage,'type':type(e).__name__,
+                                                            **({'reason':reason} if reason else {})})
                 outcome=self.store.db.execute('SELECT state FROM applications WHERE id=?',(self.aid,)).fetchone()
-                if outcome and outcome[0]=='submitting':self.store.finish(self.aid,'unknown',f'{type(e).__name__}: outcome requires verification')
+                if outcome and outcome[0]=='submitting':self.store.finish(self.aid,'unknown',f'{type(e).__name__}'+(f' ({reason})' if reason else '')+': outcome requires verification')
                 if isinstance(e,Blocked) and e.reason=='paused':raise
                 raise Blocked('submission_unknown')
         raise Blocked('unsupported_form','Step limit reached')

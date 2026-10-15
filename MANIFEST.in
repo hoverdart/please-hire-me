@@ -8,4 +8,5 @@ recursive-include docs *.md *.png
 recursive-include hireme/resources *.md *.txt
 recursive-include hireme/static *.html *.css *.js
 recursive-include requirements *.lock
+recursive-include tests *.py *.html *.graphql *.json
 include setup.sh run.sh

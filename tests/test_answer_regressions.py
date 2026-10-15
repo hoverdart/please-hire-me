@@ -287,3 +287,18 @@ def test_disclosures_follow_their_confirmed_fact(store, job, label, key):
     with pytest.raises(Blocked):resolve(store, job['host'], field(label), context=job)
     store.put_facts({key: 'No'})
     assert resolve(store, job['host'], field(label), context=job)['value'] == 'No'
+
+
+def test_first_and_last_legal_name_uses_exact_confirmed_name(store,job):
+    answer=resolve(store,job['host'],field('First and Last Legal Name*','text',[]),context=job)
+    assert answer['value']==store.facts()['full_name']['value']
+    assert answer['provenance']['fact_key']=='full_name'
+
+
+def test_stack_listing_is_not_a_self_assessed_proficiency_rating(store,job):
+    label="What are your strongest programming languages and technical areas? Please list specific languages, frameworks, and technologies you're proficient in (e.g., Go, Python, React, Kubernetes, LLMs, etc.)."
+    answer=resolve(store,job['host'],field(label,'textarea',[]),context=job)
+    assert answer['value']==store.facts()['skills']['value']
+    assert answer['provenance']['fact_key']=='skills'
+    with pytest.raises(Blocked):
+        resolve(store,job['host'],field('Please indicate your level of proficiency in programming analysis, design and creative problem-solving?',options=['Advanced','Expert']),context=job)

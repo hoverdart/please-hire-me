@@ -56,3 +56,14 @@ def test_unsubmitted_preparation_is_not_a_recorded_attempt(store, job, package):
     second = {**first, 'id':digest('draft-alias-two'), 'url':first['url']+'/application'}
     store.upsert_job(second)
     store._check_budget(second, store.settings())
+
+
+def test_ashby_board_case_cannot_create_another_requisition_identity(store,job,package):
+    first={**job,'id':digest('case-original'),'url':f'https://jobs.ashbyhq.com/Serval/{REQ}','host':'jobs.ashbyhq.com'}
+    store.upsert_job(first)
+    aid=store.prepare(first,{**package,'job_id':first['id'],'url':first['url']})
+    store.db.execute("UPDATE applications SET state='confirmed',attempted='2020-01-01T00:00:00+00:00' WHERE id=?",(aid,))
+    second={**first,'id':digest('case-alias'),'company':'Another feed name','url':f'https://jobs.ashbyhq.com/serval/{REQ}/application'}
+    store.upsert_job(second)
+    assert application_identity(first['url'])==application_identity(second['url'])
+    with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(second,store.settings())

@@ -61,6 +61,8 @@ REASON_GUIDANCE = {
     'posting_changed_review': ('The posting changed', 'Review the official posting before applying.'),
     'provider_timeout': ('The model did not answer in time', 'The worker retries this later. Raise the model timeout if it keeps happening.'),
     'provider_error': ('The model request failed', 'The worker retries this later. Check Model connection if it keeps happening.'),
+    'ashby_draft_save_failed': ('The employer did not save every field', 'No final submission was attempted. This has a bounded retry; use Recheck after resolving a persistent failure.'),
+    'ashby_draft_unsupported': ('This employer form needs adapter review', 'The field-save protocol could not be verified. Complete manually or wait for a compatible adapter update.'),
     'provider_invalid_output': ('The model returned an unusable answer', 'The worker retries this later.'),
     'writing_unsupported': ('A written answer did not pass its source check', 'The worker retries this later. Adding a writing sample that covers this question makes it more reliable.'),
     'unknown_prefilled_value': ('The form had an unexpected prefilled value', 'Review the posting before applying manually.'),

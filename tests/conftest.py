@@ -1,4 +1,5 @@
 import hashlib
+import os
 import pytest
 from hireme.store import Store
 from hireme.util import digest
@@ -16,7 +17,8 @@ def store(tmp_path,monkeypatch):
     s.put_facts({'full_name':'Test Person','first_name':'Test','last_name':'Person','email':'test@candidate.invalid','phone':'5551234567','location':'Berkeley, CA','graduation':'2028-05','work_authorized_us':'Yes','needs_sponsorship':'No','us_person':'Yes','professional_years':'1','skills':'Python, TypeScript'})
     docs=s.root/'documents';docs.mkdir();data=b'%PDF-1.4\nsynthetic test document';h=hashlib.sha256(data).hexdigest();(docs/(h+'.pdf')).write_bytes(data)
     s.db.execute('INSERT INTO documents VALUES(?,?,?)',('resume',h,h+'.pdf'))
-    s.update_settings({'onboarding_complete':True,'live_enabled':True,'browser_channel':'chromium','headless':True})
+    s.update_settings({'onboarding_complete':True,'live_enabled':True,
+                       'browser_channel':os.environ.get('HIREME_TEST_BROWSER_CHANNEL','chromium'),'headless':True})
     yield s
     s.close()
 

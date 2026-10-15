@@ -22,6 +22,10 @@ for file in run.sh setup.sh scripts/*.sh; do bash -n "$file"; done
 git diff --check
 ```
 
+On a Raspberry Pi with system Chromium, run the same fixtures with
+`HIREME_TEST_BROWSER_CHANNEL=system-chromium .venv/bin/python -m pytest -q`.
+The fixtures still use disposable applicant directories and synthetic employers.
+
 Run checks appropriate to the change and record failures and skips. Full-suite success is local fixture evidence; keep hosted CI, device operation, authenticated sessions and employer acceptance separate. See [release status](docs/public-release.md).
 
 For packaging changes, build and inspect fresh distributions:

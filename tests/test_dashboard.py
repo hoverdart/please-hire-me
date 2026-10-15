@@ -1569,7 +1569,7 @@ def test_dashboard_backup_download_restores_paused_and_excludes_credentials(stor
     finally: process.terminate(); process.join(5)
 
 
-def test_full_ledger_search_and_pagination_preserve_old_evidence(store):
+def test_full_ledger_search_and_pagination_preserve_old_evidence(store,tmp_path):
     from playwright.sync_api import sync_playwright, expect
     from hireme.discovery import posting
     for index in range(520):
@@ -1604,8 +1604,23 @@ def test_full_ledger_search_and_pagination_preserve_old_evidence(store):
             page.goto(base + '/#token=fixture-capability')
             expect(page.locator('#jobs tbody tr')).to_have_count(50)
             expect(page.locator('#ledger-page-label')).to_contain_text('1–50 of 521')
+            pending=[];page_requests=[]
+            pause_first_request(page,'**/api/jobs?*offset=50&*',pending)
+            page.on('request',lambda request:page_requests.append(request.url) if '/api/jobs?' in request.url and 'offset=50&' in request.url else None)
             page.locator('#ledger-next').click()
+            expect(page.locator('#jobs')).to_have_attribute('aria-busy','true')
+            # An ordinary snapshot render used to re-enable paging while its
+            # request was outstanding. Polling must join that same read.
+            page.evaluate('render()')
+            expect(page.locator('#ledger-next')).to_be_disabled()
+            with page.expect_response(lambda response:'/api/state?' in response.url):
+                page.evaluate('void refresh()')
+            page.evaluate('render()')
+            expect(page.locator('#ledger-next')).to_be_disabled()
+            assert len(pending)==1
+            pending[0].continue_()
             expect(page.locator('#ledger-page-label')).to_contain_text('51–100 of 521')
+            assert len(page_requests)==1
             expect(page.locator('#jobs')).to_be_focused()
             page.locator('#ledger-previous').click()
             expect(page.locator('#ledger-page-label')).to_contain_text('1–50 of 521')
@@ -1617,6 +1632,11 @@ def test_full_ledger_search_and_pagination_preserve_old_evidence(store):
             expect(page.locator('#jobs')).to_contain_text('Synthetic historic answer')
             page.locator('#job-search').fill('100%')
             expect(page.locator('#jobs tbody tr')).to_have_count(1)
+            for name,width,height in [('desktop',1440,1000),('mobile',390,844)]:
+                page.set_viewport_size({'width':width,'height':height})
+                page.locator('#jobs').scroll_into_view_if_needed()
+                page.screenshot(path=str(tmp_path/f'ledger-{name}.png'))
+            print('Ledger visual checks:',tmp_path)
             assert not errors
             browser.close()
     finally: process.terminate(); process.join(5)

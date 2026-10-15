@@ -154,3 +154,26 @@ def test_pause_between_screening_batches_preserves_committed_decisions(store,mon
     assert 100<=count<220
     run=store.db.execute('SELECT status,detail FROM runs').fetchone()
     assert run['status']=='paused' and json.loads(run['detail'])['attempts']==0
+
+
+def test_exhausted_transient_has_an_explicit_review_path_but_uncertainty_does_not(store,job,package):
+    from hireme.job_holds import hold,ready,recheck
+    for _ in range(3):hold(store,job,'provider_error',at=100)
+    assert not ready(store,job,at=10**9)
+    assert recheck(store,job['id'])['ready']
+    assert not store.db.execute('SELECT 1 FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+    assert store.db.execute("SELECT 1 FROM events WHERE kind='transient_recheck_requested'").fetchone()
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    with pytest.raises(ValueError,match='existing submission outcome'):recheck(store,job['id'])
+    assert store.db.execute('SELECT state FROM applications WHERE id=?',(aid,)).fetchone()[0]=='unknown'
+
+
+def test_adapter_repair_releases_only_a_new_bounded_transient_sequence(store,job,monkeypatch):
+    from hireme import job_holds
+    for _ in range(3):job_holds.hold(store,job,'network_error',at=100)
+    assert not job_holds.ready(store,job,at=10**9)
+    monkeypatch.setattr(job_holds,'ADAPTER_VERSION',job_holds.ADAPTER_VERSION+1)
+    assert job_holds.ready(store,job,at=100)
+    job_holds.hold(store,job,'network_error',at=100)
+    row=store.db.execute('SELECT retry_count,retry_at FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+    assert row['retry_count']==0 and row['retry_at']==1900

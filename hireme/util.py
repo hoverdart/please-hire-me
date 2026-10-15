@@ -89,7 +89,7 @@ def application_identity(url: str):
     uuid = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
     if host == 'jobs.ashbyhq.com':
         match = re.fullmatch(r'/([A-Za-z0-9_-]+)/(' + uuid + r')(?:/application)?', path, re.I)
-        if match: return ('ashby', match[1], match[2].lower())
+        if match: return ('ashby', match[1].casefold(), match[2].lower())
     if host in {'jobs.lever.co', 'jobs.eu.lever.co'}:
         match = re.fullmatch(r'/([A-Za-z0-9_-]+)/(' + uuid + r')', path, re.I)
         if match: return (host, match[1], match[2].lower())

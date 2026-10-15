@@ -1084,3 +1084,18 @@ def test_unstable_or_replaced_controls_never_reach_submit(store,ats,unstable,cha
         with pytest.raises(Blocked,match='form_changed'):b.apply(job)
     assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='conditional_fields_revealed'").fetchone()[0]==(3 if unstable else 0)
+
+
+def test_post_submit_blocker_retains_reason_without_exception_data_or_retry(store,ats,monkeypatch):
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as b:
+        def blocked(*args,**kwargs):raise Blocked('captcha_blocked','https://private.invalid/?secret=do-not-log')
+        monkeypatch.setattr(b,'_wait_submission_outcome',blocked)
+        with pytest.raises(Blocked,match='submission_unknown'):b.apply(job)
+        with pytest.raises(Blocked):b.apply(job)
+    app=store.db.execute('SELECT * FROM applications').fetchone()
+    event=json.loads(store.db.execute("SELECT detail FROM events WHERE kind='submission_error'").fetchone()[0])
+    assert app['state']=='unknown' and 'captcha_blocked' in app['confirmation']
+    assert event=={'stage':'outcome_wait','type':'Blocked','reason':'captcha_blocked'}
+    assert 'private.invalid' not in app['confirmation']+json.dumps(event)
+    assert len(ats[1])==1

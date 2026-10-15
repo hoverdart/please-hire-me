@@ -903,11 +903,18 @@ let ledgerSignature = "";
 let ledgerState = null,
   ledgerOffset = 0,
   ledgerRequest = 0,
-  ledgerTimer = null;
+  ledgerTimer = null,
+  ledgerLoading = null;
+function updateLedgerControls() {
+  const busy = ledgerLoading !== null;
+  $("#jobs").setAttribute("aria-busy", String(busy));
+  $("#ledger-previous").disabled = busy || !ledgerState || ledgerState.offset === 0;
+  $("#ledger-next").disabled = busy || !ledgerState ||
+    ledgerState.offset + ledgerState.limit >= ledgerState.total;
+}
 async function loadLedger(reset = false) {
   if (!state) return;
   if (reset) ledgerOffset = 0;
-  const request = ++ledgerRequest;
   const params = new URLSearchParams({
     search: $("#job-search").value,
     status: $("#status-filter").value,
@@ -916,37 +923,42 @@ async function loadLedger(reset = false) {
     source: $("#connection-source")?.value || "all",
     destination: $("#connection-destination")?.value || "all",
     min_fit: $("#connection-fit")?.value || "0",
-  });
-  $("#jobs").setAttribute("aria-busy", "true");
-  $("#ledger-previous").disabled = true;
-  $("#ledger-next").disabled = true;
-  try {
-    const result = await api("/api/jobs?" + params);
-    if (request !== ledgerRequest) return;
-    if (result.total > 0 && result.offset >= result.total) {
-      ledgerOffset =
-        Math.floor((result.total - 1) / result.limit) * result.limit;
-      return loadLedger(false);
-    }
-    ledgerState = result;
-    renderLedger();
-    return true;
-  } catch (error) {
-    if (request === ledgerRequest) {
-      note(error.message, true);
-      if (ledgerState) {
-        $("#ledger-previous").disabled = ledgerState.offset === 0;
-        $("#ledger-next").disabled =
-          ledgerState.offset + ledgerState.limit >= ledgerState.total;
+  }).toString();
+  // Polling joins an identical page request. It must not supersede a user's
+  // in-flight navigation or temporarily re-enable its pagination controls.
+  if (ledgerLoading?.params === params) return ledgerLoading.promise;
+  const request = ++ledgerRequest;
+  const loading = { request, params, promise: null };
+  ledgerLoading = loading;
+  updateLedgerControls();
+  loading.promise = (async () => {
+    try {
+      const result = await api("/api/jobs?" + params);
+      if (request !== ledgerRequest) return;
+      if (result.total > 0 && result.offset >= result.total) {
+        ledgerOffset = Math.floor((result.total - 1) / result.limit) * result.limit;
+        return loadLedger(false);
       }
-      $("#ledger-page-label").textContent =
-        "Could not refresh. Showing the last loaded results.";
-      return false;
+      ledgerOffset = result.offset;
+      ledgerState = result;
+      renderLedger();
+      return true;
+    } catch (error) {
+      if (request === ledgerRequest) {
+        ledgerOffset = ledgerState?.offset || 0;
+        note(error.message, true);
+        $("#ledger-page-label").textContent =
+          "Could not refresh. Showing the last loaded results.";
+        return false;
+      }
+    } finally {
+      if (request === ledgerRequest) {
+        ledgerLoading = null;
+        updateLedgerControls();
+      }
     }
-  } finally {
-    if (request === ledgerRequest)
-      $("#jobs").setAttribute("aria-busy", "false");
-  }
+  })();
+  return loading.promise;
 }
 function savedViewFeedback(text, error = false) {
   const status = $("#saved-view-status");
@@ -1150,9 +1162,7 @@ function renderLedger() {
     : "No opportunities to show";
   if ($("#ledger-page-label").textContent !== pageLabel)
     $("#ledger-page-label").textContent = pageLabel;
-  $("#ledger-previous").disabled = ledgerState.offset === 0;
-  $("#ledger-next").disabled =
-    ledgerState.offset + ledgerState.limit >= ledgerState.total;
+  updateLedgerControls();
   const query = $("#job-search").value.trim(),
     filter = $("#status-filter").value;
   const signature = JSON.stringify([
@@ -5232,12 +5242,14 @@ $("#download-backup").onclick = async () => {
 };
 
 $("#ledger-previous").onclick = async () => {
-  ledgerOffset = Math.max(0, ledgerOffset - (ledgerState?.limit || 50));
+  if (ledgerLoading || !ledgerState) return;
+  ledgerOffset = Math.max(0, ledgerState.offset - ledgerState.limit);
   await loadLedger(false);
   scrollLedgerIntoView();
 };
 $("#ledger-next").onclick = async () => {
-  ledgerOffset += ledgerState?.limit || 50;
+  if (ledgerLoading || !ledgerState) return;
+  ledgerOffset = ledgerState.offset + ledgerState.limit;
   await loadLedger(false);
   scrollLedgerIntoView();
 };

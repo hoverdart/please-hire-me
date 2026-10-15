@@ -8,6 +8,7 @@ from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, w
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
 RULES = [
+    (r"^first and last legal name\*?$", "full_name"),
     (r"^(full |legal |full legal )?name\*?$", "full_name"),
     (r"^(legal )?first name\*?$", "first_name"), (r"^(legal )?last name\*?$", "last_name"),
     (r"^preferred (first )?name\*?$", "preferred_name"),
@@ -35,6 +36,9 @@ REFUSE = re.compile(r"do not use (?:ai|artificial intelligence)|don.t use ai|wit
 
 
 def field_key(label):
+    # A request to list the technical stack is not a self-assessed proficiency
+    # rating merely because its explanatory sentence contains "proficient".
+    if re.match(r'^what are your strongest programming languages and technical areas\?',label.strip(),re.I):return 'skills'
     if re.search(r'\b(?:hispanic|latino)\b',label,re.I):return 'hispanic_latino'
     if re.search(r'currently.*(?:hold|have).*temporary.*(?:work|employment).*authoriz',label,re.I):return 'temporary_work_authorization'
     if re.search(r'(?:programming|program analysis).*proficien|proficien.*(?:programming|program analysis)',label,re.I):return 'programming_proficiency'
