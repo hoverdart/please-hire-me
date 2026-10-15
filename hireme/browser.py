@@ -151,7 +151,7 @@ class Browser:
     def __init__(self,store,test_url=None):
         self.store=store; self.test_url=test_url; self.context=None; self.playwright=None
         self.page=None; self.aid=None; self.attempted=False; self.current_host=""; self.host_cache={}; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set()
-        self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
+        self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set();self.lever_resume=None
         self.workday_grant=None
         self.submission_requests={}
         self.ashby_draft=None
@@ -282,6 +282,8 @@ class Browser:
             allowed|={"www.google.com","www.recaptcha.net","recaptcha.google.com"}
             if host not in allowed and not hcaptcha:return route.abort()
             if not self.attempted and host not in {"www.google.com","www.recaptcha.net","recaptcha.google.com"} and not hcaptcha:
+                if self.lever_resume and self.lever_resume.allow(route.request,self._request_key(route.request)):
+                    return route.continue_()
                 payload=route.request.post_data or ""
                 reading=False;data=None
                 try:
@@ -356,6 +358,7 @@ class Browser:
 
     def _upload_response(self,response):
         request=response.request
+        if self.lever_resume:self.lever_resume.observe(response,self._request_key(request))
         if self.ashby_draft:
             with contextlib.suppress(Exception):self.ashby_draft.observe_posting(request,response)
             with contextlib.suppress(Exception):self.ashby_draft.observe_save(response,self._request_key(request))
@@ -733,6 +736,7 @@ class Browser:
                 actual=re.sub(r'[^0-9]','',actual);value=re.sub(r'[^0-9]','',value)
             if actual!=value:raise Blocked('field_verification_failed',f['label'])
         for d in documents:
+            if self.lever_resume and d['hash']==self.lever_resume.document['hash']:self.lever_resume.verify()
             if self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and d['hash'] not in self.uploaded_files:
                 raise Blocked('upload_verification_failed','Greenhouse has not acknowledged the approved PDF upload')
             if self.current_host=='jobs.ashbyhq.com' and (d['hash'] not in self.uploaded_files or d['hash'] not in self.ashby_attached_files):
@@ -757,6 +761,7 @@ class Browser:
         # unavailable destinations at the next attempt, retaining actual denials.
         self.host_cache={host:allowed for host,allowed in self.host_cache.items() if allowed is not None}
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
+        self.lever_resume=None
         self.store.check_job_decision(job['id'])
         if live:
             previous=self.store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
@@ -896,12 +901,17 @@ class Browser:
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')
                 self.upload_payloads[d['hash']]=path.read_bytes()
                 if d in retained_docs:continue
-                self._control(d['field']).set_input_files(str(path))
+                control=self._control(d['field'])
+                if self.current_host in {'jobs.lever.co','jobs.eu.lever.co'} and d['kind']=='resume' and control.get_attribute('id')=='resume-upload-input':
+                    from .lever_resume import LeverResume
+                    self.lever_resume=LeverResume(self,d)
+                control.set_input_files(str(path))
             if documents:
                 with contextlib.suppress(Exception):self.page.wait_for_load_state('networkidle',timeout=8000)
-                if self.current_host in {'jobs.ashbyhq.com','boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
+                if self.lever_resume or self.current_host in {'jobs.ashbyhq.com','boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
+                    expected_uploads=[self.lever_resume.document['hash']] if self.lever_resume else [d['hash'] for d in documents]
                     deadline=time.monotonic()+20
-                    while any(d['hash'] not in self.uploaded_files for d in documents) and time.monotonic()<deadline:
+                    while any(h not in self.uploaded_files for h in expected_uploads) and time.monotonic()<deadline:
                         self.store.checkpoint();self.page.wait_for_timeout(250)
             if live and self.ashby_draft:
                 proof={'job_id':job['id'],'url':job['url'],'answers':all_answers+answers,'documents':all_docs+documents,

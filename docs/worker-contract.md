@@ -23,6 +23,8 @@ Greenhouse and Ashby uploads require a successful response for the approved PDF;
 
 Lever's native location picker requires an exact approved suggestion and a matching committed location object. Unavailable choices can be omitted only when the employer's field is optional.
 
+Lever's native resume parser accepts only the exact approved PDF for the rendered employer account. Its successful storage acknowledgement must match the form before final submission; HTTP success or a visible filename alone is insufficient. Preparation may upload approved documents without submitting an application.
+
 Lever's official verification client may load and perform its native checks. Visible CAPTCHA challenges still stop the worker. An unavailable client stops before the final submission intent.
 
 Confirmed locality and onsite preferences can answer Bay Area office questions and establish that a Berkeley resident does not require relocation to the Bay Area. Willingness to relocate does not establish relocation need. New experience claims and recent reading still require real source facts.
