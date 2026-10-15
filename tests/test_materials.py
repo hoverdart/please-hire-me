@@ -72,6 +72,21 @@ def test_source_changes_invalidate_posting_context_hash(store,job):
     assert writing_context_hash(store,job)!=before
 
 
+def test_rejected_writing_cannot_fall_back_to_an_incomplete_approved_template(store,job):
+    store.put_template('experience','I built a puzzle solver and an independent replay verifier.')
+    store.update_settings({'tailored_writing':True})
+    class Model:
+        def draft_answer(self,*args):
+            return {'answer':'','sentence_ids':[],'rejected':'The requested tech stack is missing.'}
+        def choose_answer(self,*args):raise AssertionError('Review rejection cannot select a fallback')
+        def choose_sentences(self,*args):raise AssertionError('Review rejection cannot select a fallback')
+    field={'label':'Describe a system you built, including your contributions, tech stack and outcome.',
+           'type':'textarea','required':True,'options':[]}
+    with pytest.raises(Blocked,match='writing_unsupported'):
+        resolve(store,job['host'],field,Model(),job)
+    assert not store.db.execute('SELECT 1 FROM writing_answers').fetchone()
+
+
 def test_large_style_library_has_bounded_model_context(store):
     for i in range(5):
         source=import_material(store,((str(i)+' style ') * 1300).encode(),'example.txt','cover_letter')

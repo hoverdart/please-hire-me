@@ -997,6 +997,10 @@ def resolve(store, host, field, provider=None, context=None):
                 if not _fits_writing_limits(writing['value'],field,context):raise Blocked('answer_too_long',label)
                 store.save_writing_answer(host,label,options,writing);store.resolve_known_question(host,label,options,field=field,context=context)
                 return {'field':field,**writing}
+            if draft_rejection:
+                # A rejected review must not be bypassed by the older generic
+                # template/quotation fallback, which was not reviewed for this question.
+                raise Blocked('writing_unsupported',draft_rejection)
         if not template and cat:
             choices=[t for t in store.templates() if t['category']==cat]
             selected=choices[0]['id'] if len(choices)==1 else provider.choose_answer(label,choices) if choices and provider else None
