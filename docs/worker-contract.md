@@ -21,6 +21,10 @@ Ashby preparation suppresses text-field and SMS autosaves. Live runs permit only
 
 Greenhouse and Ashby uploads require a successful response for the approved PDF; Ashby also requires confirmation that its file handle was attached to the form. A visible filename alone is insufficient. Required Ashby question headings apply to radio, checkbox, autocomplete and Yes/No controls.
 
+Lever's native location picker requires an exact approved suggestion and a matching committed location object. Unavailable choices can be omitted only when the employer's field is optional.
+
+Lever's official verification client may load and perform its native checks. Visible CAPTCHA challenges still stop the worker. An unavailable client stops before the final submission intent.
+
 Confirmed locality and onsite preferences can answer Bay Area office questions and establish that a Berkeley resident does not require relocation to the Bay Area. Willingness to relocate does not establish relocation need. New experience claims and recent reading still require real source facts.
 
 After an uncertain outcome is verified and reconciled as not submitted, an explicit `python -m hireme retry-not-submitted APPLICATION_ID --note 'Reason for retry'` preserves the previous attempt in the event ledger and requeues the job. Unknown, pending-verification and confirmed records cannot be retried through this command. Preparation cycles report prepared counts separately from confirmed submissions.

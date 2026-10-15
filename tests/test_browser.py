@@ -80,6 +80,62 @@ def test_prepare_only_never_submits(store,ats):
     assert not ats[1]
 
 
+def lever_location_html(*,required=False,choices=None):
+    if choices is None:choices=['Berkeley, CA, USA','Berkeley, Chatsworth, ON, CAN']
+    widget=(Path(__file__).parent/'fixtures/lever-location.html').read_text()
+    widget=widget.replace('__REQUIRED__','required' if required else '').replace('__CHOICES__',json.dumps(choices))
+    return (Path(__file__).parent/'fixtures/application.html').read_text().replace('<button type="submit">',widget+'<button type="submit">')
+
+
+@pytest.mark.parametrize('live',[False,True])
+def test_lever_location_commits_the_exact_choice_and_hidden_object(store,ats,live):
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(body=lever_location_html(),content_type='text/html') if route.request.method=='GET' else route.continue_())
+        assert b.apply(job,live=live)==('confirmed' if live else 'prepared')
+        if not live:
+            # Reading the filled form again must retain a committed choice.
+            location=next(f for f in b._snapshot() if f['label']=='Current location')
+            assert location['value']=='Berkeley, CA, USA'
+            assert json.loads(b.page.locator('#selected-location').input_value())['name']==location['value']
+    app=store.db.execute('SELECT * FROM applications').fetchone()
+    answer=next(a for a in json.loads(app['package'])['answers'] if a['field']['label']=='Current location')
+    assert answer['field']['lever_location'] and answer['value']=='Berkeley, CA, USA'
+    assert len(ats[1])==int(live)
+    if live:
+        assert b'Berkeley, CA, USA' in ats[1][0]
+        assert b'Berkeley, Chatsworth, ON, CAN' not in ats[1][0]
+
+
+@pytest.mark.parametrize('required',[False,True])
+def test_lever_location_without_choices_can_only_omit_an_optional_field(store,ats,monkeypatch,required):
+    monkeypatch.setattr('hireme.ats_widgets.LEVER_LOOKUP_TIMEOUT',200)
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(body=lever_location_html(required=required,choices=[]),content_type='text/html'))
+        if required:
+            with pytest.raises(Blocked,match='missing_answers'):b.apply(job,live=False)
+        else:
+            assert b.apply(job,live=False)=='prepared'
+            app=store.db.execute('SELECT package FROM applications').fetchone()
+            assert all(a['field']['label']!='Current location' for a in json.loads(app[0])['answers'])
+            assert b.page.locator('#location-input').input_value()==''
+    assert not ats[1] and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_lever_location_typed_label_without_matching_selected_object_never_submits(store,ats,monkeypatch):
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(body=lever_location_html(),content_type='text/html'))
+        verify=b._verify
+        def corrupt_then_verify(*args):
+            b.page.locator('#selected-location').evaluate("e=>e.value=JSON.stringify({name:'A different location'})")
+            return verify(*args)
+        monkeypatch.setattr(b,'_verify',corrupt_then_verify)
+        with pytest.raises(Blocked,match='field_verification_failed'):b.apply(job)
+    assert not ats[1] and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('missing_fact',[False,True])
 def test_required_field_timeouts_retry_only_without_genuinely_missing_answers(store,ats,monkeypatch,missing_fact):
     from hireme.answers import resolve as real_resolve
@@ -231,6 +287,39 @@ def test_route_denies_private_or_unapproved_write(store,monkeypatch):
         r=Route(Request(url,method));b._route(r);assert r.action=='abort'
     b.attempted=True
     r=Route(Request('https://jobs.lever.co/acme/submit','POST'));b._route(r);assert r.action=='continue'
+
+
+@pytest.mark.parametrize('origin,url,method,allowed',[
+    ('jobs.lever.co','https://js.hcaptcha.com/1/secure-api.js','GET',True),
+    ('jobs.eu.lever.co','https://newassets.hcaptcha.com/captcha/v1/client.html','GET',True),
+    ('jobs.lever.co','https://api.hcaptcha.com/getcaptcha/fixture','POST',True),
+    ('jobs.lever.co','https://hcaptcha.com/checksiteconfig','POST',True),
+    ('jobs.lever.co','https://hcaptcha.com.attacker.invalid/pixel','GET',False),
+    ('jobs.lever.co','https://attacker-hcaptcha.com/pixel','GET',False),
+    ('jobs.ashbyhq.com','https://js.hcaptcha.com/1/secure-api.js','GET',False),
+    ('jobs.lever.co','https://api.hcaptcha.com/anything','PUT',False),
+    ('jobs.lever.co','https://private@js.hcaptcha.com/1/secure-api.js','GET',False),
+])
+def test_lever_verification_transport_is_vendor_bound_and_not_a_submission(store,monkeypatch,origin,url,method,allowed):
+    from types import SimpleNamespace
+    monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
+    b=Browser(store);b.current_host=origin
+    route=SimpleNamespace(request=SimpleNamespace(url=url,method=method,post_data='{}'),action=None)
+    route.abort=lambda:setattr(route,'action','abort')
+    route.continue_=lambda:setattr(route,'action','continue')
+    b._route(route)
+    assert route.action==('continue' if allowed else 'abort')
+    assert not b.submission_requests and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_unavailable_lever_verification_client_stops_before_submission_intent(store,ats,monkeypatch):
+    monkeypatch.setattr('hireme.browser.LEVER_VERIFICATION_TIMEOUT',200)
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>','<input id="hcaptchaResponseInput" type="hidden" name="h-captcha-response"></form>')
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html'))
+        with pytest.raises(Blocked,match='posting_fetch_failed'):b.apply(local_job(store,ats))
+    assert not ats[1] and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+    assert store.db.execute('SELECT state FROM applications').fetchone()[0]=='prepared'
 
 
 def test_login_captcha_and_personal_tab_isolation(store,ats):

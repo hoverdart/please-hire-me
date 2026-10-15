@@ -13,6 +13,7 @@ from .discovery import ATS_HOSTS,PORTAL_HOSTS
 from .util import Blocked,digest,private_dir,public_host,safe_document
 
 ASHBY_UPLOAD_HOST='ashbyhq-infra-prd-main-app-uploaded-files-us-east-1.s3.us-east-1.amazonaws.com'
+LEVER_VERIFICATION_TIMEOUT=5000
 UPLOAD_HOSTS={ASHBY_UPLOAD_HOST,'grnhse-prod-jben-us-west-2.s3.us-west-2.amazonaws.com',
               'grnhse-prod-jben-us-east-1.s3.us-east-1.amazonaws.com',
               'grnhse-prod-jben-eu-west-1.s3.eu-west-1.amazonaws.com'}
@@ -76,6 +77,9 @@ SNAPSHOT=r"""selector => {
   }
   if(el.disabled || el.closest('[aria-hidden=true]') || (el.readOnly && el.tabIndex<0))return;
   let type=el.tagName==='SELECT'?'select':el.tagName==='TEXTAREA'?'textarea':el.getAttribute('role')==='combobox'?'combobox':el.type||'text';
+  const leverLocation=el.matches('input.location-input[name=location]')&&
+    !!el.parentElement.querySelector('input[type=hidden][name=selectedLocation]')&&!!el.parentElement.querySelector('.dropdown-results');
+  if(leverLocation)type='combobox';
   let indices=[index]; let question=label(el); let options=[]; let value=el.value||'';
   let required=el.required||el.getAttribute('aria-required')==='true'||/[\*✱]/.test(question);
   const ashbyHeading=el.closest('fieldset')?.querySelector('.ashby-application-form-question-title')||el.closest('.ashby-application-form-field-entry')?.querySelector('.ashby-application-form-question-title');
@@ -108,7 +112,7 @@ SNAPSHOT=r"""selector => {
   const entrySelector='.education--form,.employment--form,.experience--form,[data-automation-id="educationSection"],[data-automation-id="education"],[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]';
   const entry=el.closest(entrySelector);
   const entryPeers=entry ? Array.from(document.querySelectorAll(entrySelector)).filter(x=>x.getClientRects().length&&x.tagName===entry.tagName&&(entry.getAttribute('data-automation-id') ? x.getAttribute('data-automation-id')===entry.getAttribute('data-automation-id') : x.className===entry.className)) : [];
-  out.push({index,indices,...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
+  out.push({index,indices,...(leverLocation?{lever_location:true}:{}),...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
    ...(el.closest('.education--form,[data-automation-id="educationSection"],[data-automation-id="education"]') ? {section:'education'} : el.closest('.employment--form,.experience--form,[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]') ? {section:'employment'} : {}),
    ...(entryPeers.length>1 ? {section_entry:entryPeers.indexOf(entry)} : {}),
    required:required||/[\*✱]/.test(question),
@@ -257,9 +261,16 @@ class Browser:
           "cdn.lever.co","lever-client-assets.s3.amazonaws.com","lever-client-logos.s3.us-west-2.amazonaws.com",
           "assets.workable.com","apply.workable.com"}
         recruiting_asset=bool(re.fullmatch(r"s[0-9]+-recruiting\.cdn\.greenhouse\.io",host))
+        # Lever's own submit handler depends on this verification SDK. Allow
+        # its native transport, never solve or interact with a visible challenge.
+        # Vendor CDN subdomains vary: https://docs.hcaptcha.com/#content-security-policy-settings
+        hcaptcha=(self.current_host in {'jobs.lever.co','jobs.eu.lever.co'}
+                  and (host=='hcaptcha.com' or host.endswith('.hcaptcha.com'))
+                  and not p.username and not p.password
+                  and route.request.method in {'GET','HEAD','OPTIONS','POST'})
         family={self.current_host}
         if 'greenhouse.io' in self.current_host:family|={'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}
-        if host not in family|asset_hosts and not recruiting_asset:return route.abort()
+        if host not in family|asset_hosts and not recruiting_asset and not hcaptcha:return route.abort()
         # Pages may read their standard assets; form writes stay on the current ATS family.
         if route.request.method not in ("GET","HEAD","OPTIONS"):
             allowed={self.current_host}
@@ -269,8 +280,8 @@ class Browser:
             if self.current_host in {"jobs.lever.co","jobs.eu.lever.co"}:allowed|={"api.lever.co"}
             # CAPTCHA endpoints may evaluate passive scoring, but no challenge solving is attempted.
             allowed|={"www.google.com","www.recaptcha.net","recaptcha.google.com"}
-            if host not in allowed:return route.abort()
-            if not self.attempted and host not in {"www.google.com","www.recaptcha.net","recaptcha.google.com"}:
+            if host not in allowed and not hcaptcha:return route.abort()
+            if not self.attempted and host not in {"www.google.com","www.recaptcha.net","recaptcha.google.com"} and not hcaptcha:
                 payload=route.request.post_data or ""
                 reading=False;data=None
                 try:
@@ -508,6 +519,11 @@ class Browser:
             self.store.checkpoint()
             if f['type']=='combobox':
                 el=self._control(f)
+                if f.get('lever_location'):
+                    if self.current_host not in {'jobs.lever.co','jobs.eu.lever.co'} and not self.test_url:
+                        raise Blocked('unsupported_widget',f['label'])
+                    from .ats_widgets import lever_location_snapshot
+                    f.update(lever_location_snapshot(self,el));continue
                 try:
                     self._open_combobox(el); self.page.wait_for_timeout(200)
                     menu=self._menu(el)
@@ -942,6 +958,12 @@ class Browser:
             self.page.screenshot(path=str(before),type='jpeg',full_page=True)
             if not live:return 'prepared'
             if not submit.is_enabled():raise Blocked('submit_disabled')
+            if (self.current_host in {'jobs.lever.co','jobs.eu.lever.co'} or self.test_url) and self.page.locator('input#hcaptchaResponseInput[name="h-captcha-response"]').count():
+                # A blocked or unavailable SDK leaves Lever's type=button inert.
+                # This is a preflight failure, not an uncertain employer attempt.
+                from playwright.sync_api import TimeoutError as VerificationTimeout
+                try:self.page.wait_for_function("()=>typeof window.hcaptcha?.execute==='function'",timeout=LEVER_VERIFICATION_TIMEOUT)
+                except VerificationTimeout:raise Blocked('posting_fetch_failed','Employer verification client did not load; no final submission was attempted') from None
             # The committed intent is immediately before the only final click.
             self._guard(job)
             self._verify(answers,documents,fields)

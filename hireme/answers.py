@@ -165,7 +165,7 @@ def _option_value(key, value, options, context=None):
         'country':{'unitedstates':{"us", "usa", "unitedstatesofamerica","unitedstates1"}},
         'state':{'ca':{'california'},'california':{'ca'}},
         'pronouns':{'hehim':{'hehimhis'},'sheher':{'sheherhers'},'theythem':{'theythemtheirs'}},
-        'location':{'berkeleyca':{'berkeleycaliforniaunitedstates','berkeleycaunitedstates','berkeleycalifornia'}},
+        'location':{'berkeleyca':{'berkeleycaliforniaunitedstates','berkeleycaunitedstates','berkeleycalifornia','berkeleycausa'}},
         'citizenship':{'unitedstates':{"us", "usa", "unitedstatesofamerica"}},
         'school':{'universityofcaliforniaberkeley':{"ucberkeley","universitycaliforniaberkeley"},'universitycaliforniaberkeley':{"ucberkeley","universityofcaliforniaberkeley"}},
         'disability':{'noidonothaveadisabilityandhavenothadoneinthepast':{'noidonothaveadisability'},

@@ -1,0 +1,41 @@
+<div class="application-question">
+  <div class="application-label">Current location</div>
+  <div class="application-field">
+    <input class="location-input" id="location-input" name="location" maxlength="100" __REQUIRED__>
+    <input type="hidden" name="selectedLocation" id="selected-location">
+    <div class="dropdown-container" style="display:none"><div class="dropdown-results"></div></div>
+  </div>
+</div>
+<script>
+(() => {
+  const control=document.querySelector('#location-input');
+  const selected=document.querySelector('#selected-location');
+  const menu=document.querySelector('.dropdown-container');
+  const results=document.querySelector('.dropdown-results');
+  const choices=__CHOICES__;
+  let timer;
+  control.addEventListener('input',()=>{menu.style.display='block';});
+  control.addEventListener('keydown',event=>{
+    if(['ArrowLeft','ArrowRight'].includes(event.key))return;
+    clearTimeout(timer);
+    timer=setTimeout(()=>{
+      results.replaceChildren();
+      if(!control.value)return;
+      for(const [index,name] of choices.entries()){
+        const option=document.createElement('div');
+        option.className='dropdown-location';option.textContent=name;
+        option.addEventListener('mousedown',()=>{
+          control.value=name;selected.value=JSON.stringify({id:String(index),name});
+          menu.style.display='none';results.replaceChildren();
+        });
+        results.append(option);
+      }
+    },20);
+  });
+  control.addEventListener('blur',()=>{
+    if(menu.style.display!=='none'){
+      control.value='';selected.value='';menu.style.display='none';results.replaceChildren();
+    }
+  });
+})();
+</script>
