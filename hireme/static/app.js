@@ -3308,13 +3308,13 @@ $("#facts-form").onsubmit = async (e) => {
       .map(([key]) => key);
     await api("/api/facts", { facts, clear });
     $("#confirm-facts").checked = false;
+    blurForm(e.target);
+    await refresh();
     note(
       clear.length
         ? "Facts saved. Cleared values will no longer be reused."
         : "Confirmed facts saved. They will be reused automatically.",
     );
-    blurForm(e.target);
-    await refresh();
   } catch (e) {
     note(e.message, true);
   }
@@ -3327,12 +3327,12 @@ $("#resume-upload").onchange = async (e) => {
   updateSelectedDownloads();
   try {
     const result = await api("/api/resume", f, true);
+    await refresh();
     note(
       result.repaired
         ? "Stored resume PDF repaired from your matching upload. Confirm any new or changed extracted values."
         : "Resume imported. Confirm any new or changed extracted values and supply the remaining facts.",
     );
-    await refresh();
   } catch (e) {
     note(e.message, true);
   } finally {
@@ -3386,10 +3386,10 @@ $("#settings-form").onsubmit = async (event) => {
     }
     await api("/api/settings", data);
     saved(event.target);
-    note("Search preferences saved.");
     blurForm(event.target);
     await refresh();
     updateScheduleControls();
+    note("Search preferences saved.");
   } catch (error) {
     note(error.message, true);
   }
@@ -4861,6 +4861,7 @@ document.addEventListener(
     event.preventDefault();
     form.dataset.saving = "true";
     form.setAttribute("aria-busy", "true");
+    note("");
     form.after(progress);
     // Let the handler capture FormData before disabling controls. Inert also
     // prevents background readiness rendering from reopening a field mid-save.

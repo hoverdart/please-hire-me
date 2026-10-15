@@ -839,8 +839,21 @@ def test_transcript_upload_replace_invalid_and_responsive_ui(tmp_path):
             expect(page.locator('#notice')).to_contain_text('Search preferences saved')
             assert store.settings()['employer_accounts'] is True
             assert store.settings()['cycle_timeout_seconds'] == 30
+            pending_saves=[];defer_save={'active':True}
+            def hold_preferences(route):
+                if defer_save['active']:pending_saves.append(route)
+                else:route.continue_()
+            page.route('**/api/settings',hold_preferences)
             page.locator('[name="cycle_timeout_seconds"]').fill('2.5')
-            page.get_by_role('button',name='Save preferences',exact=True).click()
+            with page.expect_request(lambda request:request.url.endswith('/api/settings')):
+                page.get_by_role('button',name='Save preferences',exact=True).click()
+            expect(page.locator('.form-request-status')).to_contain_text('Working')
+            expect(page.locator('#notice')).not_to_contain_text('Search preferences saved')
+            expect(page.get_by_role('button',name='Save preferences',exact=True)).to_be_disabled()
+            assert pending_saves and store.settings()['cycle_timeout_seconds']==30
+            expect(page.locator('[name="cycle_timeout_seconds"]')).to_be_disabled()
+            defer_save['active']=False
+            for route in pending_saves:route.continue_()
             expect(page.locator('#notice')).to_contain_text('Search preferences saved')
             assert store.settings()['cycle_timeout_seconds'] == 150
             assert not store.settings()['live_enabled']
@@ -1072,7 +1085,20 @@ def test_fresh_user_guided_setup_saves_paused_and_provider_key_private(tmp_path)
             page.locator('#setup-next').click();expect(page.locator('#guided-label')).to_contain_text('Step 2')
             values={'full_name':'Example Candidate','first_name':'Example','last_name':'Candidate','email':'candidate@synthetic.invalid','phone':'5551234567','location':'Berkeley, CA','graduation':'2028-05','work_authorized_us':'Yes','needs_sponsorship':'No','us_person':'Yes','professional_years':'0','skills':'Python'}
             for key,value in values.items():page.locator('#facts-form [name="'+key+'"]').fill(value)
-            page.locator('#confirm-facts').check();page.locator('#facts-form').get_by_role('button',name='Save confirmed facts',exact=True).click();expect(page.locator('#notice')).to_contain_text('Confirmed facts saved')
+            pending_states=[];defer_state={'active':True}
+            def hold_saved_state(route):
+                if defer_state['active']:pending_states.append(route)
+                else:route.continue_()
+            page.route('**/api/state*',hold_saved_state)
+            page.locator('#confirm-facts').check()
+            with page.expect_request(lambda request:'/api/state' in request.url):
+                page.locator('#facts-form').get_by_role('button',name='Save confirmed facts',exact=True).click()
+            expect(page.locator('#confirm-facts')).not_to_be_checked()
+            assert pending_states
+            expect(page.locator('#notice')).not_to_contain_text('Confirmed facts saved')
+            defer_state['active']=False
+            for route in pending_states:route.continue_()
+            expect(page.locator('#notice')).to_contain_text('Confirmed facts saved')
             page.locator('#setup-next').click();expect(page.locator('#guided-label')).to_contain_text('Step 3')
             page.locator('#context-form textarea').fill('I built a Python tool that helps students organize their coursework.')
             page.locator('#context-form input[type=checkbox]').check();page.locator('#context-form button').click();expect(page.locator('#notice')).to_contain_text('Approved context saved')
