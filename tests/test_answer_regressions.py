@@ -295,6 +295,17 @@ def test_first_and_last_legal_name_uses_exact_confirmed_name(store,job):
     assert answer['provenance']['fact_key']=='full_name'
 
 
+@pytest.mark.parametrize('label,key',[
+    ('Legal First Name✱','first_name'),('Legal Last Name✱','last_name'),
+    ('Full Name✱','full_name'),('First and Last Legal Name✱','full_name'),
+    ('Email✱','email'),('Phone✱','phone'),
+])
+def test_unicode_required_markers_do_not_require_model_inference(store,job,label,key):
+    answer=resolve(store,job['host'],field(label,'text',[]),context=job)
+    assert answer['value']==store.facts()[key]['value']
+    assert answer['provenance']['fact_key']==key
+
+
 def test_stack_listing_is_not_a_self_assessed_proficiency_rating(store,job):
     label="What are your strongest programming languages and technical areas? Please list specific languages, frameworks, and technologies you're proficient in (e.g., Go, Python, React, Kubernetes, LLMs, etc.)."
     answer=resolve(store,job['host'],field(label,'textarea',[]),context=job)
