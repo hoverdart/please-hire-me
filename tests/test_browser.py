@@ -125,6 +125,27 @@ def test_prepare_only_never_submits(store,ats):
     assert not ats[1]
 
 
+@pytest.mark.parametrize('entry_count',[1,2])
+def test_modern_greenhouse_employment_dates_keep_their_section_and_entry(store,ats,entry_count):
+    from hireme.answers import resolve
+    job=local_job(store,ats)
+    html=''.join('<div class="employment-form"><label>End date year<input name="employment-end-'+str(i)+'" required></label></div>' for i in range(entry_count))
+    html+='<div class="education--form"><label>End date year<input name="education-end"></label></div>'
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content(html)
+        fields=b._snapshot()
+    assert [f['section'] for f in fields]==['employment']*entry_count+['education']
+    assert [f.get('section_entry') for f in fields[:-1]]==([None] if entry_count==1 else [0,1])
+    assert resolve(store,job['host'],fields[-1],context=job)['value']=='2028'
+    with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],fields[0],context=job)
+    q=store.ask(job['id'],job['host'],fields[0]['label'],[],field=fields[0],context=job)
+    store.answer_question(q,'2025')
+    assert resolve(store,job['host'],fields[0],context=job)['value']=='2025'
+    if entry_count==2:
+        with pytest.raises(Blocked,match='repeated_entry_review'):resolve(store,job['host'],fields[1],context=job)
+    assert not ats[1] and not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
 def lever_location_html(*,required=False,choices=None):
     if choices is None:choices=['Berkeley, CA, USA','Berkeley, Chatsworth, ON, CAN']
     widget=(Path(__file__).parent/'fixtures/lever-location.html').read_text()

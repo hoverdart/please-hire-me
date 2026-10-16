@@ -109,11 +109,11 @@ SNAPSHOT=r"""selector => {
    value=group.filter(x=>x.checked).map(x=>Array.from(x.labels||[]).map(l=>l.innerText).join(' ').trim()||x.value).join('; ');
   }else if(type==='select'){options=Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.textContent.trim())}
   else if(type==='checkbox'){options=['Yes','No'];value=el.checked?'Yes':'No'}
-  const entrySelector='.education--form,.employment--form,.experience--form,[data-automation-id="educationSection"],[data-automation-id="education"],[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]';
+  const entrySelector='.education--form,.employment--form,.employment-form,.experience--form,[data-automation-id="educationSection"],[data-automation-id="education"],[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]';
   const entry=el.closest(entrySelector);
   const entryPeers=entry ? Array.from(document.querySelectorAll(entrySelector)).filter(x=>x.getClientRects().length&&x.tagName===entry.tagName&&(entry.getAttribute('data-automation-id') ? x.getAttribute('data-automation-id')===entry.getAttribute('data-automation-id') : x.className===entry.className)) : [];
   out.push({index,indices,...(leverLocation?{lever_location:true}:{}),...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
-   ...(el.closest('.education--form,[data-automation-id="educationSection"],[data-automation-id="education"]') ? {section:'education'} : el.closest('.employment--form,.experience--form,[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]') ? {section:'employment'} : {}),
+   ...(el.closest('.education--form,[data-automation-id="educationSection"],[data-automation-id="education"]') ? {section:'education'} : el.closest('.employment--form,.employment-form,.experience--form,[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]') ? {section:'employment'} : {}),
    ...(entryPeers.length>1 ? {section_entry:entryPeers.indexOf(entry)} : {}),
    required:required||/[\*✱]/.test(question),
    maxlength:el.maxLength||-1,min:el.getAttribute('min'),max:el.getAttribute('max'),step:el.getAttribute('step'),step_base:type==='number'?el.getAttribute('value'):null,pattern:el.getAttribute('pattern'),value,multiple:!!el.multiple});
