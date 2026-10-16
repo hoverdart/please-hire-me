@@ -62,6 +62,10 @@ def local_job(store,ats):
     'Once your application has been submitted, we will email you.',
     'After we have received your application, we will review it.',
     'Your application has not been submitted. Thank you for applying.',
+    'Thank you for applying. Your application was not successfully submitted.',
+    'Thank you for applying. Your application has not been successfully submitted.',
+    'Thank you for applying. Application submission failed.',
+    'Thank you for applying. Submission was unsuccessful.',
     'Thank you for applying. Please complete your application.',
     'Thank you for applying. To submit your application, verify your email.',
     "We couldn't submit your application. Thank you for applying.",
@@ -89,10 +93,13 @@ def test_receipt_already_present_before_submission_is_not_new_evidence():
     assert submission_receipt('Your application has been received.',before)
 
 
-@pytest.mark.parametrize('preexisting',[False,True])
-def test_generic_or_preexisting_receipt_keeps_submission_unknown_and_prevents_retry(store,ats,monkeypatch,preexisting):
+@pytest.mark.parametrize('receipt,preexisting',[
+    ('Thank you for your interest in Acme.',False),
+    ('Thank you for applying.',True),
+    ('Thank you for applying. Your application was not successfully submitted.',False),
+])
+def test_generic_or_preexisting_receipt_keeps_submission_unknown_and_prevents_retry(store,ats,monkeypatch,receipt,preexisting):
     original=(Path(__file__).parent/'fixtures/application.html').read_text()
-    receipt='Thank you for applying.' if preexisting else 'Thank you for your interest in Acme.'
     html=original.replace('Thank you for applying. Your application has been received.',receipt)
     if preexisting:html=html.replace('<form', '<p>'+receipt+'</p><form',1)
     with Browser(store,test_url=ats[0]) as b:
