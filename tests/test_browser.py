@@ -66,6 +66,12 @@ def local_job(store,ats):
     'Thank you for applying. Your application has not been successfully submitted.',
     'Thank you for applying. Application submission failed.',
     'Thank you for applying. Submission was unsuccessful.',
+    'Thank you for applying. Your application could not be submitted.',
+    "Thank you for applying. Your application hasn't been submitted.",
+    'Thank you for applying. Your application hasn’t been received.',
+    'Thank you for applying. Your application cannot be processed.',
+    'Thank you for applying. We were unable to process your application.',
+    'Thank you for applying. Your submission was not successful.',
     'Thank you for applying. Please complete your application.',
     'Thank you for applying. To submit your application, verify your email.',
     "We couldn't submit your application. Thank you for applying.",
@@ -97,10 +103,14 @@ def test_receipt_already_present_before_submission_is_not_new_evidence():
     ('Thank you for your interest in Acme.',False),
     ('Thank you for applying.',True),
     ('Thank you for applying. Your application was not successfully submitted.',False),
+    ('Thank you for applying. Your application could not be submitted.',False),
+    ("Thank you for applying. Your application hasn't been submitted.",False),
+    ('Thank you for applying. We were unable to process your application.',False),
+    ('Thank you for applying. Your submission was not successful.',False),
 ])
 def test_generic_or_preexisting_receipt_keeps_submission_unknown_and_prevents_retry(store,ats,monkeypatch,receipt,preexisting):
     original=(Path(__file__).parent/'fixtures/application.html').read_text()
-    html=original.replace('Thank you for applying. Your application has been received.',receipt)
+    html=original.replace("'Thank you for applying. Your application has been received.'",json.dumps(receipt))
     if preexisting:html=html.replace('<form', '<p>'+receipt+'</p><form',1)
     with Browser(store,test_url=ats[0]) as b:
         b.page.route(ats[0]+'/**',lambda r:r.fulfill(status=200,content_type='text/html',body=html) if r.request.method=='GET' else r.fallback())

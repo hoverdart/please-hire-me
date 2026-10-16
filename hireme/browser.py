@@ -126,9 +126,11 @@ CONFIRMED=re.compile(
     r"we (?:have |have successfully |successfully )?received your application\b|"
     r"you have successfully applied\b)",re.I)
 INCOMPLETE_SUBMISSION=re.compile(
-    r"\b(?:your |the )?application (?:has |was |is )?(?:not |never )(?:been )?(?:successfully )?(?:submitted|received|complete)\b|"
+    r"\b(?:your |the )?application (?:(?:has |was |is )?(?:not |never )|(?:hasn|wasn|isn)['’]t )(?:been )?(?:successfully )?(?:submitted|received|complete)\b|"
+    r"\b(?:your |the )?application (?:could not|couldn['’]t|cannot|can['’]t) be (?:successfully )?(?:submitted|received|processed)\b|"
     r"\b(?:application )?submission (?:has |was |is )?(?:failed|unsuccessful)\b|"
-    r"\b(?:could not|couldn.t|unable to|failed to) submit (?:your |the )?application\b|"
+    r"\b(?:your |the |application )?submission (?:has |was |is )?(?:not |never )(?:been )?(?:successful|completed)\b|"
+    r"\b(?:could not|couldn.t|unable to|failed to) (?:submit|process|receive) (?:your |the )?application\b|"
     r"\b(?:error|problem) (?:while )?(?:processing|submitting) (?:your |the )?application\b|"
     r"\b(?:please|to|must) (?:complete|submit|finish) (?:your |the )application\b",re.I)
 
