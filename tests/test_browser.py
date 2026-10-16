@@ -57,9 +57,54 @@ def local_job(store,ats):
     'Our Talent team will carefully review your qualifications and experience.',
     'Thank you for taking the time to apply. Please complete the application.',
     'There was an error processing your application. Please try again.',
+    'Thank you for your interest in Acme. Please complete the form.',
+    'Thank you for submitting your feedback.',
+    'Once your application has been submitted, we will email you.',
+    'After we have received your application, we will review it.',
+    'Your application has not been submitted. Thank you for applying.',
+    'Thank you for applying. Please complete your application.',
+    'Thank you for applying. To submit your application, verify your email.',
+    "We couldn't submit your application. Thank you for applying.",
 ])
 def test_custom_receipt_requires_both_completed_acknowledgement_and_review(text):
     assert not submission_receipt(text)
+
+
+@pytest.mark.parametrize('text',[
+    'Thank you for applying to Acme!',
+    'Thank you for submitting your application.',
+    'Your application has been successfully submitted.',
+    'Application received!',
+    'We have received your application.',
+    'You have successfully applied to Acme.',
+    'Our Talent team will carefully review your qualifications and experience. Thanks again for applying!',
+])
+def test_explicit_completed_application_receipts(text):
+    assert submission_receipt(text)
+
+
+def test_receipt_already_present_before_submission_is_not_new_evidence():
+    before='Apply below.\nThank you for applying to Acme!'
+    assert not submission_receipt('THANK YOU FOR APPLYING to Acme!',before)
+    assert submission_receipt('Your application has been received.',before)
+
+
+@pytest.mark.parametrize('preexisting',[False,True])
+def test_generic_or_preexisting_receipt_keeps_submission_unknown_and_prevents_retry(store,ats,monkeypatch,preexisting):
+    original=(Path(__file__).parent/'fixtures/application.html').read_text()
+    receipt='Thank you for applying.' if preexisting else 'Thank you for your interest in Acme.'
+    html=original.replace('Thank you for applying. Your application has been received.',receipt)
+    if preexisting:html=html.replace('<form', '<p>'+receipt+'</p><form',1)
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda r:r.fulfill(status=200,content_type='text/html',body=html) if r.request.method=='GET' else r.fallback())
+        # Exercise post-click classification without spending the 45-second
+        # production receipt timeout on a deliberately ambiguous fixture.
+        monkeypatch.setattr(b,'_wait_submission_outcome',lambda *args,**kwargs:b.page.locator('body').inner_text())
+        job=local_job(store,ats)
+        assert b.apply(job)=='unknown'
+        with pytest.raises(Blocked):b.apply(job)
+    assert len(ats[1])==1
+    assert store.db.execute('SELECT state FROM applications').fetchone()[0]=='unknown'
 
 
 def test_local_exact_answers_upload_confirm_and_no_retry(store,ats):

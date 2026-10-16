@@ -119,15 +119,30 @@ SNAPSHOT=r"""selector => {
    maxlength:el.maxLength||-1,min:el.getAttribute('min'),max:el.getAttribute('max'),step:el.getAttribute('step'),step_base:type==='number'?el.getAttribute('value'):null,pattern:el.getAttribute('pattern'),value,multiple:!!el.multiple});
  });return out;
 }"""
-CONFIRMED=re.compile(r"thank you for (?:your interest|applying|submitting)|application (?:has been |was )?(?:successfully )?(?:submitted|received)|we (?:have |have successfully )?received your application",re.I)
+CONFIRMED=re.compile(
+    r"(?:^|[.!?\n])\s*(?:"
+    r"thank you for (?:applying\b|submitting (?:your |the |an )?application\b)|"
+    r"(?:your |the )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b|"
+    r"we (?:have |have successfully |successfully )?received your application\b|"
+    r"you have successfully applied\b)",re.I)
+INCOMPLETE_SUBMISSION=re.compile(
+    r"\b(?:your |the )?application (?:has |was |is )?(?:not |never )(?:been )?(?:submitted|received|complete)\b|"
+    r"\b(?:could not|couldn.t|unable to|failed to) submit (?:your |the )?application\b|"
+    r"\b(?:error|problem) (?:while )?(?:processing|submitting) (?:your |the )?application\b|"
+    r"\b(?:please|to|must) (?:complete|submit|finish) (?:your |the )application\b",re.I)
 
-def submission_receipt(text):
+def submission_receipt(text,before=''):
     # Some Greenhouse employers replace the default receipt. Require both the
     # completed-application acknowledgement and the promised applicant review;
     # a generic thank-you or invitation to apply is not enough.
-    return bool(CONFIRMED.search(text) or (
+    if INCOMPLETE_SUBMISSION.search(text):return False
+    # Text already present in the posting cannot prove that this click succeeded.
+    # Compare acknowledged phrases, ignoring layout and capitalization changes.
+    markers=lambda value:{' '.join(match[0].lstrip('.!?\n').casefold().split()) for match in CONFIRMED.finditer(value)}
+    return bool(markers(text)-markers(before) or (
         re.search(r"thanks again for applying[!.]",text,re.I) and
-        re.search(r"our talent team will carefully review your qualifications and experience",text,re.I)))
+        re.search(r"our talent team will carefully review your qualifications and experience",text,re.I) and
+        not re.search(r"thanks again for applying[!.]",before,re.I)))
 # Model outcomes that may succeed on a later attempt, unlike missing applicant information.
 PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output','writing_unsupported')
 
@@ -155,6 +170,7 @@ class Browser:
         self.workday_grant=None
         self.submission_requests={}
         self.ashby_draft=None
+        self.receipt_baseline=''
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
@@ -427,7 +443,7 @@ class Browser:
         while True:
             text=self._guard(job,allow_verification=True)
             if REJECTED.search(text):return text
-            if submission_receipt(text) and not self.page.locator('input[type=email]').count():return text
+            if submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count():return text
             if accept_verification and self._email_verification(text):return text
             if self.page.locator('[aria-invalid=true]').count():return text
             if time.monotonic()>=deadline:return text
@@ -503,6 +519,7 @@ class Browser:
             self.store.event('verification_held',self.aid,{'reason':'verification_submit_disabled'})
             return 'awaiting_verification'
         self.store.checkpoint()
+        self.receipt_baseline=self.page.locator('body').inner_text(timeout=5000)
         self.store.begin_verification(self.aid)
         verification_submit.click(timeout=15000)
         text=self._wait_submission_outcome(job,accept_verification=False)
@@ -511,7 +528,7 @@ class Browser:
         screenshot_kwargs={'mask':[owner if owner.count()==1 else control.locator('xpath=..')]} if control.count() else {}
         screenshot_name=self._outcome_screenshot(screenshot,**screenshot_kwargs)
         text=re.sub(r'\s*'.join(re.escape(c) for c in code),'[verification code redacted]',text)
-        confirmed=submission_receipt(text) and not self.page.locator('input[type=email]').count()
+        confirmed=submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
         outcome='confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
         self.store.finish(self.aid,outcome,text,screenshot_name)
         return outcome
@@ -979,6 +996,7 @@ class Browser:
             self._guard(job)
             self._verify(answers,documents,fields)
             self.store.checkpoint()
+            self.receipt_baseline=self.page.locator('body').inner_text(timeout=5000)
             self.store.begin_submit(self.aid); self.attempted=True
             requested=time.time()
             stage='submit_click'
@@ -989,7 +1007,7 @@ class Browser:
                 stage='outcome_evidence'
                 screenshot=self.store.root/'screenshots'/(self.aid+'-after.jpg')
                 screenshot_name=self._outcome_screenshot(screenshot)
-                confirmed=submission_receipt(text) and not self.page.locator('input[type=email]').count()
+                confirmed=submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
                 outcome='not_submitted' if REJECTED.search(text) else 'confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
                 # Employer errors/receipts often appear below a long posting.
                 evidence=text if outcome=='awaiting_verification' or len(text)<=4000 else text[:2000]+'\n…\n'+text[-2000:]

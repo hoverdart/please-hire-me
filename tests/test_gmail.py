@@ -2,7 +2,7 @@ import base64
 import json
 import time
 import pytest
-from hireme.gmail import verification_code,GmailClient,import_client,status
+from hireme.gmail import verification_code,GmailClient,import_client,status,check_connection
 from hireme.util import Blocked
 
 
@@ -67,6 +67,45 @@ def test_reports_only_send_to_the_confirmed_owner(store):
     assert 'To: test@candidate.invalid' in raw and 'Bcc:' not in raw
     with pytest.raises(Blocked):GmailClient(store,Service('someone@candidate.invalid',None))
     with pytest.raises(ValueError):client.send_report('Bad\nBcc: attacker','body','id')
+
+
+def test_connection_check_verifies_the_api_owner_without_reading_or_sending_mail(store):
+    class ProfileOnly(Service):
+        def messages(self):raise AssertionError('Connection check accessed mailbox contents')
+    service=ProfileOnly('test@candidate.invalid',None)
+    before=store.snapshot();changes=store.db.total_changes
+    assert check_connection(store,lambda s:GmailClient(s,service))=={'verified':True,'email':'test@candidate.invalid'}
+    assert not service.sent and store.snapshot()==before and store.db.total_changes==changes
+    with pytest.raises(Blocked,match='gmail_account_mismatch'):
+        check_connection(store,lambda s:GmailClient(s,ProfileOnly('wrong@candidate.invalid',None)))
+
+
+def test_saved_gmail_status_does_not_substitute_for_live_api_check(store):
+    from hireme.util import atomic_json
+    folder=store.root/'integrations';folder.mkdir()
+    atomic_json(folder/'gmail-token.json',{'token':'synthetic'})
+    atomic_json(folder/'gmail-account.json',{'email':'test@candidate.invalid'})
+    assert status(store)['connected']
+    class Unavailable(Service):
+        def getProfile(self,**kwargs):raise RuntimeError('private request details')
+    with pytest.raises(Blocked,match='gmail_check_failed') as error:
+        check_connection(store,lambda s:GmailClient(s,Unavailable('test@candidate.invalid',None)))
+    assert 'private request details' not in str(error.value)
+    def expired(s):raise Blocked('gmail_reconnect_required')
+    with pytest.raises(Blocked,match='gmail_reconnect_required'):check_connection(store,expired)
+
+
+def test_gmail_check_cli_reports_a_live_result_and_actionable_failure(store,monkeypatch,capsys):
+    from hireme.cli import main
+    monkeypatch.setattr('hireme.gmail.GmailClient',lambda s:GmailClient(s,Service('test@candidate.invalid',None)))
+    assert main(['--data-dir',str(store.root),'gmail','check'])==0
+    assert json.loads(capsys.readouterr().out)['verified']
+    def expired(s):raise Blocked('gmail_reconnect_required')
+    monkeypatch.setattr('hireme.gmail.GmailClient',expired)
+    assert main(['--data-dir',str(store.root),'gmail','check'])==2
+    assert 'gmail_reconnect_required' in capsys.readouterr().err
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
 
 
 def test_oauth_client_stored_privately_and_endpoints_restricted(store,tmp_path):

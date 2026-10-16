@@ -101,6 +101,18 @@ def status(store):
             'email': email}
 
 
+def check_connection(store, client_factory=None):
+    """Refresh credentials and verify the API owner without reading or sending mail."""
+    try:
+        client=(client_factory or GmailClient)(store)
+    except Blocked:
+        raise
+    except Exception:
+        # API exceptions can contain request details. Report only a fixed reason.
+        raise Blocked('gmail_check_failed', 'Gmail API access could not be verified; retry the check or reconnect Gmail locally') from None
+    return {'verified': True, 'email': client.email}
+
+
 def disconnect(store):
     for name in ('gmail-token.json', 'gmail-account.json'):
         _secret_path(store, name).unlink(missing_ok=True)

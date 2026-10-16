@@ -154,9 +154,12 @@ Gmail is optional. Browser sign-in does not authorize background access. Create 
 ```bash
 .venv/bin/python -m hireme gmail connect
 .venv/bin/python -m hireme gmail status
+.venv/bin/python -m hireme gmail check
 ```
 
 Authorize the confirmed application email. Enable code handling and report delivery separately. Refer to [Google's OAuth quickstart](https://developers.google.com/workspace/gmail/api/quickstart/python) for provider setup; test-mode authorization may require reconnection.
+
+`gmail status` checks saved connection files. `gmail check` refreshes credentials when needed and verifies the account through the Gmail API without reading messages or sending mail. Run it on the worker machine when verifying unattended operation; a saved token alone does not prove current access.
 
 Code handling supports recognized Greenhouse challenges with sender, recipient, company, timing and one-use checks. Unsupported verification flows remain manual. Batch reports include attempted job links and are queued independently of applications. Missing authorization keeps mail pending; ambiguous delivery stays uncertain without automatic duplication. Mail failures never trigger application retries.
 

@@ -13,6 +13,8 @@ The authoritative settings, facts, answers, jobs, attempts and events are in the
 9. Wait up to 45 seconds for the ATS outcome. Record confirmation and a best-effort screenshot; a screenshot timeout must not prevent email verification or erase a confirmed result. Missing confirmation, browser disconnect, crash or network ambiguity becomes UNKNOWN and blocks the company until reconciliation. An explicit Ashby spam rejection is NOT_SUBMITTED and requires manual action; it is never retried automatically.
 10. Record cycle totals, shortfalls and blocked reasons. Targets never relax invariants.
 
+Application confirmation requires a fresh, explicit completed-application acknowledgement after the submission click. Generic interest or feedback messages, conditional instructions, explicit incomplete/error messages and receipt wording already present before the click do not establish acceptance. Ambiguous outcomes remain UNKNOWN and block retries.
+
 No routine human approval. One-time setup confirms profile facts; new unknown questions are answered and saved in the dashboard. Account/CAPTCHA/unsupported verification/work-sample exceptions have clickable job links. Supported Greenhouse email challenges may continue through the applicant-authorized Gmail adapter.
 
 Every model request reserves a durable per-batch and local-day slot before dispatch, including failed calls and separate grounding reviews. Attempt ceilings bound blocked applications too. Pause increments a cancellation generation; resume cannot revive a cancelled cycle. Unknown or verification-pending applications remain held.
