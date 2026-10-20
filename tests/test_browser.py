@@ -431,6 +431,26 @@ def test_hidden_recaptcha_frame_does_not_prevent_submission(store,ats,style):
     assert len(ats[1])==1
 
 
+def test_receipt_rendering_cannot_leave_a_stale_captcha_visibility_read(store,ats,monkeypatch):
+    from playwright.sync_api import Locator
+    visible=Locator.is_visible
+    # Force the CI interleaving: the form disappears after a visibility read,
+    # before a later locator call could inspect the old frame's opacity.
+    def replacing_form(locator,*args,**kwargs):
+        result=visible(locator,*args,**kwargs)
+        if result and locator.evaluate('(e)=>e.tagName==="IFRAME"'):
+            locator.evaluate('''e=>{e.remove();document.querySelector('p').textContent='Your application has been received.';}''')
+        return result
+    monkeypatch.setattr(Locator,'is_visible',replacing_form)
+    with Browser(store,test_url=ats[0]) as browser:
+        browser.current_host='127.0.0.1';browser.page.goto(ats[0]);browser.page.set_default_timeout(250)
+        browser.page.set_content('<p>Processing application</p><iframe src="about:blank#bframe" style="opacity:0"></iframe>')
+        assert browser._guard(local_job(store,ats)) in {'Processing application','Your application has been received.'}
+        browser.page.set_content('<p>Your application has been received.</p>')
+        assert browser._guard(local_job(store,ats))=='Your application has been received.'
+    assert not ats[1] and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('revealed',[False,True])
 def test_transparent_captcha_container_after_click_waits_for_real_outcome(store,ats,revealed):
     html=(Path(__file__).parent/'fixtures/application.html').read_text()

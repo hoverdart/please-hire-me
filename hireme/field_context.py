@@ -9,7 +9,7 @@ from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
 MAPPING_VERSION = 25
 ADAPTER_VERSION = 25
-CAPTCHA_DETECTION_VERSION = 3
+CAPTCHA_DETECTION_VERSION = 4
 
 def field_context(host, field, context=None):
     context = context or {}

@@ -28,6 +28,8 @@ Receipt detection requires fresh completed-application wording after the final c
 
 Fully transparent verification frames, including transparent parent containers, can belong to a pending passive check. The worker keeps waiting for the outcome and stops if a challenge becomes exposed. Existing uncertain attempts remain excluded from retries after detector updates.
 
+Receipt rendering can remove verification frames. Their visibility is read together so a disappearing frame cannot leave a stale locator waiting while the receipt is present.
+
 Ashby live runs require acknowledged, source-bound field saves before final submission. Preparation mode suppresses these text-field saves. Unsupported form encodings remain held. Backups stage on private persistent storage and stream archive entries so large Pi ledgers do not require an equally large RAM disk or memory allocation.
 
 Ashby's reviewed structured application-form identifier must name the exact posting and external board. The original identifier string must match the native field-save request and acknowledgement; unknown formats, changed definitions and other postings remain held.

@@ -478,12 +478,16 @@ class Browser:
         # Playwright considers opacity:0 visible. Verification clients can mount
         # a transparent frame (or parent) while a passive check is pending.
         # Recheck each outcome poll so a subsequently exposed challenge stops us.
-        if any(frame.is_visible() and frame.evaluate('''(frame)=>{
+        # Read the whole selection in one DOM operation. Receipt rendering can
+        # remove/reorder frames between separate locator visibility/style calls.
+        if captcha_frames.evaluate_all('''frames=>frames.some(frame=>{
+            const box=frame.getBoundingClientRect(),style=getComputedStyle(frame);
+            if(!box.width||!box.height||style.visibility==='hidden'||style.visibility==='collapse')return false;
             for(let node=frame;node;node=node.parentElement){
                 if(Number(getComputedStyle(node).opacity)===0)return false;
             }
             return true;
-        }''') for frame in captcha_frames.all()):
+        })'''):
             raise Blocked("captcha_blocked")
         text=self.page.locator('body').inner_text(timeout=5000)
         if re.search(r"(?:job|position|posting).{0,40}(?:no longer available|no longer accepting|has expired|has been filled|(?:was )?not found)",text,re.I):raise Blocked("expired_posting")
