@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import pytest
 from hireme.reports import queue_report,flush_reports
 from hireme.worker import cycle
 from hireme.util import Blocked
@@ -83,6 +85,35 @@ def test_report_does_not_include_other_runs_job_links(store,job):
     finished(store)
     body = store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
     assert job['url'] not in body
+
+
+@pytest.mark.parametrize('state', ['unknown', 'awaiting_verification', 'submitting'])
+@pytest.mark.parametrize('error', [Blocked('submission_unknown'), RuntimeError('private browser details')])
+def test_post_click_error_keeps_durable_outcome_and_never_invites_reapplication(store,job,package,state,error):
+    class Browser:
+        calls=0
+        def __init__(self,s):self.store=s
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def apply(self,item,live=True):
+            Browser.calls+=1
+            aid=self.store.prepare(item,package)
+            self.store.begin_submit(aid)
+            if state!='submitting':self.store.finish(aid,state,'Fixture outcome')
+            raise error
+
+    result=cycle(store,Path('.'),discover=False,browser_factory=Browser,job_ids=[job['id']])
+    expected='unknown' if state=='submitting' else state
+    event=store.db.execute("SELECT detail FROM events WHERE kind='application_finished' ORDER BY seq DESC LIMIT 1").fetchone()
+    assert json.loads(event[0])['outcome']==expected
+    assert result['outcomes']=={expected:1} and result['confirmed']==0
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'Other outcomes — review before retrying' in body
+    assert 'Blocked — review or apply manually' not in body
+    assert ('Submission outcome is uncertain.' if expected=='unknown' else 'Email verification is pending.') in body
+    assert 'private browser details' not in body
+    cycle(store,Path('.'),discover=False,browser_factory=Browser,job_ids=[job['id']])
+    assert Browser.calls==1
 
 
 def test_blocked_questions_are_listed_one_per_line_with_reasons(store,job):

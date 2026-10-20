@@ -134,6 +134,20 @@ def test_greenhouse_redirect_uses_verified_embed_only(monkeypatch):
     response['id']=1
     with pytest.raises(Blocked,match='posting_fetch_failed'):GreenhouseAdapter().navigation(job)
 
+
+@pytest.mark.parametrize('status,reason',[(404,'expired_posting'),(403,'posting_inspection_review'),
+    (429,'posting_fetch_failed'),(500,'posting_fetch_failed'),(502,'posting_fetch_failed'),
+    (503,'posting_fetch_failed'),(504,'posting_fetch_failed')])
+def test_greenhouse_public_read_errors_have_actionable_bounded_outcomes(monkeypatch,status,reason):
+    from urllib.error import HTTPError
+    from hireme.ats_adapters import GreenhouseAdapter
+    def fail(*args):raise HTTPError('https://boards-api.greenhouse.io/private',status,'private response details',{},None)
+    monkeypatch.setattr('hireme.net.Network.json',fail)
+    job={'url':'https://job-boards.greenhouse.io/acme/jobs/123','host':'job-boards.greenhouse.io','title':'Intern'}
+    with pytest.raises(Blocked) as error:GreenhouseAdapter().embedded(job)
+    assert error.value.reason==reason
+    assert 'private' not in str(error.value)
+
 def test_posting_questions_not_screening_requirements():
     from hireme.ats_adapters import SingleStepAdapter
     text='Currently pursuing a degree. Apply for this job Will you be graduating before September 2027?'

@@ -22,6 +22,10 @@ Receipt detection requires fresh completed-application wording after the final c
 
 Ashby live runs require acknowledged, source-bound field saves before final submission. Preparation mode suppresses these text-field saves. Unsupported form encodings remain held. Backups stage on private persistent storage and stream archive entries so large Pi ledgers do not require an equally large RAM disk or memory allocation.
 
+An exact prefilled value in a verified official Ashby form response is already acknowledged; a visible browser value alone is insufficient. The posting's exact Application tab can provide a navigation-only entry when the page has ambiguous Apply buttons.
+
+Batch reports preserve unknown and verification-pending outcomes after browser errors, with instructions to verify the existing attempt before applying again. Temporary failures reading an official Greenhouse posting use bounded delayed retries; access restrictions and unrecognized responses require review before any fields are filled.
+
 Preparation can upload approved documents. Lever's native resume parser is limited to the exact approved PDF and the rendered employer account; the returned storage acknowledgement must match the form before submission. An upload acknowledgement is not an application receipt.
 
 ## Release gates

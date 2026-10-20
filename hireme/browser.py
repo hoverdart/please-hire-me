@@ -694,6 +694,21 @@ class Browser:
         if len(forms)>1:raise Blocked('unsupported_form','Applicant controls belong to different forms')
         return self.page.locator('form').nth(next(iter(forms))) if forms else self.page
 
+    def _ashby_application_entry(self,job):
+        """The official Application tab is a posting-bound navigation link."""
+        if self.current_host!='jobs.ashbyhq.com':return None
+        posting=urlsplit(job['url'])
+        if not re.fullmatch(r'/[A-Za-z0-9_-]+/[0-9a-f-]{36}/?',posting.path,re.I):return None
+        entry=self.page.get_by_role('tab',name='Application',exact=True)
+        if entry.count()!=1:return None
+        data=entry.evaluate('(e)=>({tag:e.tagName,href:e.href,form:!!e.closest("form")})')
+        target=urlsplit(data.get('href') or '')
+        if (data['tag']!='A' or data['form'] or target.scheme!='https'
+                or target.hostname!=self.current_host or target.port not in (None,443)
+                or target.username or target.password or target.query or target.fragment
+                or target.path!=posting.path.rstrip('/')+'/application'):return None
+        return entry
+
     def _fill(self,answer):
         f=answer['field']; value=answer['value']; controls=self.page.locator(CONTROLS)
         el=self._control(f)
@@ -850,6 +865,9 @@ class Browser:
                 raise
             fields=self._snapshot()
             if not fields:
+                entry=self._ashby_application_entry(job)
+                if entry is not None:
+                    entry.click();self._wait_ready();continue
                 apply=self.page.get_by_role('button',name=re.compile(r'^(?:apply(?: now| for this job)?|application)$',re.I))
                 if apply.count()!=1:
                     apply=self.page.get_by_role('link',name=re.compile(r'^(?:apply(?: now| for this job)?|application)$',re.I))
@@ -1038,5 +1056,8 @@ class Browser:
                     if screenshot_name:
                         self.store.db.execute("UPDATE applications SET screenshot=? WHERE id=? AND state='unknown'",(screenshot_name,self.aid))
                 if isinstance(e,Blocked) and e.reason=='paused':raise
-                raise Blocked('submission_unknown')
+                detail=('A CAPTCHA appeared after the final click. Verify the outcome with the employer before applying again.'
+                        if reason=='captcha_blocked' else
+                        'The final click was recorded, but its outcome could not be verified. Check with the employer before applying again.')
+                raise Blocked('submission_unknown',detail)
         raise Blocked('unsupported_form','Step limit reached')

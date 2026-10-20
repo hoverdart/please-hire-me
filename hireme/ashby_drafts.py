@@ -31,14 +31,18 @@ class AshbyDraft:
         if not isinstance(form,dict):return
         render=form.get('id');definition=form.get('sourceFormDefinitionId')
         if not all(isinstance(v,str) and re.fullmatch(r'[0-9a-f-]{36}',v,re.I) for v in (render,definition)):return
-        entries={}
+        entries={};values={}
         for section in form.get('sections',[]):
             if section.get('isHidden'):continue
             for entry in section.get('fieldEntries',[]):
                 field=entry.get('field',{});path=field.get('path')
                 if isinstance(path,str) and entry.get('id')==render+'_'+path and not entry.get('isHidden'):
                     entries[path]=field
-        self.forms[render]={'definition':definition,'entries':entries}
+                    value=entry.get('fieldValue')
+                    if isinstance(value,dict) and 'value' in value:
+                        values[path]=value['value']
+        self.forms[render]={'definition':definition,'entries':entries,
+                            'values':values if not form.get('errorMessages') and not form.get('formErrors') else {}}
 
     def observe_posting(self, request, response):
         if not self.identity or response.status!=200:return
@@ -61,7 +65,7 @@ class AshbyDraft:
         from .answers import selections,validate_package
         validate_package(self.store,self.job,package)
         self.store._check_budget(self.job,self.store.settings())
-        grants={}
+        grants={};saved=set()
         for answer in answers:
             field=answer['field'];path=field.get('ashby_path');entry=field.get('ashby_entry_id','')
             if not path:
@@ -92,7 +96,13 @@ class AshbyDraft:
             key=(render,path)
             if key in grants:raise Blocked('ashby_draft_unsupported','Duplicate Ashby field path')
             grants[key]={'definition':form['definition'],'value':value}
-        self.grants=grants;self.package=package;self.remaining=4*len(grants);self.saved=set();self.failed=False
+            # React suppresses autosaves when a restored value already equals
+            # the server's savedValue. The verified official form response is
+            # an acknowledgement of that exact value; a DOM prefill is not.
+            if path in form['values'] and same(form['values'][path],value):saved.add(key)
+        self.grants=grants;self.package=package;self.remaining=4*len(grants);self.saved=saved;self.failed=False
+        for _,path in sorted(saved):
+            self.store.event('ashby_draft_saved',self.job['id'],{'path':path,'source':'official_form'})
 
     def allow(self, request, data, key):
         if not self.package or not self.identity or not isinstance(data,dict):return False

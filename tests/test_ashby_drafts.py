@@ -20,7 +20,7 @@ def form(values=None):
     return {'id':RENDER,'sourceFormDefinitionId':DEFINITION,'errorMessages':[],'formErrors':[],
             'sections':[{'fieldEntries':[{'id':RENDER+'_'+path,'field':{'path':path,'title':title},
                 'fieldValue':{'value':values[path]} if path in values else None}
-                for path,title in [('_systemfield_name','Name'),('_systemfield_email','Email')]]}]}
+                for path,title in [('_systemfield_name','Name'),('_systemfield_email','Email')]+([('_systemfield_phone','Phone')] if '_systemfield_phone' in values else [])]}]}
 
 
 def request(value='test@candidate.invalid',**changes):
@@ -51,6 +51,24 @@ def test_exact_field_save_requires_verified_form_sources_and_acknowledgement(sto
     d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':form({'_systemfield_email':'test@candidate.invalid'})}}),'request')
     assert d.complete
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('mode',['exact','different','missing','error','wrong_entry'])
+def test_only_exact_error_free_official_prefills_count_as_saved(store,job,package,mode):
+    d,_=draft(store,job,package)
+    saved=form({'_systemfield_email':'test@candidate.invalid'})
+    entry=saved['sections'][0]['fieldEntries'][1]
+    if mode=='different':entry['fieldValue']['value']='other@candidate.invalid'
+    if mode=='missing':entry['fieldValue']=None
+    if mode=='error':saved['formErrors']=['Synthetic form error']
+    if mode=='wrong_entry':entry['id']='another-entry'
+    d._remember_form(saved)
+    if mode=='wrong_entry':
+        with pytest.raises(Blocked,match='ashby_draft_unsupported'):d.enable(None,d.package['answers'],d.package)
+        return
+    d.enable(None,d.package['answers'],d.package)
+    assert d.complete is (mode=='exact')
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_draft_write'").fetchone()
 
 
 @pytest.mark.parametrize('changes',[
@@ -94,20 +112,26 @@ def test_transport_success_alone_is_not_a_saved_field(store,job,package,mode):
     assert d.failed and not d.complete
 
 
+@pytest.mark.parametrize('restored_phone',[False,True])
 @pytest.mark.parametrize('live,ack',[(True,True),(False,True),(True,False)])
-def test_browser_saves_only_approved_fields_before_final_intent_and_keeps_preparation_local(store,monkeypatch,live,ack):
+def test_browser_saves_only_approved_fields_before_final_intent_and_keeps_preparation_local(store,monkeypatch,live,ack,restored_phone):
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     job={'id':digest(REQ),'url':f'https://jobs.ashbyhq.com/acme/{REQ}', 'host':'jobs.ashbyhq.com',
          'company':'Acme','title':'Software Engineer Intern Summer 2027','description':'Build Python software.',
          'location':'San Francisco, United States','source':'fixture'}
     store.upsert_job(job);remote={};final=[]
     metadata=[('_systemfield_name','Name','text'),('_systemfield_email','Email','email')]
-    inputs=''.join(f'<div data-field-path="{path}" data-field-entry-id="{RENDER}_{path}"><label>{title}<input id="{path}" name="{path}" type="{kind}" required></label></div>' for path,title,kind in metadata)
+    if restored_phone:
+        remote['_systemfield_phone']=store.facts()['phone']['value']
+        metadata.append(('_systemfield_phone','Phone','tel'))
+    initial=dict(remote)
+    inputs=''.join(f'<div data-field-path="{path}" data-field-entry-id="{RENDER}_{path}"><label>{title}<input id="{path}" name="{path}" type="{kind}" value="{remote.get(path, "")}" required></label></div>' for path,title,kind in metadata)
     html='''<html><body><h1>Software Engineer Intern Summer 2027</h1><p>Build Python software in San Francisco, United States.</p><form>'''+inputs+'''<label>Resume<input type="file" name="resume" required></label><button type="submit">Submit Application</button></form><script>
 const query='''+json.dumps(QUERY)+''';
 const endpoint='/api/non-user-graphql';
+const initial='''+json.dumps(initial)+''';
 fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiJobPosting',query:'query ApiJobPosting { jobPosting { id } }',variables:{organizationHostedJobsPageName:'acme',jobPostingId:'''+json.dumps(REQ)+'''}})});
-for(const el of document.querySelectorAll('input:not([type=file])'))el.addEventListener('input',()=>fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiSetFormValue',query,variables:{organizationHostedJobsPageName:'acme',formRenderIdentifier:'''+json.dumps(RENDER)+''',formDefinitionIdentifier:'''+json.dumps(DEFINITION)+''',path:el.id,value:el.value}})}).catch(()=>{}));
+for(const el of document.querySelectorAll('input:not([type=file])'))el.addEventListener('input',()=>{if(el.value===initial[el.id])return;fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiSetFormValue',query,variables:{organizationHostedJobsPageName:'acme',formRenderIdentifier:'''+json.dumps(RENDER)+''',formDefinitionIdentifier:'''+json.dumps(DEFINITION)+''',path:el.id,value:el.value}})}).catch(()=>{})});
 document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=await fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiSubmitApplication'})});if(r.ok)document.body.innerHTML='Thank you for applying. Your application was received.'};
 </script></body></html>'''
     with Browser(store) as b:
@@ -116,7 +140,7 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=awa
             def abort(self):self.route.abort()
             def continue_(self):
                 data=json.loads(self.request.post_data)
-                if data['operationName']=='ApiJobPosting':result={'data':{'jobPosting':{'id':REQ,'applicationForm':form()}}}
+                if data['operationName']=='ApiJobPosting':result={'data':{'jobPosting':{'id':REQ,'applicationForm':form(remote)}}}
                 elif data['operationName']=='ApiSetFormValue':
                     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
                     v=data['variables'];remote[v['path']]=v['value'];result={'data':{'setFormValue':form(remote)}}
@@ -124,7 +148,7 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=awa
                 else:
                     assert data['operationName']=='ApiSubmitApplication'
                     assert store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
-                    assert remote=={'_systemfield_name':'Test Person','_systemfield_email':'test@candidate.invalid'}
+                    assert remote=={**initial,'_systemfield_name':'Test Person','_systemfield_email':'test@candidate.invalid'}
                     final.append(data);result={'data':{'submitted':True}}
                 self.route.fulfill(status=200,content_type='application/json',body=json.dumps(result))
         def serve(route):
@@ -143,7 +167,7 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=awa
         if live and ack:
             with pytest.raises(Blocked):b.apply(job)
     assert len(final)==int(live and ack)
-    if not live:assert not remote
+    if not live:assert remote==initial
 
 
 def test_saved_form_can_reveal_a_conditional_field_without_authorizing_its_value(store,job,package):

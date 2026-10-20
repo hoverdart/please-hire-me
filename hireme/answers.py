@@ -62,6 +62,7 @@ def field_key(label):
     if re.fullmatch(r'do you have experience working with robots',label):return 'robots_experience'
     if re.fullmatch(r'have you worked with humanoids',label):return 'humanoids_experience'
     if re.match(r'when will you be available to work as a full.time,? permanent employee\?',label):return 'fulltime_start'
+    if re.fullmatch(r'if offered a full.time position upon graduation,? what is your earliest available start date',label):return 'fulltime_start'
     if re.fullmatch(r'(?:earliest (?:available )?start(?: date)?|available start date|start date availability)',label):return 'earliest_start'
     if re.fullmatch(r'what is the earliest date you are available to start (?:this|the) (?:position|role|job)',label):return 'earliest_start'
     if re.search(r'\bhigh school\b',label):
@@ -74,8 +75,10 @@ def field_key(label):
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
     if re.fullmatch(r'(?:please )?(?:select|indicate|enter) the country where you (?:currently )?(?:reside|live)\.?',label):return 'country'
     if re.fullmatch(r'(?:what are your )?pronouns',label):return 'pronouns'
+    if re.fullmatch(r'we care about addressing everyone correctly\. add your personal pronouns below to share with the hiring team\.',label):return 'pronouns'
     # Applicants often misspell it "pronounciation"; it is never the pronouns question.
     if re.fullmatch(r'(?:(?:your |legal |preferred )?name )?prono?unciation(?: of your name)?|(?:how (?:do|should) (?:we|you|i) (?:pronounce|say) your name)',label):return 'name_pronunciation'
+    if re.fullmatch(r"we care about addressing everyone correctly\. to help us get it right, please write out how your name is pronounced phonetically to share with the hiring team\.",label):return 'name_pronunciation'
     # Only the generic question; a named destination stays a separate decision.
     if re.fullmatch(r'(?:are you )?(?:willing|open)(?: and able)? to relocat(?:e|ion)(?: for (?:this|the) (?:role|position|job|internship))?',label):return 'relocate'
     if re.fullmatch(r'what is your gender(?: identity)?',label):return 'gender'
@@ -84,7 +87,7 @@ def field_key(label):
     if re.fullmatch(r'what is your (?:race or ethnicity|race|ethnicity)',label):return 'race'
     if re.fullmatch(r'what is your disability status',label):return 'disability'
     if re.fullmatch(r'what is your (?:military|veteran|protected veteran) status',label):return 'veteran'
-    if re.fullmatch(r'(?:please indicate |what is )?your (?:desired )?hourly (?:rate|pay)(?: requirement| expectation)?',label):return 'salary'
+    if re.fullmatch(r'(?:please indicate |what is )?your (?:(?:desired|expected) )?hourly (?:rate|pay)(?: requirement| expectation| range)?(?: for this internship)?',label):return 'salary'
     # A combined residence field needs the confirmed location, not only its
     # state component. Keep office preferences separate from current residence.
     if (re.search(r'\bcity\s*(?:and|/|,)\s*(?:state|province)\b',label)
@@ -626,7 +629,7 @@ def _compatible_binding(key, label):
         'finra_registered':r'^are you (?:currently )?registered with finra[? *]*$',
         'securities_licenses':r'^(?:are you actively maintaining|do you (?:actively )?(?:hold|maintain)) (?:any )?securities licenses[? *]*$',
         'over_18':r'^(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)[? *]*$',
-        'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?',
+        'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?|^if offered a full.time position upon graduation,? what is your earliest available start date[? *]*$',
         'nights_weekends':r'^are you willing and able to work nights and weekends[? *]*$',
         'robots_experience':r'^do you have experience working with robots[? *]*$',
         'humanoids_experience':r'^have you worked with humanoids[? *]*$',
@@ -661,7 +664,7 @@ def _field_fact_key(store,label,context):
 def _compatible_field(key, field, context=None):
     label=field['label']
     if key=='securities_licenses' and _finra_license_followup(label,context or {}):return True
-    if key=='fulltime_start' and _compatible_binding('earliest_start',label):
+    if key=='fulltime_start' and field_key(label)!='fulltime_start' and _compatible_binding('earliest_start',label):
         from .policy import employment_kind
         return bool((context or {}).get('title') and employment_kind(context)=='new-grad' and not re.search(r'internship|co.op|part.time',label,re.I))
     if key=='degree' and any(re.fullmatch(r'Freshman|Sophomore|Junior|Senior',o,re.I) for o in field.get('options',[])):return False

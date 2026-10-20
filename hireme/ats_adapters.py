@@ -9,7 +9,7 @@ class SingleStepAdapter:
         return verified if verified is not None else re.split(r'\bApply for this job\b',text,maxsplit=1,flags=re.I)[0]
 
 class GreenhouseAdapter(SingleStepAdapter):
-    version=3
+    version=4
     def navigation(self,job,*,checkpoint=None,deadline=None):
         # Roblox always redirects its board URL to a custom careers site.
         from urllib.parse import urlsplit
@@ -30,7 +30,14 @@ class GreenhouseAdapter(SingleStepAdapter):
             raise Blocked('unexpected_redirect','The employer moved this application to its own careers site')
         board,job_id=match.groups()
         from .net import Network
-        data=Network(checkpoint=checkpoint,deadline=deadline).json('https://boards-api.greenhouse.io/v1/boards/'+board+'/jobs/'+job_id+'?content=true')
+        from urllib.error import HTTPError,URLError
+        try:data=Network(checkpoint=checkpoint,deadline=deadline).json('https://boards-api.greenhouse.io/v1/boards/'+board+'/jobs/'+job_id+'?content=true')
+        except HTTPError as error:
+            if error.code==404:raise Blocked('expired_posting','The official Greenhouse posting is no longer published') from None
+            if error.code in {429,500,502,503,504}:raise Blocked('posting_fetch_failed','Greenhouse posting read temporarily failed; no fields were filled') from None
+            raise Blocked('posting_inspection_review','Greenhouse posting read requires review; no fields were filled') from None
+        except (URLError,TimeoutError):raise Blocked('posting_fetch_failed','Greenhouse posting read did not complete; no fields were filled') from None
+        except (ValueError,TypeError):raise Blocked('posting_inspection_review','Greenhouse posting response is not recognized') from None
         if not isinstance(data,dict) or str(data.get('id'))!=job_id or not data.get('content') or not data.get('title'):
             raise Blocked('posting_fetch_failed','Cannot verify the Greenhouse posting for the embedded application')
         normalize=lambda value:re.sub(r'[^a-z0-9]+','',value.lower())

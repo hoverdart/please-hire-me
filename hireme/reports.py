@@ -71,9 +71,14 @@ def queue_report(store, run_id):
                      'Other outcomes — review before retrying')
             questions = _questions(store, job_id)
             reason = REASON_GUIDANCE.get(detail.get('reason'), (detail.get('reason'),))[0]
+            uncertainty = ('Submission outcome is uncertain. Check with the employer before applying again.'
+                           if detail['outcome'] in {'unknown','submitting'} else
+                           'Email verification is pending. Complete verification before applying again.'
+                           if detail['outcome']=='awaiting_verification' else '')
             groups[group].append(f"{job['company']} — {job['title']}: "
                                  + (reason if detail['outcome'] == 'blocked' and reason else
                                     detail['outcome'] + (f" ({reason})" if reason else ''))
+                                 + ('\n'+uncertainty if uncertainty else '')
                                  + (''.join('\n  • ' + line for line in questions) if questions
                                     else f"\n{_short(detail['detail'], 300)}" if detail.get('detail') else '')
                                  + f"\n{job['url']}")

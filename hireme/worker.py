@@ -95,7 +95,14 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 store.db.execute('UPDATE jobs SET status=? WHERE id=? AND id NOT IN (SELECT job_id FROM job_decisions)',(outcome,job['id']))
                                 if outcome=='confirmed' or not live and outcome=='prepared':count+=1
                             except Blocked as e:
-                                store.event('application_finished',job['id'],{'run_id':rid,'outcome':'blocked','reason':e.reason,'detail':e.detail})
+                                # A post-click exception can leave a durable unknown
+                                # or verification-pending outcome. Reports must keep
+                                # that outcome instead of inviting another application.
+                                state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
+                                outcome=state[0] if state and state[0] in ('unknown','submitting','awaiting_verification') else 'blocked'
+                                if outcome=='submitting':outcome='unknown'
+                                if outcome!='blocked':outcomes[outcome]=outcomes.get(outcome,0)+1
+                                store.event('application_finished',job['id'],{'run_id':rid,'outcome':outcome,'reason':e.reason,'detail':e.detail})
                                 if e.reason=='model_budget_exhausted' and safe_job_state(store,job['id']):
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail)
                                 if e.reason in ('paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'):raise
@@ -109,7 +116,11 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 # Browser call logs can contain filled values, signed
                                 # URLs and credentials. Persist the failure category,
                                 # never arbitrary exception text (also used in mail).
-                                store.event('application_finished',job['id'],{'run_id':rid,'outcome':'error','error':type(e).__name__})
+                                state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
+                                outcome=state[0] if state and state[0] in ('unknown','submitting','awaiting_verification') else 'error'
+                                if outcome=='submitting':outcome='unknown'
+                                if outcome!='error':outcomes[outcome]=outcomes.get(outcome,0)+1
+                                store.event('application_finished',job['id'],{'run_id':rid,'outcome':outcome,'error':type(e).__name__})
                                 reasons['browser_error']=reasons.get('browser_error',0)+1
                                 if safe_job_state(store,job['id']):
                                     store.block(job['id'],'browser_error',type(e).__name__);hold(store,job,'browser_error',type(e).__name__)
