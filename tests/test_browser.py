@@ -419,7 +419,7 @@ def test_login_captcha_and_personal_tab_isolation(store,ats):
     assert not ats[1]
 
 
-@pytest.mark.parametrize('style',['display:none','visibility:hidden','width:0;height:0;border:0'])
+@pytest.mark.parametrize('style',['display:none','visibility:hidden','width:0;height:0;border:0','opacity:0'])
 def test_hidden_recaptcha_frame_does_not_prevent_submission(store,ats,style):
     html=(Path(__file__).parent/'fixtures/application.html').read_text()
     html=html.replace('</body>',f'<iframe src="about:blank#bframe" style="{style}"></iframe></body>')
@@ -431,10 +431,35 @@ def test_hidden_recaptcha_frame_does_not_prevent_submission(store,ats,style):
     assert len(ats[1])==1
 
 
-@pytest.mark.parametrize('src',['about:blank#bframe','about:blank#hcaptcha','about:blank#challenges.cloudflare.com'])
-def test_visible_captcha_prevents_submit_intent(store,ats,src):
+@pytest.mark.parametrize('revealed',[False,True])
+def test_transparent_captcha_container_after_click_waits_for_real_outcome(store,ats,revealed):
     html=(Path(__file__).parent/'fixtures/application.html').read_text()
-    html=html.replace('</body>',f'<iframe src="{src}"></iframe></body>')
+    # Verification clients can mount a transparent challenge container while
+    # their passive check is pending. A later exposed challenge still holds.
+    pending='''e.preventDefault();let pending=document.createElement('div');pending.style.opacity='0';
+      pending.innerHTML='<iframe src="about:blank#hcaptcha"></iframe>';document.body.append(pending);
+      await new Promise(resolve=>setTimeout(resolve,750));
+      if(REVEALED){pending.style.opacity='1';return;}let f='''.replace('REVEALED',str(revealed).lower())
+    html=html.replace('e.preventDefault();let f=',pending)
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as browser:
+        browser.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html) if route.request.method=='GET' else route.fallback())
+        if revealed:
+            with pytest.raises(Blocked,match='submission_unknown'):browser.apply(job)
+            assert browser.page.locator('iframe').evaluate('(frame)=>frame.parentElement.style.opacity')=='1'
+        else:assert browser.apply(job)=='confirmed'
+        with pytest.raises(Blocked,match='duplicate_or_uncertain'):browser.apply(job)
+    row=store.db.execute('SELECT state,confirmation FROM applications WHERE job_id=?',(job['id'],)).fetchone()
+    assert row['state']==('unknown' if revealed else 'confirmed')
+    assert len(ats[1])==(0 if revealed else 1)
+    assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0]==1
+
+
+@pytest.mark.parametrize('src',['about:blank#bframe','about:blank#hcaptcha','about:blank#challenges.cloudflare.com'])
+@pytest.mark.parametrize('opacity',['1','0.01'])
+def test_visible_captcha_prevents_submit_intent(store,ats,src,opacity):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text()
+    html=html.replace('</body>',f'<iframe src="{src}" style="opacity:{opacity}"></iframe></body>')
     with Browser(store,test_url=ats[0]) as b:
         b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
         with pytest.raises(Blocked,match='captcha_blocked'):b.apply(local_job(store,ats))

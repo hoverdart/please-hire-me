@@ -24,6 +24,8 @@ The unanswered-question queue shows captured employer explanations and policy li
 
 Receipt detection requires fresh completed-application wording after the final click; generic acknowledgements, conditional instructions and incomplete/error messages remain uncertain. Gmail's saved connection status is distinct from `gmail check`, which verifies current API access without reading or sending messages.
 
+Fully transparent verification frames, including transparent parent containers, can belong to a pending passive check. The worker keeps waiting for the outcome and stops if a challenge becomes exposed. Existing uncertain attempts remain excluded from retries after detector updates.
+
 Ashby live runs require acknowledged, source-bound field saves before final submission. Preparation mode suppresses these text-field saves. Unsupported form encodings remain held. Backups stage on private persistent storage and stream archive entries so large Pi ledgers do not require an equally large RAM disk or memory allocation.
 
 An exact prefilled value in a verified official Ashby form response is already acknowledged; a visible browser value alone is insufficient. The posting's exact Application tab can provide a navigation-only entry when the page has ambiguous Apply buttons.

@@ -474,7 +474,15 @@ class Browser:
         # Passive CAPTCHA scoring can preload a hidden challenge frame. Only
         # an exposed widget/challenge requires human intervention.
         captcha_frames=self.page.locator('iframe[src*="bframe"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare.com"]')
-        if any(frame.is_visible() for frame in captcha_frames.all()):
+        # Playwright considers opacity:0 visible. Verification clients can mount
+        # a transparent frame (or parent) while a passive check is pending.
+        # Recheck each outcome poll so a subsequently exposed challenge stops us.
+        if any(frame.is_visible() and frame.evaluate('''(frame)=>{
+            for(let node=frame;node;node=node.parentElement){
+                if(Number(getComputedStyle(node).opacity)===0)return false;
+            }
+            return true;
+        }''') for frame in captcha_frames.all()):
             raise Blocked("captcha_blocked")
         text=self.page.locator('body').inner_text(timeout=5000)
         if re.search(r"(?:job|position|posting).{0,40}(?:no longer available|no longer accepting|has expired|has been filled|(?:was )?not found)",text,re.I):raise Blocked("expired_posting")

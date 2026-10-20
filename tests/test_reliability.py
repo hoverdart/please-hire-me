@@ -1,7 +1,7 @@
 import json
 import pytest
 from hireme.answers import resolve
-from hireme.field_context import binding, save_binding
+from hireme.field_context import CAPTCHA_DETECTION_VERSION, binding, save_binding
 from hireme.job_holds import ready, hold, recheck
 from hireme.coverage import coverage, cycle_funnel
 from hireme.util import Blocked
@@ -52,7 +52,7 @@ def test_hold_releases_on_facts_answers_documents_or_rules(store,job):
 def test_captcha_detection_update_only_releases_captcha_holds(store,job,monkeypatch,reason):
     hold(store,job,reason)
     assert not ready(store,job)
-    monkeypatch.setattr('hireme.job_holds.CAPTCHA_DETECTION_VERSION',3)
+    monkeypatch.setattr('hireme.job_holds.CAPTCHA_DETECTION_VERSION',CAPTCHA_DETECTION_VERSION+1)
     assert ready(store,job)==(reason in {'captcha','captcha_blocked'})
 
 
@@ -61,7 +61,7 @@ def test_captcha_detection_update_preserves_submission_outcomes(store,job,packag
     hold(store,job,'captcha_blocked')
     store.prepare(job,package)
     store.db.execute('UPDATE applications SET state=?',(state,))
-    monkeypatch.setattr('hireme.job_holds.CAPTCHA_DETECTION_VERSION',3)
+    monkeypatch.setattr('hireme.job_holds.CAPTCHA_DETECTION_VERSION',CAPTCHA_DETECTION_VERSION+1)
     assert ready(store,job)==(state=='prepared')
     if state!='prepared':
         with pytest.raises(ValueError):recheck(store,job['id'])
