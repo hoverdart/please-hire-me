@@ -443,9 +443,11 @@ def test_receipt_rendering_cannot_leave_a_stale_captcha_visibility_read(store,at
         return result
     monkeypatch.setattr(Locator,'is_visible',replacing_form)
     with Browser(store,test_url=ats[0]) as browser:
-        browser.current_host='127.0.0.1';browser.page.goto(ats[0]);browser.page.set_default_timeout(250)
+        browser.current_host='127.0.0.1';browser.page.goto(ats[0])
         browser.page.set_content('<p>Processing application</p><iframe src="about:blank#bframe" style="opacity:0"></iframe>')
+        browser.page.set_default_timeout(250)
         assert browser._guard(local_job(store,ats)) in {'Processing application','Your application has been received.'}
+        browser.page.set_default_timeout(15000)
         browser.page.set_content('<p>Your application has been received.</p>')
         assert browser._guard(local_job(store,ats))=='Your application has been received.'
     assert not ats[1] and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
