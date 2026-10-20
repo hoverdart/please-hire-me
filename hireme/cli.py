@@ -224,7 +224,11 @@ def main(argv=None):
             from .migration import import_legacy
             print(json.dumps(import_legacy(store,args.path)))
     except (Blocked,ValueError) as e:
-        print(str(e),file=sys.stderr);return 2
+        print(str(e),file=sys.stderr)
+        # A deliberate pause is a normal scheduled stop, including a pause
+        # during a batch. Other holds and setup errors still fail the command.
+        if args.command=='run' and isinstance(e,Blocked) and e.reason=='paused':return 0
+        return 2
     finally:
         try:store.close()
         except Exception:pass

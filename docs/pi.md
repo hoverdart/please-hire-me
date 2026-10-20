@@ -72,6 +72,8 @@ journalctl --user -u please-hire-me-worker.service -n 50
 
 Existing installations may use cron for applications and systemd only for the dashboard. Check `hireme schedule status` before changing scheduling; a missing worker timer does not establish that scheduling is absent. Use one scheduler for the applicant.
 
+A scheduled run that stops because submissions are paused exits successfully and records a paused batch. Setup errors and other blocked runs still return a failure status.
+
 Dashboard service units use `--hide-token` to keep the access URL out of service logs. Reopen it with `hireme open-dashboard` in the Pi desktop session. Keep logs private.
 
 ## Update an existing checkout
