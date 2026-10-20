@@ -16,7 +16,7 @@ The configured version is **0.5.0rc2**, a public release candidate for a self-ho
 
 Models can still make factual mistakes. Grounding reviews, confirmed sources and deterministic validators reduce risk but do not establish universal answer correctness. Unknown personal/legal facts require applicant input. An HTTP 200 response, prepared draft or saved remote draft is not an accepted application.
 
-Ordinary posting prose about proving that software works does not request an applicant proof. Explicit proof instructions, proof questions and no-AI restrictions still require manual completion. After a guard update, Recheck can request a fresh read of an earlier work-sample hold; it cannot reconcile or retry a recorded application attempt.
+Ordinary posting prose about proving that software works does not request an applicant proof. The standard employer notice about not inferring emotions or sensitive traits with AI is a privacy disclosure. Explicit proof instructions, proof questions and applicant-facing no-AI restrictions still require manual completion. After a guard update, Recheck can request a fresh read of an earlier work-sample hold; it cannot reconcile or retry a recorded application attempt.
 
 Generated narrative reviews receive current confirmed facts alongside source excerpts, with current values taking precedence over older source wording. Confirmed fact changes invalidate cached writing.
 

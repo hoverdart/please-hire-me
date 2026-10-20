@@ -8,7 +8,7 @@ import shutil
 import time
 from urllib.parse import urlsplit, parse_qsl
 
-from .answers import resolve,PAGE_REFUSE,field_key
+from .answers import resolve,page_requires_manual_work,field_key
 from .discovery import ATS_HOSTS,PORTAL_HOSTS
 from .util import Blocked,digest,private_dir,public_host,safe_document
 
@@ -472,7 +472,7 @@ class Browser:
         text=self.page.locator('body').inner_text(timeout=5000)
         if re.search(r"(?:job|position|posting).{0,40}(?:no longer available|no longer accepting|has expired|has been filled|(?:was )?not found)",text,re.I):raise Blocked("expired_posting")
         if LOGIN.search(text) and not (allow_verification and self._email_verification(text)):raise Blocked("account_or_verification_blocked")
-        if PAGE_REFUSE.search(text):raise Blocked("human_work_sample")
+        if page_requires_manual_work(text):raise Blocked("human_work_sample")
         return text
 
     def _wait_submission_outcome(self,job,accept_verification=True):

@@ -1283,7 +1283,7 @@ def test_post_submit_blocker_retains_reason_without_exception_data_or_retry(stor
 
 
 @pytest.mark.parametrize('description',[
-    'Measure results. You write evaluations and tests so you can prove that your AI-powered work is good.',
+    'Write evaluations to prove that deployed software meets its requirements.',
     'Our engineers use tests to improve that experience for users.',
 ])
 def test_ordinary_posting_prose_about_proving_work_does_not_become_an_assessment(store,ats,description):
@@ -1314,6 +1314,37 @@ def test_current_proof_tasks_and_ai_restrictions_still_stop_before_filling(store
 def test_proof_question_remains_held_inside_an_ordinary_application(store,ats):
     html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',
         '<label>Describe how you would prove that this invariant holds<textarea name="proof" required></textarea></label></form>')
+    with Browser(store,test_url=ats[0]) as browser:
+        browser.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
+        with pytest.raises(Blocked,match='human_work_sample'):browser.apply(local_job(store,ats))
+    assert not ats[1]
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('notice',[
+    'We do not use AI to infer your emotions or sensitive traits.',
+    'Our company does screening. We do not use artificial intelligence to infer your sensitive traits.',
+])
+def test_employer_ai_privacy_disclosure_does_not_prohibit_applying(store,ats,notice):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</body>','<footer>'+notice+'</footer></body>')
+    with Browser(store,test_url=ats[0]) as browser:
+        browser.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html) if route.request.method=='GET' else route.fallback())
+        assert browser.apply(local_job(store,ats))=='confirmed'
+    assert len(ats[1])==1
+
+
+@pytest.mark.parametrize('restriction',[
+    'Please complete the application without AI assistance.',
+    'You must not use AI for these answers.',
+    'Do not use artificial intelligence to write this application.',
+    'Your task is to prove that the invariant holds.',
+    'We do not use AI to write your application.',
+    'We do not allow AI-generated applications.',
+    'AI-assisted responses are prohibited.',
+])
+def test_employer_privacy_notice_cannot_mask_an_application_restriction(store,ats,restriction):
+    notice='We do not use AI to infer your emotions or sensitive traits. '
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('<body>','<body><p>'+notice+restriction+'</p>')
     with Browser(store,test_url=ats[0]) as browser:
         browser.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
         with pytest.raises(Blocked,match='human_work_sample'):browser.apply(local_job(store,ats))

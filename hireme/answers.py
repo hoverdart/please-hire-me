@@ -39,7 +39,23 @@ REFUSE = re.compile(RESTRICTED_WORK+r"|prove that",re.I)
 PROOF_INSTRUCTION = (r"(?:^|[\n.!?:;]\s*)(?:[-*•]\s*)?(?:(?:please|can you|could you)\s+)?"
                      r"(?:using [^.!?\n]{1,100},\s*)?prove that\b"
                      r"|\b(?:please|your task is to|you (?:must|are asked to|are required to))\s+prove that\b")
-PAGE_REFUSE = re.compile(RESTRICTED_WORK+'|'+PROOF_INSTRUCTION,re.I)
+PAGE_REFUSE = re.compile(RESTRICTED_WORK
+                        +r"|\b(?:must not|should not|may not|cannot|can.t|not to) use (?:ai|artificial intelligence)\b"
+                        +r"|\b(?:do not|don.t) (?:allow|permit) (?:the use of )?(?:ai|artificial intelligence)(?:[- ](?:generated|assisted))?\b"
+                        +r"|\b(?:ai|artificial intelligence)[- ](?:generated|assisted) (?:applications?|answers?|responses?|submissions?) (?:are|is) (?:not allowed|prohibited|forbidden)\b"
+                        +'|'+PROOF_INSTRUCTION,re.I)
+
+
+def page_requires_manual_work(text):
+    for match in PAGE_REFUSE.finditer(text):
+        # This standard employer disclosure describes the employer's own AI
+        # processing. It grants no exception to applicant-facing restrictions
+        # elsewhere on the page, or to the strict question-label check.
+        employer_notice=(re.fullmatch(r'(?:do not|don.t) use (?:ai|artificial intelligence)',match.group(),re.I)
+                         and re.search(r'(?:^|[\n.!?;:])\s*(?:we|our (?:company|organization))\s*$',text[max(0,match.start()-80):match.start()],re.I)
+                         and re.match(r"\s+to infer (?:(?:your|candidates['’]?|applicants['’]?)\s+)?(?:emotions|sensitive traits)\b",text[match.end():match.end()+140],re.I))
+        if not employer_notice:return True
+    return False
 
 
 def field_key(label):
