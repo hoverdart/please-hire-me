@@ -36,6 +36,8 @@ Ashby's reviewed structured application-form identifier must name the exact post
 
 School-only Ashby education fields can save one confirmed university when its exact name has an unambiguous canonical ID from the reviewed official search or an exact official saved value. Forms requesting degrees, majors, dates or additional required entries remain held until their encodings are supported.
 
+Ashby radio and checkbox groups use the verified form's exact choice-label/value pairs when native inputs omit their values. Missing, archived or ambiguous choices remain held; different labels, extra selections and unacknowledged saves cannot authorize submission.
+
 Descriptive US work-authorization choices naming any employer require confirmed US citizenship or an unrestricted-authorization declaration, alongside US posting context. General authorization or a lack of sponsorship need cannot establish that status.
 
 An exact prefilled value in a verified official Ashby form response is already acknowledged; a visible browser value alone is insufficient. The posting's exact Application tab can provide a navigation-only entry when the page has ambiguous Apply buttons.

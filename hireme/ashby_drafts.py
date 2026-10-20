@@ -21,6 +21,28 @@ def same(left, right):
     return json.dumps(left, sort_keys=True, separators=(',',':')) == json.dumps(right, sort_keys=True, separators=(',',':'))
 
 
+def official_choices(metadata, field, selected):
+    """React choice controls save metadata values, not the inputs' default 'on'."""
+    rows=metadata.get('selectableValues');mapping={};values=set()
+    if not isinstance(rows,list) or not 0<len(rows)<=500:
+        raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choices are unverified')
+    for row in rows:
+        if not isinstance(row,dict):raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choice changed')
+        if row.get('isArchived') is not None and type(row['isArchived']) is not bool:
+            raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choice status changed')
+        if row.get('isArchived') is True:continue
+        label=row.get('label');value=row.get('value')
+        if (not isinstance(label,str) or not 0<len(label)<=1000 or not isinstance(value,str) or not 0<len(value)<=1000
+                or label in mapping or value in values):
+            raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choices are ambiguous')
+        mapping[label]=value;values.add(value)
+    options=field.get('options',[])
+    if (not selected or len(set(options))!=len(options) or any(label not in mapping for label in options)
+            or any(label not in options for label in selected)):
+        raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choice labels changed')
+    return [mapping[label] for label in options if label in selected]
+
+
 def verified_definition_identifier(value, posting_id):
     """Retain the official wire string; composite IDs must name this posting."""
     if not isinstance(value,str) or len(value)>512:return False
@@ -234,6 +256,10 @@ class AshbyDraft:
                 if len(choices)!=1:raise Blocked('ashby_draft_unsupported','Ashby location choice is unverified or ambiguous')
                 value={'text':value,'providerLocationId':next(iter(choices))}
             elif kind in {'yesno','checkbox'} and value in {'Yes','No'}:value=value=='Yes'
+            elif kind=='radio' and metadata.get('type')=='ValueSelect':
+                value=official_choices(metadata,field,[value])[0]
+            elif kind=='checkbox-group' and metadata.get('type')=='MultiValueSelect':
+                value=official_choices(metadata,field,selections(value,field['options']))
             elif kind=='select' and field.get('option_values'):
                 value=field['option_values'][field['options'].index(value)]
             elif kind=='radio':
@@ -244,7 +270,7 @@ class AshbyDraft:
             elif kind not in {'text','textarea','email','tel','url','date','number','combobox','select'}:
                 raise Blocked('ashby_draft_unsupported','Ashby field value encoding needs review')
             if value is None or isinstance(value,list) and any(item is None for item in value):
-                raise Blocked('ashby_draft_unsupported','Ashby choice encoding needs review')
+                raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choice encoding needs review')
             key=(render,path)
             if key in grants:raise Blocked('ashby_draft_unsupported','Duplicate Ashby field path')
             grants[key]={'definition':form['definition'],'value':value}

@@ -255,6 +255,115 @@ SCHOOL='University of California, Berkeley'
 SCHOOL_PATH='_systemfield_education_history'
 
 
+def choice_draft(store,job,package,kind):
+    from hireme.answers import resolve
+    store.put_facts({'degree':'BS'})
+    store.update_settings({'contextual_preferences':True})
+    d,_=draft(store,job,{**package,'facts_hash':digest(store.facts())})
+    multiple=kind=='checkbox-group'
+    field={'index':0,'indices':list(range(3 if multiple else 2)),
+        'label':'Which programming languages are you experienced with?' if multiple else 'Degree Level Currently Pursuing',
+        'type':kind,'required':True,'options':['Python','TypeScript','Rust'] if multiple else ["Bachelor's","Master's"],
+        'maxlength':-1,'value':'','ashby_path':'fixture-choice','ashby_entry_id':RENDER+'_fixture-choice',
+        'ref':{'id':'choice-0'},'refs':[{'id':'choice-'+str(i)} for i in range(3 if multiple else 2)]}
+    values=['python-id','typescript-id','rust-id'] if multiple else ['bachelors-id','masters-id']
+    official=form();official['sections'][0]['fieldEntries'].append({'id':field['ashby_entry_id'],
+        'field':{'path':'fixture-choice','title':field['label'],'type':'MultiValueSelect' if multiple else 'ValueSelect',
+                 'selectableValues':[{'label':label,'value':value,'isArchived':False} for label,value in zip(field['options'],values)]},
+        'fieldValue':None})
+    d._remember_form(official)
+    answer=resolve(store,d.job['host'],field,context=d.job)
+    proof={**d.package,'answers':[answer]}
+    return d,proof,official,values[:2] if multiple else values[0]
+
+
+@pytest.mark.parametrize('kind',['radio','checkbox-group'])
+def test_official_choices_encode_controls_without_native_value_attributes(store,job,package,kind):
+    d,proof,official,value=choice_draft(store,job,package,kind)
+    no_value=SimpleNamespace(_control=lambda *args:SimpleNamespace(get_attribute=lambda name:None))
+    d.enable(no_value,proof['answers'],proof)
+    r,data=request(value,path='fixture-choice')
+    assert d.allow(r,data,'choice') and not d.complete
+    official['sections'][0]['fieldEntries'][-1]['fieldValue']={'value':value}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'choice')
+    assert d.complete
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('kind',['radio','checkbox-group'])
+@pytest.mark.parametrize('change',['missing','malformed','label','duplicate_label','duplicate_value','archived','archive_status','nonstring_value'])
+def test_unverified_official_choice_metadata_never_grants_a_write(store,job,package,kind,change):
+    d,proof,_,value=choice_draft(store,job,package,kind)
+    metadata=d.forms[RENDER]['entries']['fixture-choice'];rows=metadata['selectableValues']
+    if change=='missing':metadata.pop('selectableValues')
+    elif change=='malformed':rows.append(None)
+    elif change=='label':rows[0]['label']='Different choice'
+    elif change=='duplicate_label':rows[1]['label']=rows[0]['label']
+    elif change=='duplicate_value':rows[1]['value']=rows[0]['value']
+    elif change=='archived':rows[0]['isArchived']=True
+    elif change=='archive_status':rows[0]['isArchived']='false'
+    elif change=='nonstring_value':rows[0]['value']=False
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):d.enable(None,proof['answers'],proof)
+    r,data=request(value,path='fixture-choice');assert not d.allow(r,data,'choice')
+
+
+@pytest.mark.parametrize('kind',['radio','checkbox-group'])
+@pytest.mark.parametrize('change',['labels','unapproved','wrong_shape'])
+def test_official_choice_grant_rejects_other_wire_values_and_shapes(store,job,package,kind,change):
+    d,proof,_,value=choice_draft(store,job,package,kind);d.enable(None,proof['answers'],proof)
+    if change=='labels':value=proof['answers'][0]['value']
+    elif change=='unapproved':value=['python-id','typescript-id','rust-id'] if kind=='checkbox-group' else 'masters-id'
+    else:value=value[0] if kind=='checkbox-group' else [value]
+    r,data=request(value,path='fixture-choice');assert not d.allow(r,data,'choice')
+
+
+@pytest.mark.parametrize('kind',['radio','checkbox-group'])
+def test_official_choice_save_requires_the_exact_acknowledged_values(store,job,package,kind):
+    d,proof,official,value=choice_draft(store,job,package,kind);d.enable(None,proof['answers'],proof)
+    r,data=request(value,path='fixture-choice');assert d.allow(r,data,'choice')
+    official['sections'][0]['fieldEntries'][-1]['fieldValue']={'value':['python-id'] if kind=='checkbox-group' else 'masters-id'}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'choice')
+    assert d.failed and not d.complete
+
+
+@pytest.mark.parametrize('kind',['radio','checkbox-group'])
+def test_native_controls_with_default_on_save_only_approved_official_choice_values(store,job,package,monkeypatch,kind):
+    import time
+    from html import escape
+    monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
+    d,proof,official,value=choice_draft(store,job,package,kind);field=proof['answers'][0]['field']
+    wire=[row['value'] for row in official['sections'][0]['fieldEntries'][-1]['field']['selectableValues']]
+    inputs=''.join('<label><input type="'+('radio' if kind=='radio' else 'checkbox')+'" name="choices" id="choice-'+str(i)+'">'+escape(label)+'</label>' for i,label in enumerate(field['options']))
+    envelope=request(value,path='fixture-choice')[1];writes=[]
+    html='<h1>Synthetic native choices</h1>'+inputs+'<script>const wire='+json.dumps(wire)+';const envelope='+json.dumps(envelope)+''';
+const inputs=[...document.querySelectorAll('input')];
+inputs.forEach((input,index)=>input.addEventListener('change',()=>{
+const value=input.type==='radio'?wire[index]:inputs.flatMap((node,i)=>node.checked?[wire[i]]:[]);
+fetch('/api/non-user-graphql',{method:'POST',body:JSON.stringify({...envelope,variables:{...envelope.variables,value}})}).catch(()=>null);
+}));</script>'''
+    with Browser(store) as b:
+        b.current_host='jobs.ashbyhq.com';b.ashby_draft=d
+        class Route:
+            def __init__(self,route):self.route=route;self.request=route.request
+            def abort(self):self.route.abort()
+            def continue_(self):
+                data=json.loads(self.request.post_data);writes.append(data)
+                official['sections'][0]['fieldEntries'][-1]['fieldValue']={'value':data['variables']['value']}
+                self.route.fulfill(status=200,content_type='application/json',body=json.dumps({'data':{'setFormValue':official}}))
+        def serve(route):
+            if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
+            else:b._route(Route(route))
+        b.page.route('**/*',serve);b.page.goto(d.job['url'])
+        assert b.page.locator('input').evaluate_all('(nodes)=>nodes.every(n=>n.getAttribute("value")===null&&n.value==="on")')
+        d.enable(b,proof['answers'],proof);b._fill(proof['answers'][0])
+        deadline=time.monotonic()+10
+        while not (d.complete or d.failed) and time.monotonic()<deadline:b.page.wait_for_timeout(50)
+        assert d.complete and not d.failed
+        assert len(writes)==1 and writes[0]['variables']['value']==value
+        assert b.page.locator('input:checked').count()==(2 if kind=='checkbox-group' else 1)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 def school_draft(store,job,package,*,observe=True,restored=None):
     from hireme.answers import resolve
     store.put_facts({'school':SCHOOL})
