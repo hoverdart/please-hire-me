@@ -92,10 +92,14 @@ def queue_report(store, run_id):
         body += '\n\nStopped because: ' + detail['reason']
     body += FOOTER
     enabled = store.settings()['gmail_reports']
+    # Idle paused schedules are useful local history, not new email updates.
+    # A pause after real attempts must still report those outcomes.
+    idle_pause=run['status']=='paused' and detail.get('attempts')==0 and not terminal and run['submitted']==0
+    state='suppressed' if idle_pause else 'pending' if enabled else 'disabled'
     with store.transaction():
         store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
                          (run_id, email, f"Application batch: {run['submitted']} confirmed — {run['status']}",
-                          body, f'<{uuid.uuid4().hex}@please-hire-me.local>', 'pending' if enabled else 'disabled', now()))
+                          body, f'<{uuid.uuid4().hex}@please-hire-me.local>', state, now()))
     return run_id
 
 

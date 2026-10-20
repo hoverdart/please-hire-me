@@ -36,11 +36,22 @@ def test_ambiguous_mail_send_is_not_automatically_repeated(store):
 
 
 def test_paused_cycle_still_records_batch_summary(store):
-    store.update_settings({'live_enabled':False})
+    store.update_settings({'live_enabled':False,'gmail_reports':True})
     import pytest
     with pytest.raises(Blocked,match='paused'):cycle(store,Path('.'),discover=False)
     row=store.db.execute('SELECT * FROM report_outbox').fetchone()
     assert 'paused' in row['body'] and 'Confirmed submissions: 0' in row['body']
+    assert row['state']=='suppressed'
+    def no_client(s):raise AssertionError('Idle paused schedules must not connect to Gmail')
+    assert flush_reports(store,no_client)['sent']==0
+
+
+def test_pause_after_an_attempt_still_queues_the_batch_email(store):
+    store.update_settings({'gmail_reports':True})
+    store.db.execute("INSERT INTO runs VALUES('paused-after-attempt','2026-01-01T00:00:00Z','2026-01-01T00:00:05Z','paused',0,?)",
+                     (json.dumps({'attempts':1,'reason':'paused'}),))
+    queue_report(store,'paused-after-attempt')
+    assert store.db.execute('SELECT state FROM report_outbox').fetchone()[0]=='pending'
 
 
 def test_batch_email_links_include_only_browser_attempts(store,job,monkeypatch):
