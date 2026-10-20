@@ -30,6 +30,12 @@ Fully transparent verification frames, including transparent parent containers, 
 
 Ashby live runs require acknowledged, source-bound field saves before final submission. Preparation mode suppresses these text-field saves. Unsupported form encodings remain held. Backups stage on private persistent storage and stream archive entries so large Pi ledgers do not require an equally large RAM disk or memory allocation.
 
+Ashby's reviewed structured application-form identifier must name the exact posting and external board. The original identifier string must match the native field-save request and acknowledgement; unknown formats, changed definitions and other postings remain held.
+
+School-only Ashby education fields can save one confirmed university when its exact name has an unambiguous canonical ID from the reviewed official search or an exact official saved value. Forms requesting degrees, majors, dates or additional required entries remain held until their encodings are supported.
+
+Descriptive US work-authorization choices naming any employer require confirmed US citizenship or an unrestricted-authorization declaration, alongside US posting context. General authorization or a lack of sponsorship need cannot establish that status.
+
 An exact prefilled value in a verified official Ashby form response is already acknowledged; a visible browser value alone is insufficient. The posting's exact Application tab can provide a navigation-only entry when the page has ambiguous Apply buttons.
 
 Ashby location saves bind the approved location label to the provider ID from the reviewed official autocomplete response (or an exact official saved value). A different ID, label or unacknowledged save cannot authorize final submission. Tenant renames require a same-host page and an official posting response for the same requisition UUID; the original job, company and application history remain intact. An existing attempt under another tenant with that UUID is held against duplicate submission.

@@ -748,7 +748,7 @@ def _work_status_answer(store, field, key, context):
         unrestricted=facts.get('unrestricted_authorization')
         if value=='Yes' and (citizen or unrestricted and unrestricted['value']=='Yes'):
             if citizen and unrestricted and unrestricted['value']=='No':raise Blocked('mapping_review','Conflicting unrestricted work-status facts')
-            any_employer=[o for o in options if re.fullmatch(r'Yes, I am authorized to work in this country for any employer\.?',o.strip(),re.I)]
+            any_employer=[o for o in options if re.fullmatch(r'(?:Yes, I am authorized to work in this country|I am authorized to work in the United States) for any employer\.?',o.strip(),re.I)]
             if any_employer:
                 matches+=any_employer
                 provenance.update({'citizenship_revision':citizenship['revision']} if citizen else {'unrestricted_authorization_revision':unrestricted['revision']})

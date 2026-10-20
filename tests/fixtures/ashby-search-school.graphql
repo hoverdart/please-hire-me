@@ -1,0 +1,18 @@
+query ApiSearchSchoolByCanonicalName($name: String!, $organizationHostedJobsPageName: String!) {
+  result: searchCanonicalSchools(
+    name: $name
+    organizationHostedJobsPageName: $organizationHostedJobsPageName
+  ) {
+    id
+    ...AutocompleteCanonicalSchoolResultParts
+    __typename
+  }
+}
+
+fragment AutocompleteCanonicalSchoolResultParts on CanonicalSchool {
+  id
+  name
+  domain
+  country
+  __typename
+}

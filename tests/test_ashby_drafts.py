@@ -31,7 +31,7 @@ def request(value='test@candidate.invalid',**changes):
     return SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql',post_data=json.dumps(data)),data
 
 
-def draft(store,job,package):
+def draft(store,job,package,definition=DEFINITION):
     ashby={**job,'url':f'https://jobs.ashbyhq.com/acme/{REQ}','host':'jobs.ashbyhq.com'}
     ashby['id']=digest(ashby['url']);store.upsert_job(ashby)
     proof={**package,'job_id':ashby['id'],'url':ashby['url'],'steps':[]}
@@ -40,9 +40,57 @@ def draft(store,job,package):
     read=SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql',
         post_data=json.dumps({'operationName':'ApiJobPosting','query':'query ApiJobPosting { jobPosting { id } }',
                             'variables':{'organizationHostedJobsPageName':'acme','jobPostingId':REQ}}))
-    response=SimpleNamespace(status=200,json=lambda:{'data':{'jobPosting':{'id':REQ,'applicationForm':form()}}})
+    official=form();official['sourceFormDefinitionId']=definition
+    response=SimpleNamespace(status=200,json=lambda:{'data':{'jobPosting':{'id':REQ,'applicationForm':official}}})
     d.observe_posting(read,response);d.enable(None,proof['answers'],proof)
     return d,ashby
+
+
+def composite_definition(**changes):
+    return json.dumps({'kind':'CompositeFormDefinitionId-JobPostingApplicationFormV2',
+        'formDefinitionId':DEFINITION,'jobPostingId':REQ,'jobBoardSuperType':'External',**changes},separators=(',',':'))
+
+
+def test_exact_composite_definition_from_official_posting_can_save_approved_field(store,job,package):
+    definition=composite_definition();d,_=draft(store,job,package,definition)
+    r,data=request(formDefinitionIdentifier=definition)
+    assert d.allow(r,data,'request') and not d.complete
+    acknowledgement=form({'_systemfield_email':'test@candidate.invalid'})
+    acknowledgement['sourceFormDefinitionId']=definition
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':acknowledgement}}),'request')
+    assert d.complete
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('definition',[
+    composite_definition(jobPostingId='44444444-4444-4444-8444-444444444444'),
+    composite_definition(kind='UnreviewedCompositeDefinition'),
+    composite_definition(jobBoardSuperType='Internal'),
+    composite_definition(formDefinitionId='unverified'),
+    composite_definition(extra='unreviewed'),
+    json.dumps({'formDefinitionId':DEFINITION,'jobPostingId':REQ}),
+    composite_definition()[:-1]+',"jobPostingId":"'+REQ+'"}',
+    json.loads(composite_definition()),
+    'not a definition',
+    'a'*513,
+])
+def test_unverified_composite_definition_never_creates_field_save_grants(store,job,package,definition):
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):draft(store,job,package,definition)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind IN ('ashby_draft_write','submit_intent')").fetchone()
+
+
+@pytest.mark.parametrize('change',['request','acknowledgement'])
+def test_changed_composite_definition_cannot_borrow_a_grant_or_acknowledgement(store,job,package,change):
+    definition=composite_definition();d,_=draft(store,job,package,definition)
+    changed=composite_definition(formDefinitionId='44444444-4444-4444-8444-444444444444')
+    r,data=request(formDefinitionIdentifier=changed if change=='request' else definition)
+    if change=='request':
+        assert not d.allow(r,data,'request') and not d.pending
+    else:
+        assert d.allow(r,data,'request')
+        acknowledgement=form({'_systemfield_email':'test@candidate.invalid'});acknowledgement['sourceFormDefinitionId']=changed
+        d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':acknowledgement}}),'request')
+        assert d.failed and not d.complete
 
 
 def test_exact_field_save_requires_verified_form_sources_and_acknowledgement(store,job,package):
@@ -201,6 +249,146 @@ def test_field_grant_does_not_send_extra_envelope_data_or_url_actions(store,job,
 
 LOCATION_QUERY=(Path(__file__).parent/'fixtures/ashby-autocomplete-location.graphql').read_text()
 LOCATION='Berkeley, California, United States'
+
+SCHOOL_QUERY=(Path(__file__).parent/'fixtures/ashby-search-school.graphql').read_text()
+SCHOOL='University of California, Berkeley'
+SCHOOL_PATH='_systemfield_education_history'
+
+
+def school_draft(store,job,package,*,observe=True,restored=None):
+    from hireme.answers import resolve
+    store.put_facts({'school':SCHOOL})
+    package={**package,'facts_hash':digest(store.facts())}
+    d,_=draft(store,job,package)
+    field={'index':0,'indices':[0],'label':'College/University','type':'combobox','required':True,
+           'options':[SCHOOL],'maxlength':-1,'value':'','ashby_path':SCHOOL_PATH,
+           'ashby_entry_id':RENDER+'_'+SCHOOL_PATH}
+    proof={**d.package,'answers':[resolve(store,d.job['host'],field)]}
+    official=form()
+    official['sections'][0]['fieldEntries'].append({'id':field['ashby_entry_id'],
+        'field':{'path':SCHOOL_PATH,'title':field['label'],'type':'EducationHistory',
+                 'schoolName':'required','degree':'excluded','major':'excluded',
+                 'startDate':'excluded','endDate':'excluded','isRepeatable':True,'minRepeat':1,'maxRepeat':3},
+        'fieldValue':{'value':restored} if restored is not None else None})
+    d._remember_form(official)
+    read=SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiSearchSchoolByCanonicalName',
+        post_data=json.dumps({'operationName':'ApiSearchSchoolByCanonicalName','query':SCHOOL_QUERY,
+                             'variables':{'name':'Berkeley','organizationHostedJobsPageName':'acme'}}))
+    result={'data':{'result':[{'id':'fixture-school','name':SCHOOL,'__typename':'CanonicalSchool'}]}}
+    if observe:d.observe_schools(read,SimpleNamespace(status=200,json=lambda:result))
+    return d,proof,read,result,official
+
+
+@pytest.mark.parametrize('restored',[False,True])
+def test_school_only_history_requires_exact_canonical_choice_and_acknowledgement(store,job,package,restored):
+    value=[{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL}]
+    d,proof,_,_,official=school_draft(store,job,package,observe=not restored,restored=value if restored else None)
+    d.enable(None,proof['answers'],proof)
+    assert d.complete is restored
+    if not restored:
+        r,data=request(value,path=SCHOOL_PATH)
+        assert d.allow(r,data,'school') and not d.complete
+        official['sections'][0]['fieldEntries'][-1]['fieldValue']={'value':value}
+        d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'school')
+        assert d.complete
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('mode',['missing','wrong_host','wrong_method','wrong_tenant','wrong_query','wrong_operation',
+    'errors','ambiguous','malformed','partial_malformed','extra_variable','wrong_url_operation'])
+def test_unverified_school_lookup_never_grants_a_history_write(store,job,package,mode):
+    d,proof,read,result,_=school_draft(store,job,package,observe=False)
+    data=json.loads(read.post_data)
+    if mode=='wrong_host':read.url=read.url.replace('jobs.ashbyhq.com','attacker.invalid')
+    if mode=='wrong_method':read.method='PUT'
+    if mode=='wrong_tenant':data['variables']['organizationHostedJobsPageName']='other'
+    if mode=='wrong_query':data['query']+=' mutation Other { submitApplication { id } }'
+    if mode=='wrong_operation':data['operationName']='Other'
+    if mode=='extra_variable':data['variables']['extra']='unreviewed'
+    if mode=='wrong_url_operation':read.url=read.url.replace('ApiSearchSchoolByCanonicalName','Other')
+    if mode=='errors':result['errors']=[{'message':'Synthetic error'}]
+    if mode=='ambiguous':result['data']['result'].append({'id':'different-school','name':SCHOOL})
+    if mode=='malformed':result['data']['result']={}
+    if mode=='partial_malformed':result['data']['result'].append({'id':None,'name':SCHOOL})
+    read.post_data=json.dumps(data)
+    if mode!='missing':d.observe_schools(read,SimpleNamespace(status=200,json=lambda:result))
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):d.enable(None,proof['answers'],proof)
+    r,data=request([{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL}],path=SCHOOL_PATH)
+    assert not d.allow(r,data,'school')
+
+
+@pytest.mark.parametrize('value',[
+    SCHOOL,[{'canonicalSchoolId':'unverified','schoolName':SCHOOL}],
+    [{'canonicalSchoolId':'fixture-school','schoolName':'Other school'}],
+    [{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL,'degree':'Unapproved'}],
+    [{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL}]*2,
+])
+def test_school_grant_cannot_write_additional_or_changed_history(store,job,package,value):
+    d,proof,_,_,_=school_draft(store,job,package);d.enable(None,proof['answers'],proof)
+    r,data=request(value,path=SCHOOL_PATH)
+    assert not d.allow(r,data,'school')
+
+
+def test_school_lookup_retains_ambiguity_across_responses_and_repeated_paths_stay_held(store,job,package):
+    d,proof,read,result,_=school_draft(store,job,package)
+    result['data']['result'][0]['id']='different-school'
+    d.observe_schools(read,SimpleNamespace(status=200,json=lambda:result))
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):d.enable(None,proof['answers'],proof)
+    d.schools={SCHOOL:{'fixture-school'}}
+    proof={**proof,'answers':proof['answers']*2}
+    with pytest.raises(Blocked,match='Duplicate Ashby field path'):d.enable(None,proof['answers'],proof)
+
+
+@pytest.mark.parametrize('change',['degree','major','startDate','endDate','minRepeat','provenance','dom_prefill'])
+def test_complex_history_or_unsourced_school_stays_held(store,job,package,change):
+    d,proof,_,_,_=school_draft(store,job,package,observe=change!='dom_prefill')
+    metadata=d.forms[RENDER]['entries'][SCHOOL_PATH]
+    if change=='provenance':proof['answers'][0]['provenance']={'fact_key':'location','revision':1}
+    elif change=='dom_prefill':proof['answers'][0]['field']['value']=SCHOOL
+    elif change=='minRepeat':metadata[change]=2
+    else:metadata[change]='required'
+    expected='unsupported_or_stale_answer' if change=='provenance' else 'ashby_draft_unsupported'
+    with pytest.raises(Blocked,match=expected):d.enable(None,proof['answers'],proof)
+
+
+@pytest.mark.parametrize('mode',['saved','unverified_id','wrong_ack'])
+def test_browser_routes_canonical_school_lookup_and_exact_history_save(store,job,package,monkeypatch,mode):
+    monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
+    d,proof,read,result,official=school_draft(store,job,package,observe=False)
+    d.package=None;d.grants={}
+    value=[{'canonicalSchoolId':'unverified' if mode=='unverified_id' else 'fixture-school','schoolName':SCHOOL}]
+    data=request(value,path=SCHOOL_PATH)[1];writes=[]
+    html='<h1>Synthetic school widget</h1><script>window.lookup='+json.dumps(json.loads(read.post_data))+';window.save='+json.dumps(data)+''';
+window.post = data => fetch('/api/non-user-graphql', {method:'POST',body:JSON.stringify(data)}).then(r=>r.json()).catch(()=>null);
+</script>'''
+    with Browser(store) as b:
+        b.current_host='jobs.ashbyhq.com';b.ashby_draft=d
+        class Route:
+            def __init__(self,route):self.route=route;self.request=route.request
+            def abort(self):self.route.abort()
+            def continue_(self):
+                data=json.loads(self.request.post_data)
+                if data['operationName']=='ApiSearchSchoolByCanonicalName':body=result
+                else:
+                    assert data['operationName']=='ApiSetFormValue'
+                    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+                    writes.append(data)
+                    ack=[{'canonicalSchoolId':'different','schoolName':SCHOOL}] if mode=='wrong_ack' else value
+                    official['sections'][0]['fieldEntries'][-1]['fieldValue']={'value':ack}
+                    body={'data':{'setFormValue':official}}
+                self.route.fulfill(status=200,content_type='application/json',body=json.dumps(body))
+        def serve(route):
+            if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
+            else:b._route(Route(route))
+        b.page.route('**/*',serve)
+        b.page.goto(d.job['url'])
+        b.page.evaluate('() => post(lookup)');b.page.wait_for_timeout(100)
+        assert d.schools=={SCHOOL:{'fixture-school'}}
+        d.enable(b,proof['answers'],proof)
+        b.page.evaluate('() => post(save)');b.page.wait_for_timeout(100)
+        assert len(writes)==(mode!='unverified_id')
+        assert d.complete is (mode=='saved')
+        assert d.failed is (mode=='wrong_ack')
 
 
 def location_draft(store,job,package,*,observe=True,restored=None):

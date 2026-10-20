@@ -129,6 +129,40 @@ def test_unrestricted_declaration_also_establishes_any_employer(store, job):
     assert 'unrestricted_authorization_revision' in a['provenance']
 
 
+US_AUTH_OPTIONS=[
+    'I am authorized to work in the United States for any employer',
+    'I am authorized to work in the United States for my present employer only',
+    'I require sponsorship to work in the United States',
+    'I am not authorized to work in the United States',
+    'My status to work in the United States is unknown',
+]
+
+
+@pytest.mark.parametrize('premise',['citizenship','unrestricted_authorization'])
+def test_explicit_us_any_employer_choice_uses_existing_confirmed_premise(store,job,package,premise):
+    store.put_facts({premise:'United States' if premise=='citizenship' else 'Yes'})
+    f=field('Are you legally authorized to work in the United States?',US_AUTH_OPTIONS)
+    answer=resolve(store,job['host'],f,context=job)
+    assert answer['value']==US_AUTH_OPTIONS[0]
+    assert answer['provenance'][premise+'_revision']==store.facts()[premise]['revision']
+    package.update(answers=[answer],steps=[],facts_hash=digest(store.facts()))
+    validate_package(store,job,package)
+    store.put_facts({premise:'Canada' if premise=='citizenship' else 'No'})
+    with pytest.raises(Blocked):validate_package(store,job,{**package,'facts_hash':digest(store.facts())})
+
+
+@pytest.mark.parametrize('mode',['no_premise','foreign','present_employer_only','ambiguous','conflicting'])
+def test_us_any_employer_choice_never_infers_missing_or_conflicting_status(store,job,mode):
+    options=list(US_AUTH_OPTIONS);context=job
+    if mode!='no_premise':store.put_facts({'citizenship':'United States'})
+    if mode=='foreign':context={**job,'location':'Toronto, Canada'}
+    if mode=='present_employer_only':options=options[1:]
+    if mode=='ambiguous':options.append(options[0]+'.')
+    if mode=='conflicting':store.put_facts({'unrestricted_authorization':'No'})
+    with pytest.raises(Blocked):
+        resolve(store,job['host'],field('Are you legally authorized to work in the United States?',options),context=context)
+
+
 def test_nyc_and_residence_use_geography_without_model(store, job, package):
     store.put_facts({'citizenship': 'United States', 'location': 'Berkeley, CA'})
     auth = resolve(store, job['host'], field(AUTH, AUTH_OPTIONS), context={**job, 'location': 'NYC'})

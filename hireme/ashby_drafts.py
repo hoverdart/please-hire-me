@@ -13,10 +13,33 @@ from .util import Blocked, digest
 SET_VALUE_QUERY = '8dd80bd14717a189f21c3fbd38f8c6a5fff93c3e559b22d790b55195cfc41171'
 VARIABLES = {'organizationHostedJobsPageName','formRenderIdentifier','path','value','formDefinitionIdentifier'}
 LOCATION_QUERY = 'a9629d2e62c696a6a2770d1807830ab05137bee768b05f11e07ddd205afdfa9b'
+SCHOOL_QUERY = 'aa259f3f4c3aab159bf8c2cd8a358317b549ec948b1d5aa87d31a98b634b7ca7'
+UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
 
 
 def same(left, right):
     return json.dumps(left, sort_keys=True, separators=(',',':')) == json.dumps(right, sort_keys=True, separators=(',',':'))
+
+
+def verified_definition_identifier(value, posting_id):
+    """Retain the official wire string; composite IDs must name this posting."""
+    if not isinstance(value,str) or len(value)>512:return False
+    if re.fullmatch(UUID,value,re.I):return True
+    def unique(pairs):
+        output={}
+        for key,item in pairs:
+            if key in output:raise ValueError('Duplicate identifier field')
+            output[key]=item
+        return output
+    try:identifier=json.loads(value,object_pairs_hook=unique)
+    except (ValueError,TypeError,RecursionError):return False
+    return (isinstance(identifier,dict)
+            and set(identifier)=={'kind','formDefinitionId','jobPostingId','jobBoardSuperType'}
+            and identifier['kind']=='CompositeFormDefinitionId-JobPostingApplicationFormV2'
+            and isinstance(identifier['formDefinitionId'],str)
+            and bool(re.fullmatch(UUID,identifier['formDefinitionId'],re.I))
+            and identifier['jobPostingId']==posting_id
+            and identifier['jobBoardSuperType']=='External')
 
 
 class AshbyDraft:
@@ -27,7 +50,7 @@ class AshbyDraft:
         self.identity=(match[1].casefold(),match[2].lower()) if match and parsed.hostname=='jobs.ashbyhq.com' else None
         self.job=job;self.forms={};self.grants={};self.pending={};self.saved=set();self.failed=False
         self.package=None;self.remaining=0
-        self.postings={};self.locations={};self.navigation_url=job['url']
+        self.postings={};self.locations={};self.schools={};self.navigation_url=job['url']
 
     def bind_page(self, url):
         """Follow a tenant rename only after the same official posting was read.
@@ -46,13 +69,14 @@ class AshbyDraft:
             if parsed.query or parsed.fragment or tenant not in self.postings or self.package:
                 raise Blocked('unexpected_redirect','The renamed Ashby posting is unverified')
             self.forms=self.postings[tenant];self.identity=(tenant,self.identity[1])
-            self.locations={}
+            self.locations={};self.schools={}
         self.navigation_url='https://jobs.ashbyhq.com/'+match[1]+'/'+match[2]
 
     def _remember_form(self, form):
         if not isinstance(form,dict):return
         render=form.get('id');definition=form.get('sourceFormDefinitionId')
-        if not all(isinstance(v,str) and re.fullmatch(r'[0-9a-f-]{36}',v,re.I) for v in (render,definition)):return
+        if not isinstance(render,str) or not re.fullmatch(r'[0-9a-f-]{36}',render,re.I):return
+        if not verified_definition_identifier(definition,self.identity[1] if self.identity else None):return
         entries={};values={}
         for section in form.get('sections',[]):
             if section.get('isHidden'):continue
@@ -125,6 +149,39 @@ class AshbyDraft:
                     if len(choices)<500 or name in choices:choices.setdefault(name,set()).add(identifier)
         except (ValueError,TypeError,AttributeError,KeyError):return
 
+    def observe_schools(self, request, response):
+        """Bind canonical school IDs to exact names from the official lookup."""
+        if not self.identity or response.status!=200:return
+        parsed=urlsplit(request.url)
+        if (request.method!='POST' or parsed.scheme!='https' or parsed.hostname!='jobs.ashbyhq.com'
+                or parsed.path!='/api/non-user-graphql' or parsed.port not in (None,443)
+                or parsed.username or parsed.password
+                or parse_qsl(parsed.query,keep_blank_values=True) not in ([],[('op','ApiSearchSchoolByCanonicalName')])):return
+        try:
+            data=json.loads(request.post_data or '{}')
+            if (set(data)!={'operationName','query','variables'} or data['operationName']!='ApiSearchSchoolByCanonicalName'
+                    or not isinstance(data['query'],str)
+                    or hashlib.sha256(re.sub(r'\s+','',data['query']).encode()).hexdigest()!=SCHOOL_QUERY):return
+            variables=data['variables']
+            if (not isinstance(variables,dict) or set(variables)!={'name','organizationHostedJobsPageName'}
+                    or not isinstance(variables['name'],str) or len(variables['name'])>500
+                    or not isinstance(variables['organizationHostedJobsPageName'],str)
+                    or variables['organizationHostedJobsPageName'].casefold()!=self.identity[0]):return
+            result=response.json()
+            if result.get('errors'):return
+            schools=result.get('data',{}).get('result')
+            if not isinstance(schools,list) or len(schools)>100:return
+            observed={}
+            for school in schools:
+                if not isinstance(school,dict):return
+                name=school.get('name');identifier=school.get('id')
+                if not (isinstance(name,str) and 0<len(name)<=500
+                        and isinstance(identifier,str) and 0<len(identifier)<=500):return
+                observed.setdefault(name,set()).add(identifier)
+            if len(self.schools.keys()|observed.keys())>500:return
+            for name,identifiers in observed.items():self.schools.setdefault(name,set()).update(identifiers)
+        except (ValueError,TypeError,AttributeError,KeyError):return
+
     def enable(self, browser, answers, package):
         from .answers import selections,validate_package
         validate_package(self.store,self.job,package)
@@ -145,7 +202,26 @@ class AshbyDraft:
             if normalize(metadata.get('title',''))!=normalize(field['label']):
                 raise Blocked('ashby_draft_unsupported','Ashby question identity changed')
             value=answer['value'];kind=field['type']
-            if kind=='combobox' and metadata.get('type')=='Location':
+            if kind=='combobox' and metadata.get('type')=='EducationHistory':
+                # This renderer saves one structured entry even when it only
+                # asks for a university. Additional history fields need their
+                # own approved values and a reviewed encoding.
+                if (answer.get('provenance',{}).get('fact_key')!='school'
+                        or normalize(metadata.get('title','')) not in {'college/university','college / university','school','university'}
+                        or metadata.get('schoolName')!='required'
+                        or any(metadata.get(key)!='excluded' for key in ('degree','major','startDate','endDate'))
+                        or type(metadata.get('minRepeat')) is not int or not 0<=metadata['minRepeat']<=1
+                        or metadata.get('maxRepeat') is not None and (type(metadata['maxRepeat']) is not int or metadata['maxRepeat']<1)):
+                    raise Blocked('ashby_draft_unsupported','Ashby education history requires additional verified fields')
+                choices=set(self.schools.get(value,set()))
+                restored=form['values'].get(path)
+                if (isinstance(restored,list) and len(restored)==1 and isinstance(restored[0],dict)
+                        and set(restored[0])=={'canonicalSchoolId','schoolName'} and restored[0]['schoolName']==value
+                        and isinstance(restored[0]['canonicalSchoolId'],str) and 0<len(restored[0]['canonicalSchoolId'])<=500):
+                    choices.add(restored[0]['canonicalSchoolId'])
+                if len(choices)!=1:raise Blocked('ashby_draft_unsupported','Ashby school choice is unverified or ambiguous')
+                value=[{'canonicalSchoolId':next(iter(choices)),'schoolName':value}]
+            elif kind=='combobox' and metadata.get('type')=='Location':
                 if answer.get('provenance',{}).get('fact_key')!='location':
                     raise Blocked('ashby_draft_unsupported','Ashby location has no confirmed location source')
                 choices=self.locations.get(json.dumps(metadata.get('locationTypes'),sort_keys=True),{}).get(value,set())

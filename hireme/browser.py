@@ -389,6 +389,7 @@ class Browser:
         if self.ashby_draft:
             with contextlib.suppress(Exception):self.ashby_draft.observe_posting(request,response)
             with contextlib.suppress(Exception):self.ashby_draft.observe_locations(request,response)
+            with contextlib.suppress(Exception):self.ashby_draft.observe_schools(request,response)
             with contextlib.suppress(Exception):self.ashby_draft.observe_save(response,self._request_key(request))
         application_id=self.submission_requests.pop(self._request_key(request),None)
         if application_id:
