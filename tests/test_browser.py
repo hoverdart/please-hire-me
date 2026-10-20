@@ -825,7 +825,7 @@ def test_ashby_autosave_is_suppressed_without_blocking_local_form(store,monkeypa
 
 def test_ashby_hydration_autosave_does_not_prevent_preparing_form(store,monkeypatch):
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
-    url='https://jobs.ashbyhq.com/acme/synthetic-req/application'
+    url='https://jobs.ashbyhq.com/acme/11111111-1111-4111-8111-111111111111/application'
     job={'id':__import__('hireme.util',fromlist=['digest']).digest(url),'url':url,
          'host':'jobs.ashbyhq.com','company':'Acme','title':'Software Engineer Intern Summer 2027',
          'location':'San Francisco, United States','description':'Build Python software.','source':'ash:synthetic'}
