@@ -588,7 +588,12 @@ class Store:
             JOIN jobs j ON j.id=d.job_id WHERE d.decision='manually_applied' AND d.job_id!=?""",
             (job['id'],job['id']))
         for previous in history:
-            if application_identity(previous['url'])==identity:
+            prior=application_identity(previous['url'])
+            # A board rename can retain the Ashby posting UUID. Hold a matching
+            # UUID across tenants conservatively; this comparison never grants
+            # navigation, merges jobs or rewrites historical company identity.
+            ashby_uuid_match=identity[0]==prior[0]=='ashby' and identity[2]==prior[2]
+            if prior==identity or ashby_uuid_match:
                 raise Blocked('duplicate_or_uncertain','This requisition already has a recorded attempt under another link')
         ck=self.company(job["company"],s)
         if ck in {self.company(x,s) for x in s["skip_companies"]+s["interview_companies"]}:

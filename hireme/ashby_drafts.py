@@ -12,6 +12,7 @@ from .util import Blocked, digest
 # A vendor query change needs review instead of granting another mutation.
 SET_VALUE_QUERY = '8dd80bd14717a189f21c3fbd38f8c6a5fff93c3e559b22d790b55195cfc41171'
 VARIABLES = {'organizationHostedJobsPageName','formRenderIdentifier','path','value','formDefinitionIdentifier'}
+LOCATION_QUERY = 'a9629d2e62c696a6a2770d1807830ab05137bee768b05f11e07ddd205afdfa9b'
 
 
 def same(left, right):
@@ -26,6 +27,27 @@ class AshbyDraft:
         self.identity=(match[1].casefold(),match[2].lower()) if match and parsed.hostname=='jobs.ashbyhq.com' else None
         self.job=job;self.forms={};self.grants={};self.pending={};self.saved=set();self.failed=False
         self.package=None;self.remaining=0
+        self.postings={};self.locations={};self.navigation_url=job['url']
+
+    def bind_page(self, url):
+        """Follow a tenant rename only after the same official posting was read.
+
+        This changes the session's form destination, never the durable job ID,
+        company budget or stored posting URL.
+        """
+        parsed=urlsplit(url)
+        match=re.fullmatch(r'/([A-Za-z0-9_-]+)/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
+        if (not self.identity or not match or parsed.scheme!='https' or parsed.hostname!='jobs.ashbyhq.com'
+                or parsed.port not in (None,443) or parsed.username or parsed.password
+                or match[2].lower()!=self.identity[1]):
+            raise Blocked('unexpected_redirect','The Ashby posting destination changed')
+        tenant=match[1].casefold()
+        if tenant!=self.identity[0]:
+            if parsed.query or parsed.fragment or tenant not in self.postings or self.package:
+                raise Blocked('unexpected_redirect','The renamed Ashby posting is unverified')
+            self.forms=self.postings[tenant];self.identity=(tenant,self.identity[1])
+            self.locations={}
+        self.navigation_url='https://jobs.ashbyhq.com/'+match[1]+'/'+match[2]
 
     def _remember_form(self, form):
         if not isinstance(form,dict):return
@@ -47,19 +69,61 @@ class AshbyDraft:
     def observe_posting(self, request, response):
         if not self.identity or response.status!=200:return
         parsed=urlsplit(request.url)
-        if request.method!='POST' or parsed.hostname!='jobs.ashbyhq.com' or parsed.path!='/api/non-user-graphql':return
+        if (request.method!='POST' or parsed.scheme!='https' or parsed.hostname!='jobs.ashbyhq.com'
+                or parsed.path!='/api/non-user-graphql' or parsed.port not in (None,443)
+                or parsed.username or parsed.password):return
         try:
             data=json.loads(request.post_data or '{}');variables=data.get('variables',{})
             if (data.get('operationName')!='ApiJobPosting' or not isinstance(data.get('query'),str)
                     or not re.match(r'^\s*query\s+ApiJobPosting\b',data['query'])
-                    or str(variables.get('organizationHostedJobsPageName','')).casefold()!=self.identity[0]
                     or str(variables.get('jobPostingId','')).lower()!=self.identity[1]):return
+            tenant=variables.get('organizationHostedJobsPageName')
+            if not isinstance(tenant,str) or not re.fullmatch(r'[A-Za-z0-9_-]+',tenant):return
             result=response.json()
             posting=result.get('data',{}).get('jobPosting',{})
             if result.get('errors') or str(posting.get('id','')).lower()!=self.identity[1]:return
-            for form in [posting.get('applicationForm'),*posting.get('surveyForms',[])]:
-                self._remember_form(form)
+            if tenant.casefold()==self.identity[0]:
+                for form in [posting.get('applicationForm'),*posting.get('surveyForms',[])]:self._remember_form(form)
+                self.postings[tenant.casefold()]=self.forms
+            else:
+                # A response alone cannot redirect the browser or grant a save.
+                current=self.forms;self.forms={}
+                try:
+                    for form in [posting.get('applicationForm'),*posting.get('surveyForms',[])]:self._remember_form(form)
+                    if self.forms:self.postings[tenant.casefold()]=self.forms
+                finally:self.forms=current
         except (ValueError,TypeError,AttributeError):return
+
+    def observe_locations(self, request, response):
+        """Remember exact choices from the reviewed, read-only vendor lookup."""
+        if not self.identity or response.status!=200:return
+        parsed=urlsplit(request.url)
+        if (request.method!='POST' or parsed.scheme!='https' or parsed.hostname!='jobs.ashbyhq.com'
+                or parsed.path!='/api/non-user-graphql' or parsed.port not in (None,443)
+                or parsed.username or parsed.password
+                or parse_qsl(parsed.query,keep_blank_values=True) not in ([],[('op','ApiAutocompleteGeoLocation')])):return
+        try:
+            data=json.loads(request.post_data or '{}')
+            if (set(data)!={'operationName','query','variables'} or data['operationName']!='ApiAutocompleteGeoLocation'
+                    or not isinstance(data['query'],str)
+                    or hashlib.sha256(re.sub(r'\s+','',data['query']).encode()).hexdigest()!=LOCATION_QUERY):return
+            variables=data['variables']
+            if (not isinstance(variables,dict) or set(variables)!={'text','locationTypes'}
+                    or not isinstance(variables['text'],str) or len(variables['text'])>500):return
+            result=response.json()
+            if result.get('errors'):return
+            suggestions=result.get('data',{}).get('result',{}).get('suggestions')
+            if not isinstance(suggestions,list) or len(suggestions)>100:return
+            # Keep each lookup's type filter: a city answer cannot borrow a
+            # provider ID returned exclusively by a country-only widget.
+            types=json.dumps(variables['locationTypes'],sort_keys=True)
+            choices=self.locations.setdefault(types,{})
+            for suggestion in suggestions:
+                name=suggestion.get('name');path=suggestion.get('geoLocationPath')
+                identifier=path[-1].get('providerLocationId') if isinstance(path,list) and path and isinstance(path[-1],dict) else None
+                if isinstance(name,str) and 0<len(name)<=500 and isinstance(identifier,str) and 0<len(identifier)<=500:
+                    if len(choices)<500 or name in choices:choices.setdefault(name,set()).add(identifier)
+        except (ValueError,TypeError,AttributeError,KeyError):return
 
     def enable(self, browser, answers, package):
         from .answers import selections,validate_package
@@ -81,7 +145,19 @@ class AshbyDraft:
             if normalize(metadata.get('title',''))!=normalize(field['label']):
                 raise Blocked('ashby_draft_unsupported','Ashby question identity changed')
             value=answer['value'];kind=field['type']
-            if kind in {'yesno','checkbox'} and value in {'Yes','No'}:value=value=='Yes'
+            if kind=='combobox' and metadata.get('type')=='Location':
+                if answer.get('provenance',{}).get('fact_key')!='location':
+                    raise Blocked('ashby_draft_unsupported','Ashby location has no confirmed location source')
+                choices=self.locations.get(json.dumps(metadata.get('locationTypes'),sort_keys=True),{}).get(value,set())
+                # An existing exact official value can also restore a selection
+                # without another autocomplete request.
+                restored=form['values'].get(path)
+                if (isinstance(restored,dict) and set(restored)=={'text','providerLocationId'}
+                        and restored['text']==value and isinstance(restored['providerLocationId'],str)
+                        and 0<len(restored['providerLocationId'])<=500):choices=choices|{restored['providerLocationId']}
+                if len(choices)!=1:raise Blocked('ashby_draft_unsupported','Ashby location choice is unverified or ambiguous')
+                value={'text':value,'providerLocationId':next(iter(choices))}
+            elif kind in {'yesno','checkbox'} and value in {'Yes','No'}:value=value=='Yes'
             elif kind=='select' and field.get('option_values'):
                 value=field['option_values'][field['options'].index(value)]
             elif kind=='radio':

@@ -1,0 +1,30 @@
+query ApiAutocompleteGeoLocation($text: String!, $locationTypes: [GeoLocationType!]) {
+  result: autocompleteGeoLocation(text: $text, locationTypes: $locationTypes) {
+    ...AutocompleteLocationResultParts
+    __typename
+  }
+}
+
+fragment AutocompleteGeoLocationParts on GeoLocation {
+  name
+  type
+  providerLocationId
+  __typename
+}
+
+fragment AutocompleteLocationParts on AutocompleteLocation {
+  name
+  geoLocationPath {
+    ...AutocompleteGeoLocationParts
+    __typename
+  }
+  __typename
+}
+
+fragment AutocompleteLocationResultParts on AutocompleteLocationResult {
+  suggestions {
+    ...AutocompleteLocationParts
+    __typename
+  }
+  __typename
+}

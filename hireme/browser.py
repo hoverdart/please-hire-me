@@ -381,6 +381,7 @@ class Browser:
         if self.lever_resume:self.lever_resume.observe(response,self._request_key(request))
         if self.ashby_draft:
             with contextlib.suppress(Exception):self.ashby_draft.observe_posting(request,response)
+            with contextlib.suppress(Exception):self.ashby_draft.observe_locations(request,response)
             with contextlib.suppress(Exception):self.ashby_draft.observe_save(response,self._request_key(request))
         application_id=self.submission_requests.pop(self._request_key(request),None)
         if application_id:
@@ -428,6 +429,7 @@ class Browser:
         elif host!=self.current_host:
             # Redirect URLs may carry one-use codes or signed query parameters.
             raise Blocked("unexpected_redirect",'Destination host changed to '+str(host or 'unknown'))
+        if self.ashby_draft and not self.attempted:self.ashby_draft.bind_page(url)
         if self.page.locator('input[type=password]').count():raise Blocked("account_blocked")
         # Passive CAPTCHA scoring can preload a hidden challenge frame. Only
         # an exposed widget/challenge requires human intervention.
@@ -697,7 +699,7 @@ class Browser:
     def _ashby_application_entry(self,job):
         """The official Application tab is a posting-bound navigation link."""
         if self.current_host!='jobs.ashbyhq.com':return None
-        posting=urlsplit(job['url'])
+        posting=urlsplit(self.ashby_draft.navigation_url if self.ashby_draft else job['url'])
         if not re.fullmatch(r'/[A-Za-z0-9_-]+/[0-9a-f-]{36}/?',posting.path,re.I):return None
         entry=self.page.get_by_role('tab',name='Application',exact=True)
         if entry.count()!=1:return None

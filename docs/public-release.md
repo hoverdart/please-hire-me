@@ -24,6 +24,8 @@ Ashby live runs require acknowledged, source-bound field saves before final subm
 
 An exact prefilled value in a verified official Ashby form response is already acknowledged; a visible browser value alone is insufficient. The posting's exact Application tab can provide a navigation-only entry when the page has ambiguous Apply buttons.
 
+Ashby location saves bind the approved location label to the provider ID from the reviewed official autocomplete response (or an exact official saved value). A different ID, label or unacknowledged save cannot authorize final submission. Tenant renames require a same-host page and an official posting response for the same requisition UUID; the original job, company and application history remain intact. An existing attempt under another tenant with that UUID is held against duplicate submission.
+
 Batch reports preserve unknown and verification-pending outcomes after browser errors, with instructions to verify the existing attempt before applying again. Temporary failures reading an official Greenhouse posting use bounded delayed retries; access restrictions and unrecognized responses require review before any fields are filled.
 
 Preparation can upload approved documents. Lever's native resume parser is limited to the exact approved PDF and the rendered employer account; the returned storage acknowledgement must match the form before submission. An upload acknowledgement is not an application receipt.

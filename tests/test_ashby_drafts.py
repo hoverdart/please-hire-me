@@ -198,3 +198,149 @@ def test_field_grant_does_not_send_extra_envelope_data_or_url_actions(store,job,
     assert not d.allow(r,data,'other-operation')
     r.url='https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiSetFormValue'
     assert d.allow(r,data,'approved')
+
+LOCATION_QUERY=(Path(__file__).parent/'fixtures/ashby-autocomplete-location.graphql').read_text()
+LOCATION='Berkeley, California, United States'
+
+
+def location_draft(store,job,package,*,observe=True,restored=None):
+    from hireme.answers import resolve
+    d,ashby=draft(store,job,package)
+    field={'index':0,'indices':[0],'label':'Location','type':'combobox','required':True,
+           'options':[LOCATION],'maxlength':-1,'value':'','ashby_path':'_systemfield_location',
+           'ashby_entry_id':RENDER+'__systemfield_location'}
+    answer=resolve(store,ashby['host'],field)
+    proof={**d.package,'answers':[answer]}
+    saved=form()
+    saved['sections'][0]['fieldEntries'].append({'id':field['ashby_entry_id'],
+        'field':{'path':'_systemfield_location','title':'Location','type':'Location','locationTypes':['City']},
+        'fieldValue':{'value':restored} if restored else None})
+    d._remember_form(saved)
+    read=SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiAutocompleteGeoLocation',
+        post_data=json.dumps({'operationName':'ApiAutocompleteGeoLocation','query':LOCATION_QUERY,
+                             'variables':{'text':'Berkeley','locationTypes':['City']}}))
+    result={'data':{'result':{'suggestions':[{'name':LOCATION,'geoLocationPath':[
+        {'providerLocationId':'fixture-country'},{'providerLocationId':'fixture-city'}]}]}}}
+    if observe:d.observe_locations(read,SimpleNamespace(status=200,json=lambda:result))
+    return d,proof,read,result
+
+
+def test_location_object_requires_official_choice_and_exact_save_ack(store,job,package):
+    d,proof,_,_=location_draft(store,job,package)
+    d.enable(None,proof['answers'],proof)
+    value={'text':LOCATION,'providerLocationId':'fixture-city'}
+    r,data=request(value,path='_systemfield_location')
+    assert d.allow(r,data,'location') and not d.complete
+    saved=form();saved['sections'][0]['fieldEntries'].append({'id':RENDER+'__systemfield_location',
+        'field':{'path':'_systemfield_location','title':'Location','type':'Location','locationTypes':['City']},
+        'fieldValue':{'value':value}})
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':saved}}),'location')
+    assert d.complete
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('mode',['missing','wrong_host','wrong_method','wrong_query','wrong_operation','errors','wrong_types','ambiguous'])
+def test_unverified_or_ambiguous_location_lookup_grants_no_write(store,job,package,mode):
+    d,proof,read,result=location_draft(store,job,package,observe=False)
+    if mode=='wrong_host':read.url=read.url.replace('jobs.ashbyhq.com','attacker.invalid')
+    if mode=='wrong_method':read.method='PUT'
+    data=json.loads(read.post_data)
+    if mode=='wrong_query':data['query']+=' mutation Other { submitApplication { id } }'
+    if mode=='wrong_operation':data['operationName']='Other'
+    if mode=='wrong_types':data['variables']['locationTypes']=['Country']
+    if mode=='errors':result['errors']=[{'message':'Synthetic failure'}]
+    if mode=='ambiguous':result['data']['result']['suggestions'].append({'name':LOCATION,'geoLocationPath':[{'providerLocationId':'different-city'}]})
+    read.post_data=json.dumps(data)
+    if mode!='missing':d.observe_locations(read,SimpleNamespace(status=200,json=lambda:result))
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):d.enable(None,proof['answers'],proof)
+    r,data=request({'text':LOCATION,'providerLocationId':'fixture-city'},path='_systemfield_location')
+    assert not d.allow(r,data,'location')
+
+
+@pytest.mark.parametrize('value',[
+    LOCATION,{'text':LOCATION,'providerLocationId':'unverified'},
+    {'text':'Different city','providerLocationId':'fixture-city'},
+    {'text':LOCATION,'providerLocationId':'fixture-city','extra':'unreviewed'},
+])
+def test_location_grant_cannot_save_arbitrary_client_object(store,job,package,value):
+    d,proof,_,_=location_draft(store,job,package);d.enable(None,proof['answers'],proof)
+    r,data=request(value,path='_systemfield_location')
+    assert not d.allow(r,data,'location')
+
+
+def test_exact_official_location_prefill_needs_no_new_autocomplete(store,job,package):
+    d,proof,_,_=location_draft(store,job,package,observe=False,
+        restored={'text':LOCATION,'providerLocationId':'fixture-city'})
+    d.enable(None,proof['answers'],proof)
+    assert d.complete
+
+
+@pytest.mark.parametrize('target,verified',[
+    (f'https://jobs.ashbyhq.com/renamed/{REQ}',True),
+    (f'https://jobs.ashbyhq.com/renamed/{REQ}',False),
+    (f'https://jobs.ashbyhq.com/renamed/{DEFINITION}',True),
+    (f'https://attacker.invalid/renamed/{REQ}',True),
+    (f'http://jobs.ashbyhq.com/renamed/{REQ}',True),
+    (f'https://jobs.ashbyhq.com/renamed/{REQ}?submit=true',True),
+])
+def test_tenant_redirect_requires_same_posting_response_and_safe_page(store,job,package,target,verified):
+    d,ashby=draft(store,job,package)
+    proof=d.package
+    d.package=None;d.grants={}
+    read=SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql',
+        post_data=json.dumps({'operationName':'ApiJobPosting','query':'query ApiJobPosting { jobPosting { id } }',
+                            'variables':{'organizationHostedJobsPageName':'renamed','jobPostingId':REQ}}))
+    if verified:d.observe_posting(read,SimpleNamespace(status=200,json=lambda:{'data':{'jobPosting':{'id':REQ,'applicationForm':form()}}}))
+    original=dict(store.db.execute('SELECT * FROM jobs WHERE id=?',(ashby['id'],)).fetchone())
+    if verified and target==f'https://jobs.ashbyhq.com/renamed/{REQ}':
+        d.bind_page(target)
+        assert d.identity==('renamed',REQ) and d.navigation_url==target
+        d.enable(None,proof['answers'],proof)
+        r,data=request();assert not d.allow(r,data,'old-tenant')
+        r,data=request(organizationHostedJobsPageName='renamed');assert d.allow(r,data,'new-tenant')
+    else:
+        with pytest.raises(Blocked,match='unexpected_redirect'):d.bind_page(target)
+    assert dict(store.db.execute('SELECT * FROM jobs WHERE id=?',(ashby['id'],)).fetchone())==original
+
+
+@pytest.mark.parametrize('mode',['saved','unverified_id','wrong_ack'])
+def test_browser_routes_location_lookup_and_only_the_selected_object(store,job,package,monkeypatch,mode):
+    monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
+    d,proof,read,result=location_draft(store,job,package,observe=False)
+    d.package=None;d.grants={}
+    value={'text':LOCATION,'providerLocationId':'fixture-city' if mode!='unverified_id' else 'unverified'}
+    data=request(value,path='_systemfield_location')[1];writes=[]
+    html='<h1>Synthetic location widget</h1><script>window.lookup='+json.dumps(json.loads(read.post_data))+';window.save='+json.dumps(data)+''';
+window.post = data => fetch('/api/non-user-graphql', {method:'POST',body:JSON.stringify(data)}).then(r=>r.json()).catch(()=>null);
+</script>'''
+    with Browser(store) as b:
+        b.current_host='jobs.ashbyhq.com';b.ashby_draft=d
+        class Route:
+            def __init__(self,route):self.route=route;self.request=route.request
+            def abort(self):self.route.abort()
+            def continue_(self):
+                data=json.loads(self.request.post_data)
+                if data['operationName']=='ApiAutocompleteGeoLocation':body=result
+                else:
+                    assert data['operationName']=='ApiSetFormValue'
+                    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+                    writes.append(data)
+                    ack={**value,'providerLocationId':'different'} if mode=='wrong_ack' else value
+                    saved=form();saved['sections'][0]['fieldEntries'].append({'id':RENDER+'__systemfield_location',
+                        'field':{'path':'_systemfield_location','title':'Location'},'fieldValue':{'value':ack}})
+                    body={'data':{'setFormValue':saved}}
+                self.route.fulfill(status=200,content_type='application/json',body=json.dumps(body))
+        def serve(route):
+            if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
+            else:b._route(Route(route))
+        b.page.route('**/*',serve)
+        b.page.goto(d.job['url'])
+        b.page.evaluate('() => post(lookup)')
+        b.page.wait_for_timeout(100)
+        assert d.locations
+        d.enable(b,proof['answers'],proof)
+        b.page.evaluate('() => post(save)')
+        b.page.wait_for_timeout(100)
+        assert len(writes)==(mode!='unverified_id')
+        assert d.complete is (mode=='saved')
+        assert d.failed is (mode=='wrong_ack')

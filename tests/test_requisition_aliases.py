@@ -67,3 +67,15 @@ def test_ashby_board_case_cannot_create_another_requisition_identity(store,job,p
     store.upsert_job(second)
     assert application_identity(first['url'])==application_identity(second['url'])
     with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(second,store.settings())
+
+
+@pytest.mark.parametrize('state',['confirmed','unknown','awaiting_verification','not_submitted','submitting'])
+def test_ashby_tenant_rename_cannot_retry_a_recorded_uuid(store,job,package,state):
+    first={**job,'id':digest('before-rename'),'url':f'https://jobs.ashbyhq.com/acme/{REQ}','host':'jobs.ashbyhq.com'}
+    store.upsert_job(first)
+    aid=store.prepare(first,{**package,'job_id':first['id'],'url':first['url']})
+    store.db.execute("UPDATE applications SET state=?,attempted='2020-01-01T00:00:00+00:00' WHERE id=?",(state,aid))
+    second={**first,'id':digest('after-rename'),'company':'Renamed company','url':f'https://jobs.ashbyhq.com/renamed/{REQ}'}
+    store.upsert_job(second)
+    with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(second,store.settings())
+    assert store.db.execute('SELECT state FROM applications WHERE id=?',(aid,)).fetchone()[0]==state

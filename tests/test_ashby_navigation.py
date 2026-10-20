@@ -31,3 +31,44 @@ def test_ambiguous_or_form_bound_tabs_do_not_authorize_navigation(store,html):
     with Browser(store) as b:
         b.current_host='jobs.ashbyhq.com';b.page.set_content(html)
         assert b._ashby_application_entry({'url':POSTING}) is None
+
+
+def test_verified_tenant_redirect_enters_application_without_changing_durable_job(store,job,monkeypatch):
+    import json
+    from hireme.ashby_drafts import AshbyDraft
+    from hireme.util import digest
+    REQ="11111111-1111-4111-8111-111111111111"
+    def form():return {"id":"22222222-2222-4222-8222-222222222222","sourceFormDefinitionId":"33333333-3333-4333-8333-333333333333","sections":[]}
+    monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
+    original=f'https://jobs.ashbyhq.com/acme/{REQ}'
+    renamed=f'https://jobs.ashbyhq.com/renamed/{REQ}'
+    ashby={**job,'id':digest(original),'url':original,'host':'jobs.ashbyhq.com'}
+    store.upsert_job(ashby)
+    before=dict(store.db.execute('SELECT * FROM jobs WHERE id=?',(ashby['id'],)).fetchone())
+    reads=[];writes=[]
+    with Browser(store) as b:
+        b.current_host='jobs.ashbyhq.com';b.ashby_draft=AshbyDraft(store,ashby)
+        def serve(route):
+            if route.request.method=='GET':
+                reads.append(route.request.url)
+                if route.request.url==original:html='<script>location.replace('+json.dumps(renamed)+')</script>'
+                else:
+                    query={'operationName':'ApiJobPosting','query':'query ApiJobPosting { jobPosting { id } }',
+                           'variables':{'organizationHostedJobsPageName':'renamed','jobPostingId':REQ}}
+                    html='<h1>Synthetic posting</h1><a role="tab" href="'+renamed+'/application">Application</a><a href="'+renamed+'/application">Apply for this job</a><script>fetch("/api/non-user-graphql",{method:"POST",body:JSON.stringify('+json.dumps(query)+')})</script>'
+                route.fulfill(status=200,content_type='text/html',body=html)
+            else:
+                data=json.loads(route.request.post_data);writes.append(data['operationName'])
+                assert data['operationName']=='ApiJobPosting'
+                route.fulfill(status=200,content_type='application/json',body=json.dumps({'data':{'jobPosting':{'id':REQ,'applicationForm':form()}}}))
+        b.page.route('**/*',serve)
+        b.page.goto(original);b._wait_ready();b._guard(ashby)
+        assert b.page.url==renamed
+        entry=b._ashby_application_entry(ashby)
+        assert entry is not None
+        entry.click();b._wait_ready();b._guard(ashby)
+        assert b.page.url==renamed+'/application'
+    assert reads==[original,renamed,renamed+'/application']
+    assert writes==['ApiJobPosting','ApiJobPosting']
+    assert dict(store.db.execute('SELECT * FROM jobs WHERE id=?',(ashby['id'],)).fetchone())==before
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
