@@ -68,7 +68,8 @@ def install(store, repo, directory=None, enable=False):
 
 
 def configure(store):
-    store.update_settings({'live_enabled':False,'browser_channel':'system-chromium','headless':True,'discovery_workers':2,'deployment':'pi'})
+    store.update_settings({'live_enabled':False,'browser_channel':'system-chromium','headless':True,
+                           'human_verification_wait_seconds':0,'discovery_workers':2,'deployment':'pi'})
     return {'paused':True,'browser':'system-chromium','discovery_workers':2}
 
 

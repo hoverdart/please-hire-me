@@ -3085,6 +3085,18 @@ $("#run-history-next").onclick = () => {
 $("#run-history-retry").onclick = () => loadRunHistory(true);
 
 function render() {
+  const verification = state.human_verification;
+  $("#human-verification-notice").hidden = !verification;
+  if (verification) {
+    const challenge = verification.phase === "challenge";
+    const title = challenge ? "Complete verification in the application browser" : "Checking this application";
+    const until = new Date(verification.expires_at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+    const help = `${verification.company} — ${verification.title}. ` + (challenge
+      ? `On the worker’s desktop, complete the challenge in the existing browser by ${until}. Don’t open a second application or click Submit again. Pause cancels this wait.`
+      : "Keep the existing browser open while your desk checks the employer’s receipt. Don’t click Submit again.");
+    if ($("#human-verification-title").textContent !== title) $("#human-verification-title").textContent = title;
+    if ($("#human-verification-help").textContent !== help) $("#human-verification-help").textContent = help;
+  }
   const dayFormatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: state.settings.timezone,
   });
@@ -3114,7 +3126,9 @@ function render() {
     : accountTransferBusy
       ? "Moving encrypted employer passwords…"
       : state.worker_running
-        ? state.worker_mode === "discovery"
+        ? state.human_verification?.phase === "challenge"
+          ? "Waiting for human verification"
+          : state.worker_mode === "discovery"
           ? "Finding opportunities…"
           : state.worker_mode === "prepare"
             ? "Preparing applications…"

@@ -30,6 +30,8 @@ Fully transparent verification frames, including transparent parent containers, 
 
 Receipt rendering can remove verification frames. Their visibility is read together so a disappearing frame cannot leave a stale locator waiting while the receipt is present.
 
+The optional human-verification wait keeps a compatible Ashby application open after the final click for a person at the worker desktop. It starts disabled, requires a visible browser and lasts at most 600 seconds. The same durable intent permits one native submission of the acknowledged draft; it cannot save new answers, submit other forms or restart an uncertain attempt. Pause and timeout retain uncertainty. Desktop availability and fresh employer acceptance remain separate verification gates.
+
 Ashby live runs require acknowledged, source-bound field saves before final submission. Preparation mode suppresses these text-field saves. Unsupported form encodings remain held. Backups stage on private persistent storage and stream archive entries so large Pi ledgers do not require an equally large RAM disk or memory allocation.
 
 Ashby's reviewed structured application-form identifier must name the exact posting and external board. The original identifier string must match the native field-save request and acknowledgement; unknown formats, changed definitions and other postings remain held.

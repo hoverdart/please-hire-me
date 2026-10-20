@@ -113,8 +113,10 @@
     }
     const parent=document.getElementById('today-attention');
     const jobs=snapshot.jobs.filter(j=>j.requires_attention).sort((a,b)=>Number(['unknown','awaiting_verification'].includes(b.status))-Number(['unknown','awaiting_verification'].includes(a.status))).slice(0,5);
-    const key=JSON.stringify([jobs,snapshot.summary?.question_count]);
+    const human=snapshot.human_verification?.phase==='challenge'?snapshot.human_verification:null;
+    const key=JSON.stringify([jobs,snapshot.summary?.question_count,human]);
     if(key!==attentionSignature){attentionSignature=key;parent.replaceChildren();
+      if(human){const button=el('button',undefined,'attention-row secondary');button.append(el('strong',`${human.company} · Complete verification`),el('span','Use the application browser already open on the worker desktop.','help'));button.onclick=()=>{const notice=document.getElementById('human-verification-notice');notice.focus({preventScroll:true});notice.scrollIntoView({block:'start',behavior:'auto'});};parent.append(button);}
       if(snapshot.summary?.question_count){const button=el('button',`${snapshot.summary.question_count} unanswered application questions`,'attention-row secondary');button.onclick=()=>show('questions');parent.append(button);}
       for(const job of jobs){const button=el('button',undefined,'attention-row secondary');button.append(el('strong',`${job.company} · ${job.title}`),el('span',job.next_step||job.reason_label||'Review the application record.','help'));button.onclick=()=>openOpportunity(job);parent.append(button);}
       if(!parent.children.length)parent.append(el('p','No action needed in your loaded queue. Your desk will flag missing information or uncertain outcomes here.','help'));

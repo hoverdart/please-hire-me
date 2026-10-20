@@ -164,6 +164,8 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     activity=worker_status(store)
                     with state['lock']:local_running=state['running'];local_mode=state['mode'];local_error=state['error']
                     if local_running:activity={**activity,'running':True,'recovery_needed':False}
+                    from .human_verification import current_wait
+                    snapshot['human_verification']=current_wait(store) if activity['running'] else None
                     snapshot['worker_recovery']=activity
                     running_mode=local_mode
                     if activity['running'] and not running_mode:

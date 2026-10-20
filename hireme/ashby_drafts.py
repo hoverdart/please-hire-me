@@ -76,7 +76,7 @@ class AshbyDraft:
         self.identity=(match[1].casefold(),match[2].lower()) if match and parsed.hostname=='jobs.ashbyhq.com' else None
         self.job=job;self.forms={};self.grants={};self.pending={};self.saved=set();self.failed=False
         self.package=None;self.remaining=0
-        self.postings={};self.locations={};self.schools={};self.navigation_url=job['url']
+        self.postings={};self.submission_contexts={};self.locations={};self.schools={};self.navigation_url=job['url']
 
     def bind_page(self, url):
         """Follow a tenant rename only after the same official posting was read.
@@ -113,7 +113,7 @@ class AshbyDraft:
                     value=entry.get('fieldValue')
                     if isinstance(value,dict) and 'value' in value:
                         values[path]=value['value']
-        self.forms[render]={'definition':definition,'entries':entries,
+        self.forms[render]={'definition':definition,'entries':entries,'controls':form.get('formControls'),
                             'values':values if not form.get('errorMessages') and not form.get('formErrors') else {}}
 
     def observe_posting(self, request, response):
@@ -132,6 +132,15 @@ class AshbyDraft:
             result=response.json()
             posting=result.get('data',{}).get('jobPosting',{})
             if result.get('errors') or str(posting.get('id','')).lower()!=self.identity[1]:return
+            def submission_form(form):
+                if not isinstance(form,dict):return None
+                return {key:form.get(key) for key in ('id','sourceFormDefinitionId','formControls')}
+            notice=posting.get('automatedProcessingLegalNotice')
+            self.submission_contexts[tenant.casefold()]={
+                'application':submission_form(posting.get('applicationForm')),
+                'surveys':[submission_form(form) for form in posting.get('surveyForms',[])],
+                'legal_notice_rule_id':(notice.get('automatedProcessingLegalNoticeRuleId') if isinstance(notice,dict)
+                                        else None if notice is None else False)}
             if tenant.casefold()==self.identity[0]:
                 for form in [posting.get('applicationForm'),*posting.get('surveyForms',[])]:self._remember_form(form)
                 self.postings[tenant.casefold()]=self.forms

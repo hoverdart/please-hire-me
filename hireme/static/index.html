@@ -190,6 +190,10 @@
           </div>
         </div>
         <div id="worker-strip" class="worker-strip" role="region" aria-label="Worker controls"></div>
+        <section id="human-verification-notice" class="callout" role="status" aria-live="polite" tabindex="-1" hidden>
+          <h2 id="human-verification-title"></h2>
+          <p id="human-verification-help"></p>
+        </section>
         <section id="opportunities" class="view" hidden><div class="jobs-workspace"><div id="job-list-workspace"></div><aside id="job-detail-workspace" aria-label="Selected opportunity"><p class="detail-placeholder">Select a job to review its posting, materials and application record.</p></aside></div></section>
         <section id="today" class="view">
           <div class="today-workspace"><section aria-labelledby="attention-title"><div class="section-head"><h2 id="attention-title">Next actions</h2><button id="open-attention" class="secondary">Review all</button></div><div id="today-attention"></div></section><section aria-labelledby="connection-health-title"><div class="section-head"><h2 id="connection-health-title">Connection health</h2><button id="open-connections" class="secondary">Manage</button></div><div id="today-connections"></div></section></div>
@@ -1446,6 +1450,10 @@
                 ><input name="headless" type="checkbox" /> Run the application
                 browser in the background.</label
               >
+              <label>Wait for human verification (seconds)
+                <input name="human_verification_wait_seconds" type="number" min="0" max="600" step="1" aria-describedby="human-verification-setting-help" />
+                <span id="human-verification-setting-help" class="help">0 turns waiting off. For supported Ashby forms, show the application browser and stay at the worker desktop to complete a challenge in the same attempt. Maximum: 600 seconds. Turn off background browsing first.</span>
+              </label>
             </fieldset>
             <p class="help">
               Targets are goals, not guarantees. Eligibility, company limits and

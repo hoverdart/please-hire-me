@@ -28,11 +28,15 @@ def summary(store, at=None):
     condition, parameters = attention_sql('j')
     from .presentation import actionable_question_sql
     question_condition,question_parameters=actionable_question_sql('q')
+    from .human_verification import current_wait
+    human=current_wait(store)
+    human_job=human['job_id'] if human and human['phase']=='challenge' else None
     attention = store.db.execute(f"""SELECT COUNT(*) FROM (
         SELECT q.job_id FROM questions q WHERE {question_condition}
         UNION SELECT j.id FROM jobs j WHERE {condition}
         UNION SELECT job_id FROM applications WHERE state IN ('unknown','awaiting_verification')
-    )""", (*question_parameters,*parameters)).fetchone()[0]
+        UNION SELECT ? WHERE ? IS NOT NULL
+    )""", (*question_parameters,*parameters,human_job,human_job)).fetchone()[0]
     accounts = store.db.execute("SELECT COUNT(*) FROM employer_accounts WHERE state='uncertain'").fetchone()[0]
     questions = store.db.execute('SELECT COUNT(*) FROM questions q WHERE '+question_condition,question_parameters).fetchone()[0]
     held = store.db.execute(f"SELECT COUNT(*) FROM jobs j WHERE j.status='blocked' AND {condition}", parameters).fetchone()[0]

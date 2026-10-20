@@ -76,6 +76,7 @@ These checks send no model requests or applications. See the [user guide](docs/g
 - Model inference uses your selected remote provider. Claude Code and Codex subscription modes reject API-only authentication; paid API usage must be selected explicitly. Request counters measure this worker's usage, not your vendor balance.
 - Submission budgets, durable intents and local locks limit work and preserve uncertain outcomes across restarts.
 - Login walls, CAPTCHA, unknown questions, unsupported controls and ambiguous receipts need manual review. Discovering an ATS posting does not establish support for its application form.
+- An optional visible-browser wait lets you complete a post-click challenge on compatible Ashby forms within the existing attempt. It starts disabled and is capped at 600 seconds. The worker does not solve the challenge or retry an uncertain application.
 - Optional Gmail handles recognized Greenhouse verification codes and batch reports. Optional platform connections start disabled and require independently verified access and transport.
 
 The version is **0.5.0rc2**, a public release candidate for self-hosting. Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.

@@ -1,0 +1,96 @@
+mutation ApiSubmitSingleApplicationFormAction($organizationHostedJobsPageName: String!, $jobPostingId: String!, $formRenderIdentifier: String!, $formDefinitionIdentifier: String, $actionIdentifier: String!, $recaptchaToken: String!, $sourceAttributionCode: String, $viewedAutomatedProcessingLegalNoticeRuleId: String, $deviceFingerprint: String, $applicationRequestId: String) {
+  submitApplicationFormAction: submitSingleApplicationFormAction(
+    organizationHostedJobsPageName: $organizationHostedJobsPageName
+    jobPostingId: $jobPostingId
+    formRenderIdentifier: $formRenderIdentifier
+    formDefinitionIdentifier: $formDefinitionIdentifier
+    actionIdentifier: $actionIdentifier
+    recaptchaToken: $recaptchaToken
+    sourceAttributionCode: $sourceAttributionCode
+    viewedAutomatedProcessingLegalNoticeRuleId: $viewedAutomatedProcessingLegalNoticeRuleId
+    deviceFingerprint: $deviceFingerprint
+    applicationRequestId: $applicationRequestId
+  ) {
+    applicationFormResult {
+      ... on FormRender {
+        ...FormRenderParts
+        __typename
+      }
+      ... on FormSubmitSuccess {
+        _
+        __typename
+      }
+      __typename
+    }
+    messages {
+      blockMessageForCandidateHtml
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment JSONBoxParts on JSONBox {
+  value
+  __typename
+}
+
+fragment FileParts on File {
+  id
+  filename
+  __typename
+}
+
+fragment FormFieldEntryParts on FormFieldEntry {
+  id
+  field
+  fieldValue {
+    ... on JSONBox {
+      ...JSONBoxParts
+      __typename
+    }
+    ... on File {
+      ...FileParts
+      __typename
+    }
+    ... on FileList {
+      files {
+        ...FileParts
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+  isRequired
+  descriptionHtml
+  isHidden
+  __typename
+}
+
+fragment FormRenderParts on FormRender {
+  id
+  formControls {
+    identifier
+    title
+    __typename
+  }
+  errorMessages
+  formErrors {
+    message
+    fieldEntryId
+    __typename
+  }
+  sections {
+    title
+    descriptionHtml
+    fieldEntries {
+      ...FormFieldEntryParts
+      __typename
+    }
+    isHidden
+    __typename
+  }
+  sourceFormDefinitionId
+  __typename
+}

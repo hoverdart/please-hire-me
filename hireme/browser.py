@@ -179,7 +179,8 @@ class Browser:
         self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set();self.lever_resume=None
         self.workday_grant=None
         self.submission_requests={}
-        self.ashby_draft=None
+        self.ashby_draft=None;self.ashby_submission=None
+        self.visible=False;self.human_verification_seconds=0
         self.receipt_baseline=''
 
     def __enter__(self):
@@ -188,6 +189,7 @@ class Browser:
         s=self.store.settings(); profile=getattr(self,'profile_directory',None) or private_dir(self.store.root/"browser")
         kwargs={"headless":s["headless"],"accept_downloads":False,"service_workers":"block"}
         if getattr(self,'interactive',False) or getattr(self,'session_check',False):kwargs['headless']=False
+        self.visible=not kwargs['headless']
         if s["browser_channel"]=="chrome": kwargs["channel"]="chrome"
         elif s["browser_channel"]=="system-chromium":
             executable=shutil.which('chromium') or shutil.which('chromium-browser')
@@ -273,6 +275,7 @@ class Browser:
             self.denied_request={'host':host,'path':p.path,'method':route.request.method}
             return route.abort()
         if host in UPLOAD_HOSTS:
+            if self.attempted and self.ashby_submission:return route.abort()
             payload=getattr(route.request,'post_data_buffer',None) or b''
             approved=self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and route.request.method=='POST' and any(data in payload or h.encode() in payload for h,data in self.upload_payloads.items())
             approved=approved or (host==ASHBY_UPLOAD_HOST and self.current_host=='jobs.ashbyhq.com'
@@ -307,6 +310,25 @@ class Browser:
             # CAPTCHA endpoints may evaluate passive scoring, but no challenge solving is attempted.
             allowed|={"www.google.com","www.recaptcha.net","recaptcha.google.com"}
             if host not in allowed and not hcaptcha:return route.abort()
+            if self.attempted and self.ashby_submission and host not in {'www.google.com','www.recaptcha.net','recaptcha.google.com'}:
+                if self.denied_write:return route.abort()
+                try:data=json.loads(route.request.post_data or '')
+                except (ValueError,TypeError):data=None
+                queries=data if isinstance(data,list) else [data]
+                reading=(host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql'
+                         and route.request.method=='POST' and bool(queries)
+                         and all(isinstance(q,dict) and isinstance(q.get('query'),str)
+                                 and re.match(r'^\s*query\b',q['query'])
+                                 and not re.search(r'\b(?:mutation|subscription)\b',q['query']) for q in queries))
+                if not reading:
+                    try:
+                        if self.ashby_submission.allow(route.request,data):
+                            self._record_submission_request(route.request)
+                            return route.continue_()
+                    except Blocked:pass
+                    self.denied_write=True
+                    self.denied_request={'host':host,'path':p.path,'method':route.request.method}
+                    return route.abort()
             if not self.attempted and host not in {"www.google.com","www.recaptcha.net","recaptcha.google.com"} and not hcaptcha:
                 if self.lever_resume:
                     grant=self.lever_resume.grant(route.request,self._request_key(route.request))
@@ -385,6 +407,8 @@ class Browser:
 
     def _upload_response(self,response):
         request=response.request
+        if self.ashby_submission:
+            with contextlib.suppress(Exception):self.ashby_submission.observe_response(response)
         if self.lever_resume:self.lever_resume.observe(response,self._request_key(request))
         if self.ashby_draft:
             with contextlib.suppress(Exception):self.ashby_draft.observe_posting(request,response)
@@ -498,14 +522,57 @@ class Browser:
     def _wait_submission_outcome(self,job,accept_verification=True):
         # ATS processing routinely exceeds one second, especially on the Pi.
         deadline=time.monotonic()+45
-        while True:
-            text=self._guard(job,allow_verification=True)
-            if REJECTED.search(text):return text
-            if submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count():return text
-            if accept_verification and self._email_verification(text):return text
-            if self.page.locator('[aria-invalid=true]').count():return text
-            if time.monotonic()>=deadline:return text
-            self.page.wait_for_timeout(500)
+        human_deadline=None;phase=None;result='interrupted'
+        def announce(value,seconds):
+            self.store.event('human_verification',self.aid,{'phase':value,'job_id':job['id'],
+                'run_id':getattr(self.store,'active_run_id',None),'expires_at':time.time()+seconds})
+        try:
+            while True:
+                if self.ashby_submission and not self.ashby_submission.valid_intent(check_answers=False):
+                    raise Blocked('application_changed','The approved application changed during verification')
+                try:text=self._guard(job,allow_verification=True)
+                except Blocked as error:
+                    if (error.reason!='captcha_blocked' or not self.human_verification_seconds
+                            or not self.ashby_submission):raise
+                    if self.ashby_submission.used:
+                        # A closing verification frame can outlive the native
+                        # submit response. Observe the existing request only;
+                        # never offer or authorize a second submission.
+                        if phase!='checking_receipt':
+                            deadline=time.monotonic()+45;announce('checking_receipt',45);phase='checking_receipt'
+                        text=self.page.locator('body').inner_text(timeout=5000)
+                        received=(self.ashby_submission.acknowledged and submission_receipt(text,self.receipt_baseline)
+                                  and not self.page.locator('input[type=email]').count())
+                        if received or self.ashby_submission.failed or time.monotonic()>=deadline:
+                            result='outcome_check_complete';return text
+                        self.page.wait_for_timeout(250)
+                        continue
+                    if human_deadline is None:
+                        human_deadline=time.monotonic()+self.human_verification_seconds
+                        self.ashby_submission.write_deadline=human_deadline
+                    remaining=human_deadline-time.monotonic()
+                    if remaining<=0:
+                        result='timed_out';raise Blocked('captcha_blocked') from None
+                    if phase!='challenge':announce('challenge',remaining);phase='challenge'
+                    # Only a person in the existing visible browser completes
+                    # verification. The worker never interacts with the widget.
+                    self.page.wait_for_timeout(250)
+                    continue
+                if phase=='challenge':
+                    self.store.checkpoint();deadline=time.monotonic()+45
+                    announce('checking_receipt',45);phase='checking_receipt'
+                if (REJECTED.search(text)
+                        or submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
+                           and (not self.ashby_submission or self.ashby_submission.acknowledged)
+                        or self.ashby_submission and self.ashby_submission.failed
+                        or accept_verification and self._email_verification(text)
+                        or self.page.locator('[aria-invalid=true]').count() or time.monotonic()>=deadline):
+                    result='outcome_check_complete';return text
+                self.page.wait_for_timeout(500)
+        finally:
+            if phase is not None:
+                self.store.event('human_verification',self.aid,{'phase':'finished','result':result,
+                    'job_id':job['id'],'run_id':getattr(self.store,'active_run_id',None),'expires_at':time.time()})
 
     def _email_verification(self, text):
         return bool(re.search(r'verification code was sent.{0,300}to submit your application',text,re.I|re.S)
@@ -852,6 +919,7 @@ class Browser:
         # unavailable destinations at the next attempt, retaining actual denials.
         self.host_cache={host:allowed for host,allowed in self.host_cache.items() if allowed is not None}
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
+        self.ashby_submission=None;self.human_verification_seconds=0
         self.lever_resume=None
         self.store.check_job_decision(job['id'])
         if live:
@@ -1073,6 +1141,13 @@ class Browser:
             self._verify(answers,documents,fields)
             self.store.checkpoint()
             self.receipt_baseline=self.page.locator('body').inner_text(timeout=5000)
+            if self.ashby_draft and self.store.settings()['human_verification_wait_seconds']:
+                if not self.visible:
+                    raise Blocked('human_verification_unavailable','Human verification requires a visible application browser on the worker desktop')
+                from .ashby_submission import AshbySubmission
+                attribution=self.page.evaluate("() => {try{return localStorage.getItem('ashby_utm_source')}catch{return null}}")
+                self.ashby_submission=AshbySubmission(self.ashby_draft,self.aid,attribution)
+                self.human_verification_seconds=self.store.settings()['human_verification_wait_seconds']
             self.store.begin_submit(self.aid); self.attempted=True
             requested=time.time()
             stage='submit_click'
@@ -1083,7 +1158,8 @@ class Browser:
                 stage='outcome_evidence'
                 screenshot=self.store.root/'screenshots'/(self.aid+'-after.jpg')
                 screenshot_name=self._outcome_screenshot(screenshot)
-                confirmed=submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
+                confirmed=(submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
+                           and (not self.ashby_submission or self.ashby_submission.acknowledged))
                 outcome='not_submitted' if REJECTED.search(text) else 'confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
                 # Employer errors/receipts often appear below a long posting.
                 evidence=text if outcome=='awaiting_verification' or len(text)<=4000 else text[:2000]+'\n…\n'+text[-2000:]

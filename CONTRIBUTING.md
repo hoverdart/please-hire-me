@@ -26,6 +26,10 @@ On a Raspberry Pi with system Chromium, run the same fixtures with
 `HIREME_TEST_BROWSER_CHANNEL=system-chromium .venv/bin/python -m pytest -q`.
 The fixtures still use disposable applicant directories and synthetic employers.
 
+To check the visible human-verification handoff on a worker desktop, run
+`HIREME_TEST_BROWSER_CHANNEL=system-chromium HIREME_TEST_HUMAN_VISIBLE=1 .venv/bin/python -m pytest -q tests/test_ashby_drafts.py -k browser_human_handoff`.
+This opens synthetic application windows; the fixture serves the employer and verification requests. It submits nothing to a real employer. CI checks the same routing and wait behavior in a headless fixture; that does not prove a visible desktop is available on the target machine.
+
 Run checks appropriate to the change and record failures and skips. Full-suite success is local fixture evidence; keep hosted CI, device operation, authenticated sessions and employer acceptance separate. See [release status](docs/public-release.md).
 
 For packaging changes, build and inspect fresh distributions:

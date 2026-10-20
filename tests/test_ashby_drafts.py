@@ -1,5 +1,7 @@
 """Public-protocol fixtures: field saves and final submissions are distinct."""
+import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -44,6 +46,344 @@ def draft(store,job,package,definition=DEFINITION):
     response=SimpleNamespace(status=200,json=lambda:{'data':{'jobPosting':{'id':REQ,'applicationForm':official}}})
     d.observe_posting(read,response);d.enable(None,proof['answers'],proof)
     return d,ashby
+
+
+def submission_fixture(store,job,package,surveys=False):
+    from hireme.ashby_submission import AshbySubmission
+    d,_=draft(store,job,package)
+    action='44444444-4444-4444-8444-444444444444'
+    official=form({'_systemfield_email':store.facts()['email']['value']})
+    official['formControls']=[{'identifier':action,'title':'Submit','__typename':'FormControl'}]
+    survey={'id':'55555555-5555-4555-8555-555555555555','sourceFormDefinitionId':DEFINITION,
+            'formControls':[{'identifier':action,'title':'Submit','__typename':'FormControl'}],'sections':[]}
+    read=SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql',
+        post_data=json.dumps({'operationName':'ApiJobPosting','query':'query ApiJobPosting { jobPosting { id } }',
+                            'variables':{'organizationHostedJobsPageName':'acme','jobPostingId':REQ}}))
+    posting={'id':REQ,'applicationForm':official,'surveyForms':[survey] if surveys else []}
+    d.observe_posting(read,SimpleNamespace(status=200,json=lambda:{'data':{'jobPosting':posting}}))
+    d.enable(None,d.package['answers'],d.package)
+    aid=store.prepare(d.job,d.package);grant=AshbySubmission(d,aid)
+    variables={'organizationHostedJobsPageName':'acme','jobPostingId':REQ,'recaptchaToken':'synthetic-human-token',
+               'sourceAttributionCode':None,'viewedAutomatedProcessingLegalNoticeRuleId':None,'deviceFingerprint':None}
+    if surveys:
+        operation='ApiSubmitMultipleFormsAction';filename='ashby-submit-multiple-forms.graphql'
+        variables.update(applicationFormRenderIdentifier=RENDER,applicationFormDefinitionIdentifier=DEFINITION,
+            applicationFormActionIdentifier=action,surveyIdentifiers=[{'formRenderId':survey['id'],
+                'sourceFormDefinitionId':DEFINITION,'actionIdentifier':action}])
+    else:
+        operation='ApiSubmitSingleApplicationFormAction';filename='ashby-submit-single-application-form.graphql'
+        variables.update(formRenderIdentifier=RENDER,formDefinitionIdentifier=DEFINITION,actionIdentifier=action)
+    data={'operationName':operation,'query':(Path(__file__).parent/'fixtures'/filename).read_text(),'variables':variables}
+    request=SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql')
+    return d,grant,request,data
+
+
+def submission_response(request,data,surveys=False,**changes):
+    request.post_data=json.dumps(data)
+    value={'applicationFormResult':{'__typename':'FormSubmitSuccess'},
+           'messages':{'blockMessageForCandidateHtml':None}}
+    if surveys:value['surveyFormResults']=[{'__typename':'FormSubmitSuccess'}]
+    result={'data':{'submitMultipleFormsAction' if surveys else 'submitApplicationFormAction':value}}
+    return SimpleNamespace(request=request,status=changes.get('status',200),json=lambda:changes.get('result',result))
+
+
+@pytest.mark.parametrize('surveys',[False,True])
+@pytest.mark.parametrize('change',['none','other_request','http_error','graphql_error','missing','wrong_type','blocked','bad_surveys','bad_messages'])
+def test_native_submission_ack_requires_correlated_success_for_every_form(store,job,package,surveys,change):
+    _,grant,r,data=submission_fixture(store,job,package,surveys);store.begin_submit(grant.aid)
+    assert grant.allow(r,data)
+    response=submission_response(r,data,surveys);result=response.json()
+    value=result['data']['submitMultipleFormsAction' if surveys else 'submitApplicationFormAction']
+    if change=='other_request':r.post_data=json.dumps({**data,'variables':{**data['variables'],'recaptchaToken':'different-token'}})
+    elif change=='http_error':response.status=500
+    elif change=='graphql_error':result['errors']=[{'message':'Synthetic error'}]
+    elif change=='missing':result.clear()
+    elif change=='wrong_type':value['applicationFormResult']['__typename']='FormSubmitError'
+    elif change=='blocked':value['messages']['blockMessageForCandidateHtml']='Synthetic block'
+    elif change=='bad_messages':value['messages']=[]
+    elif change=='bad_surveys':
+        if surveys:value['surveyFormResults']=[]
+        else:value['applicationFormResult']=None
+    grant.observe_response(response)
+    assert grant.acknowledged==(change=='none')
+    assert grant.response_seen==(change!='other_request')
+    assert grant.failed==(change not in {'none','other_request'})
+    assert not grant.allow(r,data)
+    if change!='other_request':
+        grant.observe_response(submission_response(r,data,surveys))
+        assert grant.acknowledged==(change=='none')
+    details=' '.join(x[0] for x in store.db.execute('SELECT detail FROM events'))
+    assert 'synthetic-human-token' not in details and 'different-token' not in details
+
+
+@pytest.mark.parametrize('change',['query','hidden_mutation','batch_mutation','endpoint','host','upload'])
+def test_human_handoff_route_blocks_writes_disguised_as_reads_and_late_uploads(store,job,package,monkeypatch,change):
+    from hireme.browser import ASHBY_UPLOAD_HOST
+    monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
+    d,grant,r,data=submission_fixture(store,job,package);store.begin_submit(grant.aid)
+    b=Browser(store);b.current_host='jobs.ashbyhq.com';b.ashby_submission=grant;b.attempted=True
+    payload={'operationName':'Read','query':'query Read { jobPosting { id } }','variables':{}}
+    if change=='hidden_mutation':payload.update(operationName='Write',query=payload['query']+' mutation Write { submitSomething }')
+    elif change=='batch_mutation':payload=[payload,{'query':'mutation Write { submitSomething }','operationName':'Write'}]
+    elif change=='endpoint':r.url='https://jobs.ashbyhq.com/other'
+    elif change=='host':r.url='https://api.ashbyhq.com/api/non-user-graphql'
+    elif change=='upload':
+        r.url='https://'+ASHBY_UPLOAD_HOST+'/upload';r.post_data_buffer=b'approved';b.upload_payloads={'hash':b'approved'}
+    r.post_data=json.dumps(payload)
+    actions=[];route=SimpleNamespace(request=r,abort=lambda:actions.append('abort'),continue_=lambda:actions.append('continue'))
+    b._route(route)
+    assert actions==['continue' if change=='query' else 'abort'] and not grant.used
+
+
+@pytest.mark.parametrize('surveys',[False,True])
+def test_native_submission_grant_requires_one_committed_intent_and_keeps_tokens_private(store,job,package,surveys):
+    d,grant,r,data=submission_fixture(store,job,package,surveys)
+    assert not grant.allow(r,data)
+    store.begin_submit(grant.aid)
+    assert grant.allow(r,data) and not grant.allow(r,data)
+    assert store.db.execute('SELECT state FROM applications WHERE id=?',(grant.aid,)).fetchone()[0]=='submitting'
+    details=' '.join(x[0] for x in store.db.execute('SELECT detail FROM events'))
+    assert 'synthetic-human-token' not in details
+    assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
+
+
+def test_native_submission_deadline_blocks_a_late_human_completion(store,job,package,monkeypatch):
+    _,grant,r,data=submission_fixture(store,job,package);store.begin_submit(grant.aid)
+    monkeypatch.setattr('hireme.ashby_submission.time.monotonic',lambda:grant.write_deadline)
+    assert not grant.allow(r,data) and not grant.used
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_submission_write'").fetchone()
+
+
+@pytest.mark.parametrize('surveys',[False,True])
+@pytest.mark.parametrize('change',['tenant','posting','render','definition','action','empty_token','missing_token',
+    'fingerprint','answer','attribution','notice','application_request','query','operation','endpoint','method','extra_survey'])
+def test_native_submission_grant_rejects_changed_payloads_and_destinations(store,job,package,surveys,change):
+    d,grant,r,data=submission_fixture(store,job,package,surveys);store.begin_submit(grant.aid)
+    v=data['variables'];prefix='applicationForm' if surveys else 'form'
+    if change=='tenant':v['organizationHostedJobsPageName']='another-employer'
+    elif change=='posting':v['jobPostingId']=RENDER
+    elif change=='render':v[prefix+'RenderIdentifier']=REQ
+    elif change=='definition':v[prefix+'DefinitionIdentifier']=REQ
+    elif change=='action':v['applicationFormActionIdentifier' if surveys else 'actionIdentifier']=REQ
+    elif change=='empty_token':v['recaptchaToken']=''
+    elif change=='missing_token':v.pop('recaptchaToken')
+    elif change=='fingerprint':v['deviceFingerprint']={'answer':'not-a-fingerprint'}
+    elif change=='answer':v['answer']='unapproved field'
+    elif change=='attribution':v['sourceAttributionCode']='changed'
+    elif change=='notice':v['viewedAutomatedProcessingLegalNoticeRuleId']=REQ
+    elif change=='application_request':v['applicationRequestId']=REQ
+    elif change=='query':data['query']+=' mutation Other { writeSomething }'
+    elif change=='operation':data['operationName']='ApiSetFormValue'
+    elif change=='endpoint':r.url='https://jobs.ashbyhq.com/other-endpoint'
+    elif change=='method':r.method='GET'
+    else:v['surveyIdentifiers']=[*(v.get('surveyIdentifiers') or []),{'formRenderId':REQ}]
+    assert not grant.allow(r,data) and not grant.used
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_submission_write'").fetchone()
+
+
+@pytest.mark.parametrize('change',['pause','pause_resume','boundary','facts','source','unknown'])
+def test_native_submission_grant_stops_when_approval_or_attempt_changes(store,job,package,change):
+    d,grant,r,data=submission_fixture(store,job,package);store.begin_submit(grant.aid)
+    if change=='pause':store.update_settings({'live_enabled':False})
+    elif change=='pause_resume':store.update_settings({'live_enabled':False});store.update_settings({'live_enabled':True})
+    elif change=='boundary':store.update_settings({'max_per_company':1})
+    elif change=='facts':store.put_facts({'skills':'Python, TypeScript, Rust'})
+    elif change=='source':d.submission_contexts['acme']['application']['formControls'][0]['identifier']=REQ
+    else:store.finish(grant.aid,'unknown','Synthetic interrupted attempt')
+    try:assert not grant.allow(r,data)
+    except Blocked:pass
+    assert not grant.used
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_submission_write'").fetchone()
+
+
+@pytest.mark.parametrize('change',['value','missing_value','definition','unacknowledged','action_title','duplicate_control'])
+def test_native_submission_grant_requires_current_field_acknowledgements_and_submit_action(store,job,package,change):
+    from hireme.ashby_submission import AshbySubmission
+    d,grant,_,_=submission_fixture(store,job,package)
+    if change=='value':d.forms[RENDER]['values']['_systemfield_email']='unapproved@candidate.invalid'
+    elif change=='missing_value':d.forms[RENDER]['values'].pop('_systemfield_email')
+    elif change=='definition':
+        d.forms[RENDER]['definition']=REQ;d.submission_contexts['acme']['application']['sourceFormDefinitionId']=REQ
+    elif change=='unacknowledged':d.saved.clear()
+    elif change=='action_title':d.submission_contexts['acme']['application']['formControls'][0]['title']='Accept contract'
+    else:d.submission_contexts['acme']['application']['formControls'].append(dict(d.submission_contexts['acme']['application']['formControls'][0]))
+    with pytest.raises(Blocked,match='ashby_submission_unsupported'):AshbySubmission(d,grant.aid)
+
+
+def human_wait_fixture(store,job,package,monkeypatch,surveys=False,on_wait=None):
+    store.update_settings({'headless':False,'human_verification_wait_seconds':1})
+    d,grant,r,data=submission_fixture(store,job,package,surveys);store.begin_submit(grant.aid)
+    b=Browser(store);b.aid=grant.aid;b.attempted=True;b.ashby_draft=d;b.ashby_submission=grant
+    b.visible=True;b.human_verification_seconds=1;clock=[0]
+    monkeypatch.setattr('hireme.browser.time.monotonic',lambda:clock[0])
+    class Page:
+        def locator(self,selector):return SimpleNamespace(count=lambda:0)
+        def wait_for_timeout(self,ms):
+            clock[0]+=ms/1000
+            if on_wait:on_wait(d,grant,r,data,clock[0])
+    b.page=Page()
+    def guard(*args,**kwargs):
+        if not grant.used:raise Blocked('captcha_blocked')
+        return 'Thank you for applying. Your application has been received.'
+    monkeypatch.setattr(b,'_guard',guard)
+    return b,d,grant,r,data
+
+
+@pytest.mark.parametrize('surveys',[False,True])
+def test_human_wait_keeps_same_intent_then_checks_receipt_without_interacting_with_widget(store,job,package,monkeypatch,surveys):
+    def human_completed(d,grant,r,data,elapsed):
+        if elapsed>=.5 and not grant.used:
+            assert grant.allow(r,data)
+            grant.observe_response(submission_response(r,data,surveys))
+    b,d,grant,_,_=human_wait_fixture(store,job,package,monkeypatch,surveys,human_completed)
+    text=b._wait_submission_outcome(d.job)
+    assert 'application has been received' in text and grant.used
+    events=[json.loads(x[0]) for x in store.db.execute("SELECT detail FROM events WHERE kind='human_verification' ORDER BY seq")]
+    assert [x['phase'] for x in events]==['challenge','checking_receipt','finished']
+    assert events[-1]['result']=='outcome_check_complete'
+    assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0]==1
+    assert not hasattr(b.page,'click')
+
+
+@pytest.mark.parametrize('change',['timeout','pause','pause_resume','source','facts'])
+def test_human_wait_cancels_without_granting_a_request(store,job,package,monkeypatch,change):
+    def changed(d,grant,r,data,elapsed):
+        if elapsed>.25:return
+        if change=='pause':store.update_settings({'live_enabled':False})
+        elif change=='pause_resume':store.update_settings({'live_enabled':False});store.update_settings({'live_enabled':True})
+        elif change=='source':d.submission_contexts['acme']['application']['formControls'][0]['identifier']=REQ
+        elif change=='facts':store.put_facts({'skills':'Python, TypeScript, Rust'})
+    b,d,grant,_,_=human_wait_fixture(store,job,package,monkeypatch,on_wait=changed)
+    with pytest.raises(Blocked):b._wait_submission_outcome(d.job)
+    assert not grant.used
+    events=[json.loads(x[0]) for x in store.db.execute("SELECT detail FROM events WHERE kind='human_verification' ORDER BY seq")]
+    assert events[0]['phase']=='challenge' and events[-1]['phase']=='finished'
+    assert events[-1]['result']==('timed_out' if change=='timeout' else 'interrupted')
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_submission_write'").fetchone()
+
+
+def test_human_wait_does_not_wait_without_opt_in(store,job,package,monkeypatch):
+    b,d,grant,r,data=human_wait_fixture(store,job,package,monkeypatch)
+    b.human_verification_seconds=0
+    def exposed(*args,**kwargs):raise Blocked('captcha_blocked')
+    monkeypatch.setattr(b,'_guard',exposed)
+    with pytest.raises(Blocked,match='captcha_blocked'):b._wait_submission_outcome(d.job)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='human_verification'").fetchone()
+
+
+@pytest.mark.parametrize('acknowledged',[False,True])
+def test_human_wait_observes_sent_request_with_lingering_frame_without_restarting(store,job,package,monkeypatch,acknowledged):
+    b,d,grant,r,data=human_wait_fixture(store,job,package,monkeypatch)
+    assert grant.allow(r,data)
+    if acknowledged:grant.observe_response(submission_response(r,data))
+    def exposed(*args,**kwargs):raise Blocked('captcha_blocked')
+    monkeypatch.setattr(b,'_guard',exposed)
+    b.page.locator=lambda selector:SimpleNamespace(count=lambda:0,inner_text=lambda **kwargs:'Thank you for applying. Your application has been received.')
+    assert 'application has been received' in b._wait_submission_outcome(d.job)
+    phases=[json.loads(x[0])['phase'] for x in store.db.execute("SELECT detail FROM events WHERE kind='human_verification' ORDER BY seq")]
+    assert phases==['checking_receipt','finished']
+    assert not grant.allow(r,data)
+    assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
+
+
+@pytest.mark.parametrize('surveys',[False,True])
+@pytest.mark.parametrize('mode',['complete','lingering_frame','bad_ack','changed_payload','changed_field','timeout','pause'])
+def test_browser_human_handoff_preserves_one_intent_and_exact_native_submission(store,monkeypatch,surveys,mode):
+    monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
+    job={'id':digest(REQ),'url':f'https://jobs.ashbyhq.com/acme/{REQ}','host':'jobs.ashbyhq.com',
+         'company':'Acme','title':'Software Engineer Intern Summer 2027','description':'Build Python software.',
+         'location':'San Francisco, United States','source':'fixture'}
+    store.upsert_job(job);remote={};writes=[];clicks=[]
+    action='44444444-4444-4444-8444-444444444444'
+    survey={'id':'55555555-5555-4555-8555-555555555555','sourceFormDefinitionId':DEFINITION,
+            'formControls':[{'identifier':action,'title':'Submit','__typename':'FormControl'}],'sections':[]}
+    def native_form():
+        value=form(remote);value['formControls']=[{'identifier':action,'title':'Submit','__typename':'FormControl'}]
+        return value
+    variables={'organizationHostedJobsPageName':'acme','jobPostingId':REQ,'recaptchaToken':'fixture-human-token',
+               'sourceAttributionCode':None,'viewedAutomatedProcessingLegalNoticeRuleId':None,'deviceFingerprint':None}
+    operation='ApiSubmitMultipleFormsAction' if surveys else 'ApiSubmitSingleApplicationFormAction'
+    filename='ashby-submit-multiple-forms.graphql' if surveys else 'ashby-submit-single-application-form.graphql'
+    if surveys:
+        variables.update(applicationFormRenderIdentifier=RENDER,applicationFormDefinitionIdentifier=DEFINITION,
+            applicationFormActionIdentifier=action,surveyIdentifiers=[{'formRenderId':survey['id'],
+                'sourceFormDefinitionId':DEFINITION,'actionIdentifier':action}])
+    else:variables.update(formRenderIdentifier=RENDER,formDefinitionIdentifier=DEFINITION,actionIdentifier=action)
+    final_payload={'operationName':operation,'query':(Path(__file__).parent/'fixtures'/filename).read_text(),'variables':variables}
+    metadata=[('_systemfield_name','Name','text'),('_systemfield_email','Email','email')]
+    inputs=''.join(f'<div data-field-path="{path}" data-field-entry-id="{RENDER}_{path}"><label>{title}<input id="{path}" name="{path}" type="{kind}" required></label></div>' for path,title,kind in metadata)
+    html='<h1>Software Engineer Intern Summer 2027</h1><p>Build Python software in San Francisco, United States.</p><form>'+inputs+'''<label>Resume<input type="file" name="resume" required></label><button type="submit">Submit Application</button></form><script>
+const endpoint='/api/non-user-graphql';const query='''+json.dumps(QUERY)+''';const finalPayload='''+json.dumps(final_payload)+''';
+fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiJobPosting',query:'query ApiJobPosting { jobPosting { id } }',variables:{organizationHostedJobsPageName:'acme',jobPostingId:'''+json.dumps(REQ)+'''}})});
+for(const el of document.querySelectorAll('input:not([type=file])'))el.addEventListener('input',()=>{
+window.fixtureLastSave=fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiSetFormValue',query,variables:{organizationHostedJobsPageName:'acme',formRenderIdentifier:'''+json.dumps(RENDER)+''',formDefinitionIdentifier:'''+json.dumps(DEFINITION)+''',path:el.id,value:el.value}})}).catch(()=>{});
+});
+document.querySelector('form').onsubmit=e=>{e.preventDefault();window.fixtureClicks=(window.fixtureClicks||0)+1;
+const frame=document.createElement('iframe');frame.id='fixture-challenge';frame.src='https://www.google.com/recaptcha/api2/bframe';frame.style='width:300px;height:100px';document.body.append(frame);};
+window.fixtureHumanCompleted=async mode=>{
+if(mode==='changed_field'){const input=document.getElementById('_systemfield_email');input.value='unapproved@candidate.invalid';input.dispatchEvent(new Event('input'));await window.fixtureLastSave;}
+if(mode!=='lingering_frame')document.getElementById('fixture-challenge').remove();
+if(mode==='changed_payload')finalPayload.variables.answer='unapproved';
+try{const response=await fetch(endpoint,{method:'POST',body:JSON.stringify(finalPayload)});if(response.ok){
+const frame=document.getElementById('fixture-challenge');document.body.innerHTML='Thank you for applying. Your application was received.';if(frame)document.body.append(frame);}}catch{}
+};</script>'''
+    headed=os.environ.get('HIREME_TEST_HUMAN_VISIBLE')=='1'
+    if headed:store.update_settings({'headless':False})
+    with Browser(store) as b:
+        # The fixture drives actual frame detection and request routing in a
+        # headless test browser. Visible desktop operation is a separate gate.
+        store.update_settings({'headless':False,'human_verification_wait_seconds':1})
+        if not headed:b.visible=True
+        assert b.visible
+        actual_event=store.event
+        def event(kind,subject,detail):
+            actual_event(kind,subject,detail)
+            if kind=='human_verification' and detail['phase']=='challenge':
+                clicks.append(b.page.evaluate('()=>window.fixtureClicks'))
+                if mode=='pause':store.update_settings({'live_enabled':False})
+                elif mode!='timeout':b.page.evaluate('(mode)=>window.fixtureHumanCompleted(mode)',mode)
+        monkeypatch.setattr(store,'event',event)
+        class Route:
+            def __init__(self,route):self.route=route;self.request=route.request
+            def abort(self):self.route.abort()
+            def continue_(self):
+                data=json.loads(self.request.post_data)
+                if data['operationName']=='ApiJobPosting':result={'data':{'jobPosting':{'id':REQ,'applicationForm':native_form(),'surveyForms':[survey] if surveys else []}}}
+                elif data['operationName']=='ApiSetFormValue':
+                    assert not b.attempted
+                    v=data['variables'];remote[v['path']]=v['value'];result={'data':{'setFormValue':native_form()}}
+                else:
+                    assert data['operationName']==operation and remote=={'_systemfield_name':'Test Person','_systemfield_email':'test@candidate.invalid'}
+                    writes.append(data);result=submission_response(SimpleNamespace(),data,surveys).json()
+                    if mode=='bad_ack':result={'data':{'submitted':True}}
+                self.route.fulfill(status=200,content_type='application/json',body=json.dumps(result))
+        def serve(route):
+            if route.request.method=='GET':
+                route.fulfill(status=200,content_type='text/html',body='<p>Synthetic challenge</p>' if 'www.google.com' in route.request.url else html)
+            else:b._route(Route(route))
+        b.page.route('**/*',serve)
+        # Upload transport has separate fixtures. Acknowledge this synthetic
+        # document immediately after its exact hash-verified file is selected.
+        actual_control=b._control
+        class FixtureFile:
+            def __init__(self,locator):self.locator=locator
+            def __getattr__(self,name):return getattr(self.locator,name)
+            def set_input_files(self,path):
+                self.locator.set_input_files(path)
+                h=hashlib.sha256(Path(path).read_bytes()).hexdigest();assert h in b.upload_payloads
+                b.uploaded_files.add(h);b.ashby_attached_files.add(h)
+        def control(field,option=None):
+            locator=actual_control(field,option)
+            return FixtureFile(locator) if field['type']=='file' else locator
+        b._control=control
+        if mode in {'complete','lingering_frame'}:assert b.apply(job)=='confirmed'
+        elif mode=='bad_ack':assert b.apply(job)=='unknown'
+        else:
+            with pytest.raises(Blocked):b.apply(job)
+        assert clicks==[1]
+    assert len(writes)==int(mode in {'complete','lingering_frame','bad_ack'})
+    assert store.db.execute('SELECT state FROM applications').fetchone()[0]==('confirmed' if mode in {'complete','lingering_frame'} else 'unknown')
+    assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0]==1
 
 
 def composite_definition(**changes):

@@ -658,6 +658,7 @@ class Store:
             validate_package(self,job,package)
             self._check_budget(job,s)
             self.db.execute("UPDATE applications SET state='submitting',attempted=?,updated=? WHERE id=?",(now(),now(),aid))
+            self.db.execute("UPDATE jobs SET status='submitting',reason='',updated=? WHERE id=?",(now(),app['job_id']))
             self.event("submit_intent",aid,{"hash":app["hash"]})
         return package
 

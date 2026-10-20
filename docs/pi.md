@@ -14,6 +14,8 @@ HIREME_PI=1 ./setup.sh
 
 Setup selects system Chromium, headless application browsing and two discovery workers. Complete the applicant checklist, authenticate your selected model CLI on the Pi, and finish paused. Use the Pi's browser through Connect; sign-in on another computer does not connect the Pi's CLI or Gmail integration.
 
+For a compatible Ashby form that presents verification after the final click, Preferences can keep the same application browser open while you complete the challenge. Turn off background browsing, set **Wait for human verification** to between 1 and 600 seconds, and stay at the Pi desktop through Connect while the batch runs. A working desktop display is required; use a desktop terminal if the service has no display session. Zero turns the wait off. The worker does not solve challenges, and pause or timeout leaves the recorded outcome uncertain. Verify an uncertain attempt with the employer before applying again; this setting cannot reopen it.
+
 The initial dashboard runs in the foreground. Stop it with **Ctrl+C** before installing background services:
 
 ```bash

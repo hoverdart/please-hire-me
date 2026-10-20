@@ -35,6 +35,7 @@ DEFAULTS = {
     "onboarding_complete": False,
     "browser_channel": "chromium",
     "headless": False,
+    "human_verification_wait_seconds": 0,
     "discovery_workers": 6,
     "summer_2027_locations": ["United States", "Remote (US)"],
     "school_locations": ["San Francisco Bay Area", "Remote (US)"],
@@ -61,6 +62,11 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
     s = copy.deepcopy(DEFAULTS)
     s.update(copy.deepcopy(current or {}))
     s.update(changes)
+    wait=s['human_verification_wait_seconds']
+    if type(wait) is not int or not 0<=wait<=600:
+        raise ValueError('Human verification wait must be between 0 and 600 seconds')
+    if wait and s['headless']:
+        raise ValueError('Turn off background application browsing before enabling human verification waiting')
     if s['model_effort'] not in ('low','medium','high'):raise ValueError('Invalid model effort')
     if s['provider'] not in ('claude-cli','codex-cli','anthropic-api','openai-api'):raise ValueError('Unsupported provider')
     if s['deployment'] not in ('local','pi'):raise ValueError('Choose local or pi')

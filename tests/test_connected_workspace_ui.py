@@ -1,6 +1,7 @@
 import json
 import multiprocessing
 import socket
+import time
 from pathlib import Path
 import pytest
 from tests.test_dashboard import launch,wait_for_dashboard
@@ -79,3 +80,50 @@ def test_connection_and_artifact_routes_require_token_and_validate_input(dashboa
         assert request.post('/api/artifacts/generate',headers=headers,data=[]).status==400
         assert request.get('/api/jobs?source=handshake&destination=native',headers=headers).json()['total']==1
         request.dispose()
+
+
+@pytest.mark.parametrize('width',[320,1440])
+def test_human_verification_notice_and_preferences_preserve_drafts(dashboard,width):
+    from playwright.sync_api import sync_playwright,expect
+    phase=['challenge'];expires=time.time()+300
+    with sync_playwright() as p:
+        browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':1000});errors=[]
+        page.on('pageerror',lambda error:errors.append(str(error)))
+        def state_response(route):
+            response=route.fetch();payload=response.json();payload['worker_running']=True
+            payload['worker_mode']='live';payload['settings']['live_enabled']=True
+            payload['human_verification']=({'company':'Synthetic & Co <test>','title':'Software Engineer Intern',
+                'phase':phase[0],'expires_at':expires} if phase[0] else None)
+            payload['summary']['attention_count']=int(phase[0]=='challenge')
+            route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
+        page.route('**/api/state*',state_response)
+        page.goto(dashboard+'/#token=fixture-capability')
+        notice=page.locator('#human-verification-notice')
+        expect(notice).to_be_visible();expect(notice).to_contain_text('Synthetic & Co <test>')
+        expect(notice).to_contain_text('Don’t open a second application or click Submit again')
+        expect(page.locator('#worker-state')).to_have_text('Waiting for human verification')
+        expect(page.locator('#metric-attention')).to_have_text('1')
+        expect(page.locator('#today-attention')).to_contain_text('Complete verification')
+        assert 'No action needed' not in page.locator('#today-attention').inner_text()
+        page.locator('#today-attention').get_by_role('button',name='Synthetic & Co <test> · Complete verification').click()
+        expect(notice).to_be_focused()
+        assert notice.locator('img,script').count()==0
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.screenshot(path=f'/tmp/hireme-human-wait-{width}.png')
+        page.locator('[data-view=settings]').click()
+        wait=page.locator('#settings-form [name=human_verification_wait_seconds]')
+        wait.fill('60');page.locator('#settings-form button[type=submit]').click()
+        expect(page.locator('#notice')).to_contain_text('background')
+        expect(wait).to_have_value('60')
+        page.locator('#settings-form [name=headless]').uncheck()
+        page.locator('#settings-form button[type=submit]').click()
+        expect(page.locator('#notice')).to_contain_text('preferences saved')
+        wait.fill('90');wait.focus();phase[0]='checking_receipt'
+        page.evaluate('refresh()')
+        expect(page.locator('#human-verification-title')).to_have_text('Checking this application')
+        expect(wait).to_have_value('90');expect(wait).to_be_focused()
+        wait.locator('..').screenshot(path=f'/tmp/hireme-human-wait-setting-{width}.png')
+        phase[0]=None;page.evaluate('refresh()');expect(notice).to_be_hidden()
+        expect(wait).to_have_value('90');expect(wait).to_be_focused()
+        assert not errors
+        browser.close()

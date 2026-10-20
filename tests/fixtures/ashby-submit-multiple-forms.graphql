@@ -1,0 +1,108 @@
+mutation ApiSubmitMultipleFormsAction($organizationHostedJobsPageName: String!, $jobPostingId: String!, $applicationFormRenderIdentifier: String!, $applicationFormActionIdentifier: String!, $applicationFormDefinitionIdentifier: String, $surveyIdentifiers: [JSON!]!, $recaptchaToken: String!, $sourceAttributionCode: String, $viewedAutomatedProcessingLegalNoticeRuleId: String, $deviceFingerprint: String, $applicationRequestId: String) {
+  submitMultipleFormsAction(
+    organizationHostedJobsPageName: $organizationHostedJobsPageName
+    jobPostingId: $jobPostingId
+    applicationFormRenderIdentifier: $applicationFormRenderIdentifier
+    applicationFormActionIdentifier: $applicationFormActionIdentifier
+    applicationFormDefinitionIdentifier: $applicationFormDefinitionIdentifier
+    surveyIdentifiers: $surveyIdentifiers
+    recaptchaToken: $recaptchaToken
+    sourceAttributionCode: $sourceAttributionCode
+    viewedAutomatedProcessingLegalNoticeRuleId: $viewedAutomatedProcessingLegalNoticeRuleId
+    deviceFingerprint: $deviceFingerprint
+    applicationRequestId: $applicationRequestId
+  ) {
+    applicationFormResult {
+      ... on FormRender {
+        ...FormRenderParts
+        __typename
+      }
+      ... on FormSubmitSuccess {
+        _
+        __typename
+      }
+      __typename
+    }
+    surveyFormResults {
+      ... on FormRender {
+        ...FormRenderParts
+        __typename
+      }
+      ... on FormSubmitSuccess {
+        _
+        __typename
+      }
+      __typename
+    }
+    messages {
+      blockMessageForCandidateHtml
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment JSONBoxParts on JSONBox {
+  value
+  __typename
+}
+
+fragment FileParts on File {
+  id
+  filename
+  __typename
+}
+
+fragment FormFieldEntryParts on FormFieldEntry {
+  id
+  field
+  fieldValue {
+    ... on JSONBox {
+      ...JSONBoxParts
+      __typename
+    }
+    ... on File {
+      ...FileParts
+      __typename
+    }
+    ... on FileList {
+      files {
+        ...FileParts
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+  isRequired
+  descriptionHtml
+  isHidden
+  __typename
+}
+
+fragment FormRenderParts on FormRender {
+  id
+  formControls {
+    identifier
+    title
+    __typename
+  }
+  errorMessages
+  formErrors {
+    message
+    fieldEntryId
+    __typename
+  }
+  sections {
+    title
+    descriptionHtml
+    fieldEntries {
+      ...FormFieldEntryParts
+      __typename
+    }
+    isHidden
+    __typename
+  }
+  sourceFormDefinitionId
+  __typename
+}
