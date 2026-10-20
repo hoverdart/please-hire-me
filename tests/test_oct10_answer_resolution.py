@@ -239,6 +239,56 @@ def test_question_details_are_visible_and_bind_agreement_approval(store, job):
         resolve(store, job['host'], changed, context=job)
 
 
+@pytest.mark.parametrize('change', ['wording', 'policy'])
+def test_lever_single_checkbox_declaration_binds_exact_approval(store, job, change):
+    from hireme.browser import Browser
+    from hireme.question_ledger import search_questions
+    from hireme.field_context import field_context
+    scope = 'jobs.lever.co|synthetic'
+    with Browser(store, test_url='http://127.0.0.1:12345') as b:
+        b.page.set_content('''<li class="application-question custom-question">
+            <div class="application-label"><div class="text">Information confirmation<span>*</span></div></div>
+            <div class="application-field"><ul data-qa="checkboxes"><li><label>
+            <input type="checkbox" name="confirmation" value="confirmed" required>
+            <span class="application-answer-alternative">I confirm these details under the
+              <a href="https://employer.invalid/policy-v1">application policy</a>.</span>
+            </label></li></ul></div></li>''')
+        original = b._snapshot()[0]
+        assert original['label'] == 'Information confirmation*'
+        assert 'I confirm these details' in original['help_text']
+        assert original['help_links'] == [{'text': 'application policy', 'url': 'https://employer.invalid/policy-v1'}]
+        qid = store.ask(job['id'], scope, original['label'], original['options'], field=original, context=job)
+        assert search_questions(store)['questions'][0]['field_context']['help_text'] == original['help_text']
+        # An older approval of just the heading cannot authorize this declaration.
+        heading_only = {k:v for k,v in original.items() if k not in {'help_text', 'help_links'}}
+        old = store.ask(job['id'], scope, original['label'], original['options'], field=heading_only, context=job)
+        store.answer_question(old, 'Yes')
+        with pytest.raises(Blocked):resolve(store, scope, original, context=job)
+        store.answer_question(qid, 'Yes')
+        assert resolve(store, scope, original, context=job)['value'] == 'Yes'
+        b._control(original).check()
+        checked = b._snapshot()[0]
+        assert field_context(scope, original, job) == field_context(scope, checked, job)
+        if change == 'wording':
+            b.page.locator('.application-answer-alternative').evaluate('(e)=>e.prepend("I also consent to marketing. ")')
+        else:
+            b.page.locator('a').evaluate('(e)=>e.href="https://employer.invalid/policy-v2"')
+        changed = b._snapshot()[0]
+        assert changed['label'] == original['label'] and changed['options'] == original['options']
+        with pytest.raises(Blocked):resolve(store, scope, changed, context=job)
+
+
+def test_lever_checkbox_group_choices_do_not_become_a_single_declaration(store):
+    from hireme.browser import Browser
+    with Browser(store, test_url='http://127.0.0.1:12345') as b:
+        b.page.set_content('''<div class="application-question"><div class="application-label">Languages*</div>
+            <label><input type="checkbox" name="languages" value="Python">Python</label>
+            <label><input type="checkbox" name="languages" value="Rust">Rust</label></div>''')
+        f = b._snapshot()[0]
+    assert f['type'] == 'checkbox-group' and f['options'] == ['Python', 'Rust']
+    assert 'help_text' not in f and 'help_links' not in f
+
+
 def test_discipline_search_reaches_other_beyond_initial_menu(store, job):
     from hireme.browser import Browser
     store.put_facts({'major': 'Electrical Engineering and Computer Sciences'})

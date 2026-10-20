@@ -29,6 +29,13 @@ SNAPSHOT=r"""selector => {
  function details(el) {
   const wrapper=el.closest('[data-field-path],.ashby-application-form-field-entry,.application-question,.field,.field-wrapper');
   const descriptions=Array.from(wrapper?.querySelectorAll('.ashby-application-form-question-description,.field-description,.helper-text,.body__secondary')||[]);
+  // Lever separates a single checkbox's heading from the actual declaration
+  // in its label. Approval must bind that wording and its policy links, too.
+  if(el.type==='checkbox' && wrapper?.matches('.application-question') && wrapper.querySelectorAll('input[type=checkbox]').length===1){
+   for(const node of Array.from(el.labels||[])){
+    if(labelText(node) && labelText(node)!==leverLabel(el) && !descriptions.some(n=>n.contains(node)))descriptions.push(node);
+   }
+  }
   for(const id of (el.getAttribute('aria-describedby')||'').split(/\s+/).filter(Boolean)){
    // React-select placeholders and validation/live-region text change after
    // entry. They are widget state rather than employer question wording.

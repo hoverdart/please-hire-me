@@ -1878,6 +1878,18 @@ function renderQuestionList() {
     const box = el("article", undefined, "question");
     box.append(el("h3", x.label));
     if (x.field_context?.section) box.append(el("p", `Form section: ${x.field_context.section}${Number.isInteger(x.field_context.section_entry) ? ` · entry ${x.field_context.section_entry + 1}` : ""}`, "help"));
+    const wording = typeof x.field_context?.help_text === "string" && x.field_context.help_text.trim()
+      ? el("p", x.field_context.help_text) : null;
+    if (wording) {
+      wording.id = `question-wording-${x.id}`;
+      box.append(wording);
+    }
+    for (const source of Array.isArray(x.field_context?.help_links) ? x.field_context.help_links : []) {
+      if (!source || typeof source.url !== "string" || !/^https:\/\//.test(source.url)) continue;
+      const policy = el("p");
+      policy.append(link(source.url, typeof source.text === "string" && source.text.trim() ? source.text : "Employer policy"));
+      box.append(policy);
+    }
     if (x.company)
       box.append(
         state.demo
@@ -1908,6 +1920,7 @@ function renderQuestionList() {
     const input = options.length ? el("select") : el("textarea");
     input.required = true;
     input.setAttribute("aria-label", x.label);
+    if (wording) input.setAttribute("aria-describedby", wording.id);
     if (options.length) {
       input.append(new Option("Choose an answer", ""));
       options.forEach((v) => input.append(new Option(v, v)));

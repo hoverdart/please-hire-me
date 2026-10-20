@@ -392,6 +392,41 @@ def test_question_pages_keep_old_employer_context_and_protect_unsaved_answers(st
     finally: process.terminate(); process.join(5)
 
 
+@pytest.mark.parametrize('width', [320, 1440])
+def test_question_review_shows_employer_wording_and_safe_policy_links_before_answer(store, job, tmp_path, width):
+    from playwright.sync_api import sync_playwright, expect
+    wording = 'I confirm the application details under this policy. <img src=x onerror=window.badContext=true> ' + 'Review_this_long_employer_statement_' * 12
+    field = {'label':'Information confirmation', 'type':'checkbox', 'required':True,
+             'options':['Yes','No'], 'help_text':wording,
+             'help_links':[{'text':'Application policy','url':'https://employer.invalid/policy'},
+                           {'text':'Unsafe policy','url':'javascript:window.badContext=true'}]}
+    store.ask(job['id'], job['host'], field['label'], field['options'], field=field, context=job)
+    sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
+    process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
+    base = f'http://127.0.0.1:{port}'
+    try:
+        wait_for_dashboard(process,base)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(); page = browser.new_page(viewport={'width':width, 'height':1000}); errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=questions]').click()
+            question = page.locator('#question-list article')
+            expect(question).to_have_count(1)
+            explanation = question.locator('p').filter(has_text='I confirm the application details')
+            expect(explanation).to_have_text(wording)
+            assert explanation.evaluate('(e)=>Boolean(e.compareDocumentPosition(e.parentElement.querySelector("form")) & Node.DOCUMENT_POSITION_FOLLOWING)')
+            expect(question.get_by_role('link', name='Application policy')).to_have_attribute('href','https://employer.invalid/policy')
+            expect(question.get_by_role('link', name='Application policy')).to_have_attribute('rel','noopener noreferrer')
+            expect(question.get_by_text('Unsafe policy')).to_have_count(0)
+            expect(question.locator('select').first).to_have_value('')
+            expect(question.locator('select').first).to_have_attribute('aria-describedby', explanation.get_attribute('id'))
+            assert page.evaluate('window.badContext === undefined && document.documentElement.scrollWidth <= innerWidth')
+            assert not errors
+            page.screenshot(path=str(tmp_path / f'question-wording-{width}.png'), full_page=True)
+            browser.close()
+    finally: process.terminate(); process.join(5)
+
+
 def test_unresolved_outcome_pages_preserve_old_context_and_require_explicit_verification(store, job):
     from playwright.sync_api import sync_playwright, expect
     from hireme.util import digest
