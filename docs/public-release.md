@@ -20,6 +20,8 @@ Ordinary posting prose about proving that software works does not request an app
 
 Generated narrative reviews receive current confirmed facts alongside source excerpts, with current values taking precedence over older source wording. Confirmed fact changes invalidate cached writing.
 
+Exact hourly-rate and LinkedIn example labels can use the corresponding confirmed facts without model inference. Hourly fields still require a confirmed hourly amount; an annual salary cannot establish it. Failed model requests retain their reason and recognized CLI result type beside the request record, excluding provider prose, prompts and answers.
+
 The unanswered-question queue shows captured employer explanations and policy links before the answer control. A Lever checkbox's separate declaration is part of its approval context; an unchanged heading does not authorize changed wording or policy links.
 
 Receipt detection requires fresh completed-application wording after the final click; generic acknowledgements, conditional instructions and incomplete/error messages remain uncertain. Gmail's saved connection status is distinct from `gmail check`, which verifies current API access without reading or sending messages.

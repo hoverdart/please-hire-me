@@ -18,6 +18,9 @@ def field(label):
      'name_pronunciation','Test Person','Test Person'),
     ('What is your expected hourly pay range for this internship?',
      'salary','$35/hr','35'),
+    ('Desired Hourly Rate?', 'salary','$35/hr','35'),
+    ('Linkedin Profile (www.linkedin.com/in/YOURINFO)',
+     'linkedin','https://www.linkedin.com/in/synthetic-applicant','https://www.linkedin.com/in/synthetic-applicant'),
 ])
 def test_email_question_uses_confirmed_fact_and_revalidates(store,job,package,label,key,value,expected):
     f=field(label)
@@ -32,10 +35,22 @@ def test_email_question_uses_confirmed_fact_and_revalidates(store,job,package,la
     with pytest.raises(Blocked):validate_package(store,job,package)
 
 
-def test_hourly_expectation_never_converts_an_annual_salary(store,job):
+@pytest.mark.parametrize('label', ['What is your expected hourly pay range for this internship?', 'Desired Hourly Rate?'])
+def test_hourly_expectation_never_converts_an_annual_salary(store,job,label):
     store.put_facts({'salary':'$100000/year'})
     with pytest.raises(Blocked,match='missing_fact'):
-        resolve(store,job['host'],field('What is your expected hourly pay range for this internship?'),context=job)
+        resolve(store,job['host'],field(label),context=job)
+
+
+@pytest.mark.parametrize('label', [
+    'Linkedin Profile (www.linkedin.com/in/YOURINFO) of your reference',
+    'Linkedin Profile (www.linkedin.com/in/company-contact)',
+    'Desired Hourly Rate in EUR?',
+    'Minimum Hourly Rate required by your previous employer?',
+])
+def test_example_profile_and_hourly_mapping_do_not_expand_to_other_requests(store,job,label):
+    store.put_facts({'linkedin':'https://www.linkedin.com/in/synthetic-applicant','salary':'$35/hr'})
+    with pytest.raises(Blocked):resolve(store,job['host'],field(label),context=job)
 
 
 def test_fulltime_start_never_comes_from_internship_start_or_graduation(store,job):

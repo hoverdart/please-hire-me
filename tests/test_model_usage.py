@@ -47,6 +47,50 @@ def test_failed_request_never_reuses_previous_call_token_counts(store,monkeypatc
     assert json.loads(rows[1]['usage'])=={} and rows[1]['success']==0
 
 
+@pytest.mark.parametrize('code,subtype,is_error,reason',[
+    (1,'error_max_structured_output_retries',True,'provider_error'),
+    (0,'success',False,'provider_invalid_output'),
+    (1,'private-provider-text',True,'provider_error'),
+])
+def test_failure_diagnostics_link_request_without_provider_text_or_sources(store,monkeypatch,code,subtype,is_error,reason):
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _:'/fixture/claude')
+    def run(args,**kwargs):
+        if args[1:]==['auth','status']:
+            return SimpleNamespace(returncode=0,stdout=json.dumps({'loggedIn':True,'authMethod':'claude.ai','subscriptionType':'pro'}))
+        return SimpleNamespace(returncode=code,stdout=json.dumps({'subtype':subtype,'is_error':is_error,
+            'result':'private-provider-text','errors':['private-provider-text'],
+            'structured_output':{'private':'private-provider-text'}}),stderr='private-provider-text')
+    monkeypatch.setattr('hireme.provider.subprocess.run',run)
+    with pytest.raises(Blocked,match=reason):ManagedProvider(store,90).choose_answer('private-question',[])
+    failure=store.db.execute("SELECT subject,detail FROM events WHERE kind='model_request_failed'").fetchone()
+    metadata=store.db.execute('SELECT request_id,success FROM model_request_metadata').fetchone()
+    assert failure['subject']==str(metadata['request_id']) and metadata['success']==0
+    detail=json.loads(failure['detail'])
+    expected={'returncode':code,'is_error':is_error}
+    if subtype!='private-provider-text':expected['subtype']=subtype
+    assert detail=={'reason':reason,'cli':expected}
+    assert 'private-' not in failure['detail']
+
+
+def test_timeout_diagnostics_cannot_reuse_previous_cli_response(store,monkeypatch):
+    import subprocess
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _:'/fixture/claude')
+    calls=0
+    def run(args,**kwargs):
+        nonlocal calls
+        if args[1:]==['auth','status']:
+            return SimpleNamespace(returncode=0,stdout=json.dumps({'loggedIn':True,'authMethod':'claude.ai','subscriptionType':'pro'}))
+        calls+=1
+        if calls==1:return SimpleNamespace(returncode=0,stdout=json.dumps({'subtype':'success','structured_output':{'answer_id':None}}))
+        raise subprocess.TimeoutExpired(args,90)
+    monkeypatch.setattr('hireme.provider.subprocess.run',run)
+    provider=ManagedProvider(store,90)
+    provider.choose_answer('synthetic',[])
+    with pytest.raises(Blocked,match='provider_timeout'):provider.choose_answer('synthetic',[])
+    detail=json.loads(store.db.execute("SELECT detail FROM events WHERE kind='model_request_failed'").fetchone()[0])
+    assert detail=={'reason':'provider_timeout','cli':{}}
+
+
 @pytest.mark.parametrize('provider,usage,expected',[
  ('openai-api',{'prompt_tokens':10,'completion_tokens':4,'total_tokens':14}, {'input_tokens':10,'output_tokens':4}),
  ('anthropic-api',{'input_tokens':10,'output_tokens':4,'cache_read_input_tokens':30,'other':'private'}, {'input_tokens':10,'output_tokens':4,'cache_read_input_tokens':30}),

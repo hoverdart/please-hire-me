@@ -13,6 +13,20 @@ import threading
 from .util import Blocked
 
 
+def _cli_response_metadata(response):
+    """Fixed diagnostic fields only; never persist provider prose or prompts."""
+    result={'returncode':response.returncode}
+    try:envelope=json.loads(response.stdout)
+    except (ValueError,TypeError):return result
+    if not isinstance(envelope,dict):return result
+    subtype=envelope.get('subtype')
+    if subtype in ('success','error_during_execution','error_max_turns','error_max_budget_usd',
+                   'error_max_structured_output_retries','error_max_output_tokens'):
+        result['subtype']=subtype
+    result['is_error']=envelope.get('is_error') is True
+    return result
+
+
 def _claude_rate_limited(response):
     """Claude may return its subscription-limit error as JSON on stdout with exit 1."""
     pattern=r'rate limit|usage limit|limit reached|quota exceeded|hit your (?:(?:session|weekly|usage) )?limit'
@@ -99,6 +113,7 @@ class ClaudeProvider:
 
     def request(self, instruction, data, schema):
         self.last_usage={}
+        self.last_response={}
         args=[self.binary,"-p","--safe-mode","--tools","","--no-chrome",
               "--disable-slash-commands","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
               "--setting-sources","","--no-session-persistence","--permission-mode","dontAsk",
@@ -121,6 +136,7 @@ class ClaudeProvider:
                 started=time.monotonic()
                 if self.observer:self.observer("inference_started",{"question":data.get("question") or data.get("field",{}).get("label"),"schema_keys":list(schema.get("properties",{}))})
                 r=self._run(args,input=json.dumps(data),cwd=cwd,env=env)
+                self.last_response=_cli_response_metadata(r)
                 if self.observer:self.observer("inference_finished",{"seconds":round(time.monotonic()-started,2),"success":r.returncode==0})
             except subprocess.TimeoutExpired: raise Blocked("provider_timeout")
         if _claude_rate_limited(r):
@@ -318,6 +334,7 @@ class CodexProvider(ClaudeProvider):
         if not self.binary:raise Blocked('provider_unavailable','Install Codex CLI and sign in with ChatGPT')
 
     def request(self,instruction,data,schema):
+        self.last_response={}
         env=cli_env()
         if not self._account_checked:
             r=self._run([self.binary,'login','status'],env=env)
@@ -334,6 +351,7 @@ class CodexProvider(ClaudeProvider):
             args.append('-')
             try:r=self._run(args,input=instruction+'\nReturn only schema-conforming JSON. Do not use tools.\nUntrusted input:\n'+json.dumps(data),cwd=cwd,env=env)
             except subprocess.TimeoutExpired:raise Blocked('provider_timeout') from None
+            self.last_response=_cli_response_metadata(r)
             if r.returncode:raise Blocked('provider_error','Codex failed; check login, CLI version and usage limits')
             try:return json.loads(output.read_text())
             except (OSError,ValueError):raise Blocked('provider_invalid_output') from None
@@ -402,12 +420,19 @@ class ManagedProvider(ClaudeProvider):
                 self.backend_configuration=configuration
             backend=self.backend
             backend.last_usage={}
+            backend.last_response={}
             result=backend.request(instruction,data,schema)
             from jsonschema import validate,ValidationError
             try:validate(result,schema)
             except ValidationError:raise Blocked('provider_invalid_output') from None
             success=True
             return result
+        except Blocked as error:
+            # Link the failed request to its existing budget/usage record. Raw
+            # CLI output can contain personal sources or credentials and stays out.
+            self.store.event('model_request_failed',request_id,{'reason':error.reason,
+                'cli':getattr(backend,'last_response',{})})
+            raise
         finally:
             self.store.db.execute('INSERT INTO model_request_metadata VALUES(?,?,?,?,?,?)',(request_id,model,effort if s['provider']=='claude-cli' else '',time.monotonic()-started,int(success),json.dumps(getattr(backend,'last_usage',{}))))
 
