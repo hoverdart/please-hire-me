@@ -353,6 +353,7 @@ def test_complex_history_or_unsourced_school_stays_held(store,job,package,change
 
 @pytest.mark.parametrize('mode',['saved','unverified_id','wrong_ack'])
 def test_browser_routes_canonical_school_lookup_and_exact_history_save(store,job,package,monkeypatch,mode):
+    import time
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     d,proof,read,result,official=school_draft(store,job,package,observe=False)
     d.package=None;d.grants={}
@@ -382,10 +383,14 @@ window.post = data => fetch('/api/non-user-graphql', {method:'POST',body:JSON.st
             else:b._route(Route(route))
         b.page.route('**/*',serve)
         b.page.goto(d.job['url'])
-        b.page.evaluate('() => post(lookup)');b.page.wait_for_timeout(100)
+        b.page.evaluate('() => post(lookup)')
+        deadline=time.monotonic()+10
+        while not d.schools and time.monotonic()<deadline:b.page.wait_for_timeout(50)
         assert d.schools=={SCHOOL:{'fixture-school'}}
         d.enable(b,proof['answers'],proof)
-        b.page.evaluate('() => post(save)');b.page.wait_for_timeout(100)
+        b.page.evaluate('() => post(save)')
+        deadline=time.monotonic()+10
+        while mode!='unverified_id' and not (d.complete or d.failed) and time.monotonic()<deadline:b.page.wait_for_timeout(50)
         assert len(writes)==(mode!='unverified_id')
         assert d.complete is (mode=='saved')
         assert d.failed is (mode=='wrong_ack')
