@@ -38,6 +38,8 @@ School-only Ashby education fields can save one confirmed university when its ex
 
 Ashby radio and checkbox groups use the verified form's exact choice-label/value pairs when native inputs omit their values. Missing, archived or ambiguous choices remain held; different labels, extra selections and unacknowledged saves cannot authorize submission.
 
+Choice labels are trimmed to match their visible text. Original wire values retain their whitespace, and labels that become ambiguous after trimming remain held.
+
 Descriptive US work-authorization choices naming any employer require confirmed US citizenship or an unrestricted-authorization declaration, alongside US posting context. General authorization or a lack of sponsorship need cannot establish that status.
 
 An exact prefilled value in a verified official Ashby form response is already acknowledged; a visible browser value alone is insufficient. The posting's exact Application tab can provide a navigation-only entry when the page has ambiguous Apply buttons.

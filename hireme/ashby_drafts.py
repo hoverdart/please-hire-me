@@ -32,8 +32,12 @@ def official_choices(metadata, field, selected):
             raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choice status changed')
         if row.get('isArchived') is True:continue
         label=row.get('label');value=row.get('value')
-        if (not isinstance(label,str) or not 0<len(label)<=1000 or not isinstance(value,str) or not 0<len(value)<=1000
-                or label in mapping or value in values):
+        if not isinstance(label,str) or not 0<len(label)<=1000 or not isinstance(value,str) or not 0<len(value)<=1000:
+            raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choices are ambiguous')
+        # Visible radio/checkbox labels are trimmed by the form snapshot.
+        # Preserve the original wire value, including its whitespace.
+        label=label.strip()
+        if not label or label in mapping or value in values:
             raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby choices are ambiguous')
         mapping[label]=value;values.add(value)
     options=field.get('options',[])

@@ -291,7 +291,24 @@ def test_official_choices_encode_controls_without_native_value_attributes(store,
 
 
 @pytest.mark.parametrize('kind',['radio','checkbox-group'])
-@pytest.mark.parametrize('change',['missing','malformed','label','duplicate_label','duplicate_value','archived','archive_status','nonstring_value'])
+def test_trimmed_visible_choice_labels_retain_original_wire_values(store,job,package,kind):
+    d,proof,official,value=choice_draft(store,job,package,kind)
+    for row in d.forms[RENDER]['entries']['fixture-choice']['selectableValues']:
+        row['label']=' '+row['label']+' '
+        row['value']=' '+row['value']+' '
+    value=[' '+item+' ' for item in value] if isinstance(value,list) else ' '+value+' '
+    d.enable(None,proof['answers'],proof)
+    altered=[item.strip() for item in value] if isinstance(value,list) else value.strip()
+    r,data=request(altered,path='fixture-choice');assert not d.allow(r,data,'altered')
+    r,data=request(value,path='fixture-choice');assert d.allow(r,data,'choice')
+    official['sections'][0]['fieldEntries'][-1]['fieldValue']={'value':value}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'choice')
+    assert d.complete
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('kind',['radio','checkbox-group'])
+@pytest.mark.parametrize('change',['missing','malformed','label','duplicate_label','trimmed_duplicate_label','blank_label','duplicate_value','archived','archive_status','nonstring_value'])
 def test_unverified_official_choice_metadata_never_grants_a_write(store,job,package,kind,change):
     d,proof,_,value=choice_draft(store,job,package,kind)
     metadata=d.forms[RENDER]['entries']['fixture-choice'];rows=metadata['selectableValues']
@@ -299,6 +316,8 @@ def test_unverified_official_choice_metadata_never_grants_a_write(store,job,pack
     elif change=='malformed':rows.append(None)
     elif change=='label':rows[0]['label']='Different choice'
     elif change=='duplicate_label':rows[1]['label']=rows[0]['label']
+    elif change=='trimmed_duplicate_label':rows[1]['label']=' '+rows[0]['label']+' '
+    elif change=='blank_label':rows[0]['label']=' \t '
     elif change=='duplicate_value':rows[1]['value']=rows[0]['value']
     elif change=='archived':rows[0]['isArchived']=True
     elif change=='archive_status':rows[0]['isArchived']='false'
@@ -327,13 +346,20 @@ def test_official_choice_save_requires_the_exact_acknowledged_values(store,job,p
 
 
 @pytest.mark.parametrize('kind',['radio','checkbox-group'])
-def test_native_controls_with_default_on_save_only_approved_official_choice_values(store,job,package,monkeypatch,kind):
+@pytest.mark.parametrize('padded',[False,True])
+def test_native_controls_with_default_on_save_only_approved_official_choice_values(store,job,package,monkeypatch,kind,padded):
     import time
     from html import escape
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     d,proof,official,value=choice_draft(store,job,package,kind);field=proof['answers'][0]['field']
+    if padded:
+        for row in official['sections'][0]['fieldEntries'][-1]['field']['selectableValues']:
+            row['label']=' '+row['label']+' ';row['value']=' '+row['value']+' '
+        value=[' '+item+' ' for item in value] if isinstance(value,list) else ' '+value+' '
     wire=[row['value'] for row in official['sections'][0]['fieldEntries'][-1]['field']['selectableValues']]
-    inputs=''.join('<label><input type="'+('radio' if kind=='radio' else 'checkbox')+'" name="choices" id="choice-'+str(i)+'">'+escape(label)+'</label>' for i,label in enumerate(field['options']))
+    labels=[row['label'] for row in official['sections'][0]['fieldEntries'][-1]['field']['selectableValues']]
+    inputs=''.join('<label><input type="'+('radio' if kind=='radio' else 'checkbox')+'" name="choices" id="choice-'+str(i)+'">'+escape(label)+'</label>' for i,label in enumerate(labels))
+    inputs='<fieldset class="'+('ashby-application-form-input-checkbox-group' if kind=='checkbox-group' else '')+'"><legend>'+escape(field['label'])+'</legend>'+inputs+'</fieldset>'
     envelope=request(value,path='fixture-choice')[1];writes=[]
     html='<h1>Synthetic native choices</h1>'+inputs+'<script>const wire='+json.dumps(wire)+';const envelope='+json.dumps(envelope)+''';
 const inputs=[...document.querySelectorAll('input')];
@@ -355,6 +381,7 @@ fetch('/api/non-user-graphql',{method:'POST',body:JSON.stringify({...envelope,va
             else:b._route(Route(route))
         b.page.route('**/*',serve);b.page.goto(d.job['url'])
         assert b.page.locator('input').evaluate_all('(nodes)=>nodes.every(n=>n.getAttribute("value")===null&&n.value==="on")')
+        assert b._snapshot()[0]['options']==field['options']
         d.enable(b,proof['answers'],proof);b._fill(proof['answers'][0])
         deadline=time.monotonic()+10
         while not (d.complete or d.failed) and time.monotonic()<deadline:b.page.wait_for_timeout(50)
