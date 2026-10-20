@@ -179,7 +179,14 @@ def recheck(store,job_id):
     except Blocked as error:
         hold(store,job,error.reason,error.detail,'screening');return {'ready':False,'reason':error.reason}
     available=ready(store,job)
-    previous=store.db.execute('SELECT category,retry_at,retry_count,reason FROM job_holds WHERE job_id=?',(job_id,)).fetchone()
+    previous=store.db.execute('SELECT category,retry_at,retry_count,reason,dependency FROM job_holds WHERE job_id=?',(job_id,)).fetchone()
+    if (not available and previous and previous['reason']=='human_work_sample'
+            and previous['dependency']!=dependency(store,job,previous['category'],previous['reason'])):
+        # An explicit review can request a fresh read after a guard repair.
+        # The browser and question resolver still refuse actual assessments;
+        # safe_state above prevents this from reconciling an existing attempt.
+        available=True
+        store.event('work_sample_recheck_requested',job_id,{'reason':previous['reason']})
     if not available and previous and previous['category']=='transient' and previous['retry_at'] is None:
         # This explicit dashboard action is the review path promised for an
         # exhausted transient hold. It never reconciles an attempted outcome.

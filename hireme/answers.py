@@ -32,7 +32,14 @@ RULES = [
     (r"^(desired salary|salary expectations|desired compensation)\*?$", "salary"),
     (r"^notice period\*?$", "notice_period"),
 ]
-REFUSE = re.compile(r"do not use (?:ai|artificial intelligence)|don.t use ai|without (?:ai|artificial intelligence)|graded (?:test|work|assessment)|solve this|prove that|coding challenge",re.I)
+RESTRICTED_WORK = r"do not use (?:ai|artificial intelligence)|don.t use ai|without (?:ai|artificial intelligence)|graded (?:test|work|assessment)|solve this|coding challenge"
+# Question labels remain deliberately strict. Posting prose can describe
+# proving that software works without asking the applicant for a proof.
+REFUSE = re.compile(RESTRICTED_WORK+r"|prove that",re.I)
+PROOF_INSTRUCTION = (r"(?:^|[\n.!?:;]\s*)(?:[-*•]\s*)?(?:(?:please|can you|could you)\s+)?"
+                     r"(?:using [^.!?\n]{1,100},\s*)?prove that\b"
+                     r"|\b(?:please|your task is to|you (?:must|are asked to|are required to))\s+prove that\b")
+PAGE_REFUSE = re.compile(RESTRICTED_WORK+'|'+PROOF_INSTRUCTION,re.I)
 
 
 def field_key(label):

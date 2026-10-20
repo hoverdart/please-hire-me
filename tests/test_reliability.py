@@ -403,3 +403,28 @@ def test_funnel_does_not_reuse_review_from_before_the_current_attempt(store,job,
     if finished:store.event('application_finished',job['id'],{'run_id':'new-run','outcome':'blocked'})
     result=cycle_funnel(store)
     assert result['blocked']==int(finished) and result['confirmed']==0 and result['reconciled']==0
+
+
+def test_explicit_work_sample_recheck_after_guard_update_is_a_fresh_read_not_a_submission(store,job,monkeypatch):
+    from hireme.job_holds import recheck
+    store.block(job['id'],'human_work_sample')
+    hold(store,job,'human_work_sample')
+    assert not ready(store,job)
+    assert recheck(store,job['id'])=={'ready':False,'reason':'unchanged_hold'}
+    import hireme.job_holds as holds
+    monkeypatch.setattr(holds,'ADAPTER_VERSION',holds.ADAPTER_VERSION+1)
+    assert not ready(store,job)  # Updating code does not automatically retry it.
+    assert recheck(store,job['id'])=={'ready':True,'reason':''}
+    assert ready(store,job)
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_work_sample_recheck_cannot_release_an_uncertain_application(store,job,package,monkeypatch):
+    from hireme.job_holds import recheck
+    import hireme.job_holds as holds
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown','Outcome needs verification')
+    hold(store,job,'human_work_sample')
+    monkeypatch.setattr(holds,'ADAPTER_VERSION',holds.ADAPTER_VERSION+1)
+    with pytest.raises(ValueError,match='Verify the existing submission outcome'):recheck(store,job['id'])
+    assert store.db.execute('SELECT state FROM applications WHERE id=?',(aid,)).fetchone()[0]=='unknown'

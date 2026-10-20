@@ -16,6 +16,8 @@ The configured version is **0.5.0rc2**, a public release candidate for a self-ho
 
 Models can still make factual mistakes. Grounding reviews, confirmed sources and deterministic validators reduce risk but do not establish universal answer correctness. Unknown personal/legal facts require applicant input. An HTTP 200 response, prepared draft or saved remote draft is not an accepted application.
 
+Ordinary posting prose about proving that software works does not request an applicant proof. Explicit proof instructions, proof questions and no-AI restrictions still require manual completion. After a guard update, Recheck can request a fresh read of an earlier work-sample hold; it cannot reconcile or retry a recorded application attempt.
+
 Generated narrative reviews receive current confirmed facts alongside source excerpts, with current values taking precedence over older source wording. Confirmed fact changes invalidate cached writing.
 
 Receipt detection requires fresh completed-application wording after the final click; generic acknowledgements, conditional instructions and incomplete/error messages remain uncertain. Gmail's saved connection status is distinct from `gmail check`, which verifies current API access without reading or sending messages.

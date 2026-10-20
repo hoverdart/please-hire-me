@@ -1280,3 +1280,42 @@ def test_post_submit_blocker_retains_reason_without_exception_data_or_retry(stor
     assert event=={'stage':'outcome_wait','type':'Blocked','reason':'captcha_blocked'}
     assert 'private.invalid' not in app['confirmation']+json.dumps(event)
     assert len(ats[1])==1
+
+
+@pytest.mark.parametrize('description',[
+    'Measure results. You write evaluations and tests so you can prove that your AI-powered work is good.',
+    'Our engineers use tests to improve that experience for users.',
+])
+def test_ordinary_posting_prose_about_proving_work_does_not_become_an_assessment(store,ats,description):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('<body>','<body><section>'+description+'</section>')
+    with Browser(store,test_url=ats[0]) as browser:
+        browser.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html) if route.request.method=='GET' else route.fallback())
+        assert browser.apply(local_job(store,ats))=='confirmed'
+    assert len(ats[1])==1
+
+
+@pytest.mark.parametrize('instruction',[
+    'Prove that the invariant holds for every integer.',
+    'Please prove that the invariant holds.',
+    'Can you prove that the invariant holds?',
+    'Your task is to prove that the invariant holds.',
+    'Using induction, prove that the invariant holds.',
+    'Do not use AI for this application.',
+])
+def test_current_proof_tasks_and_ai_restrictions_still_stop_before_filling(store,ats,instruction):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('<body>','<body><p>'+instruction+'</p>')
+    with Browser(store,test_url=ats[0]) as browser:
+        browser.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
+        with pytest.raises(Blocked,match='human_work_sample'):browser.apply(local_job(store,ats))
+    assert not ats[1]
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_proof_question_remains_held_inside_an_ordinary_application(store,ats):
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',
+        '<label>Describe how you would prove that this invariant holds<textarea name="proof" required></textarea></label></form>')
+    with Browser(store,test_url=ats[0]) as browser:
+        browser.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html))
+        with pytest.raises(Blocked,match='human_work_sample'):browser.apply(local_job(store,ats))
+    assert not ats[1]
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
