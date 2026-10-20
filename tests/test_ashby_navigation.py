@@ -33,7 +33,8 @@ def test_ambiguous_or_form_bound_tabs_do_not_authorize_navigation(store,html):
         assert b._ashby_application_entry({'url':POSTING}) is None
 
 
-def test_verified_tenant_redirect_enters_application_without_changing_durable_job(store,job,monkeypatch):
+@pytest.mark.parametrize('delayed_redirect',[False,True])
+def test_verified_tenant_redirect_enters_application_without_changing_durable_job(store,job,monkeypatch,delayed_redirect):
     import json
     from hireme.ashby_drafts import AshbyDraft
     from hireme.util import digest
@@ -48,14 +49,21 @@ def test_verified_tenant_redirect_enters_application_without_changing_durable_jo
     reads=[];writes=[]
     with Browser(store) as b:
         b.current_host='jobs.ashbyhq.com';b.ashby_draft=AshbyDraft(store,ashby)
+        if delayed_redirect:
+            # Analytics can exhaust the network-idle aid before a client-side
+            # tenant rename. The old DOM's Apply link must not establish ready.
+            monkeypatch.setattr(b.page,'wait_for_load_state',lambda *a,**kw:None)
         def serve(route):
             if route.request.method=='GET':
                 reads.append(route.request.url)
-                if route.request.url==original:html='<script>location.replace('+json.dumps(renamed)+')</script>'
+                if route.request.url==original:
+                    html='<a href="'+original+'/application">Apply for this job</a><script>setTimeout(()=>location.replace('+json.dumps(renamed)+'),'+('150' if delayed_redirect else '0')+')</script>'
                 else:
                     query={'operationName':'ApiJobPosting','query':'query ApiJobPosting { jobPosting { id } }',
                            'variables':{'organizationHostedJobsPageName':'renamed','jobPostingId':REQ}}
                     html='<h1>Synthetic posting</h1><a role="tab" href="'+renamed+'/application">Application</a><a href="'+renamed+'/application">Apply for this job</a><script>fetch("/api/non-user-graphql",{method:"POST",body:JSON.stringify('+json.dumps(query)+')})</script>'
+                    if route.request.url.endswith('/application'):
+                        html+='<script>setTimeout(()=>document.body.insertAdjacentHTML("beforeend",\'<form><label>Name<input name="name"></label></form>\'),150)</script>'
                 route.fulfill(status=200,content_type='text/html',body=html)
             else:
                 data=json.loads(route.request.post_data);writes.append(data['operationName'])

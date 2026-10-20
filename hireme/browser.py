@@ -420,6 +420,39 @@ class Browser:
            /no longer|expired|not found|sign in|log in|captcha/i.test(document.body.innerText))""",timeout=20000)
         # Network idle is a bounded hydration aid, not a requirement on analytics-heavy sites.
         with contextlib.suppress(Exception):self.page.wait_for_load_state('networkidle',timeout=4000)
+        if self.ashby_draft:self._wait_ashby_ready()
+
+    def _wait_ashby_ready(self):
+        # Ashby's client can replace a renamed tenant after the old page has
+        # already satisfied DOM readiness. Wait for a coherent current page,
+        # not an old Apply link followed by a transient empty document.
+        from playwright.sync_api import Error as RenderingError
+        deadline=time.monotonic()+10;redirect=None
+        navigation_names=re.compile(r'^(?:apply(?: now| for this job)?|application)$',re.I)
+        while True:
+            self.store.checkpoint()
+            try:
+                url=self.page.url
+                self.ashby_draft.bind_page(url)
+                redirect=None
+                fields=self.page.evaluate(SNAPSHOT,CONTROLS)
+                posting_read=self.ashby_draft.identity[0] in self.ashby_draft.postings
+                application_page=urlsplit(url).path.rstrip('/').endswith('/application')
+                entry=posting_read and not application_page and (self.page.get_by_role('link',name=navigation_names).count()
+                                       or self.page.get_by_role('button',name=navigation_names).count()
+                                       or self._ashby_application_entry(self.ashby_draft.job) is not None)
+                body=self.page.evaluate("() => document.body?.innerText || ''")
+                stopped=bool(re.search(r'no longer|expired|not found|sign in|log in|captcha',body,re.I))
+                if self.page.url==url and (fields or entry or stopped):return
+            except Blocked as error:
+                if error.reason!='unexpected_redirect':raise
+                redirect=error
+            except RenderingError as error:
+                if 'Execution context was destroyed' not in str(error) and 'Cannot find context' not in str(error):raise
+            if time.monotonic()>=deadline:
+                if redirect:raise redirect
+                raise Blocked('posting_fetch_failed','The Ashby posting did not finish rendering before timeout; no fields were filled')
+            self.page.wait_for_timeout(100)
 
     def _guard(self,job,allow_verification=False):
         if not self.attempted:self.store.checkpoint()
