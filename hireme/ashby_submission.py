@@ -119,7 +119,7 @@ class AshbySubmission:
         token=variables.get('recaptchaToken');fingerprint=variables.get('deviceFingerprint')
         if not isinstance(token,str) or not 0<len(token)<=20000:return False
         if fingerprint is not None and (not isinstance(fingerprint,str) or len(fingerprint)>2000):return False
-        if not self.valid_intent():return False
+        if not self.valid_intent() or time.monotonic()>=self.write_deadline:return False
         self.used=True
         self.request_signature=(request.url,request.method,digest(data))
         self.store.event('ashby_submission_write',self.aid,{'operation':operation,'survey_forms':len(self.surveys)})

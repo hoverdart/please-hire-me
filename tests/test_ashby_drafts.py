@@ -147,9 +147,16 @@ def test_native_submission_grant_requires_one_committed_intent_and_keeps_tokens_
     assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
 
 
-def test_native_submission_deadline_blocks_a_late_human_completion(store,job,package,monkeypatch):
+@pytest.mark.parametrize('expires_during_validation',[False,True])
+def test_native_submission_deadline_blocks_a_late_human_completion(store,job,package,monkeypatch,expires_during_validation):
     _,grant,r,data=submission_fixture(store,job,package);store.begin_submit(grant.aid)
-    monkeypatch.setattr('hireme.ashby_submission.time.monotonic',lambda:grant.write_deadline)
+    clock=[grant.write_deadline if not expires_during_validation else grant.write_deadline-1]
+    monkeypatch.setattr('hireme.ashby_submission.time.monotonic',lambda:clock[0])
+    actual_validate=grant.valid_intent
+    def validate():
+        valid=actual_validate();clock[0]=grant.write_deadline
+        return valid
+    monkeypatch.setattr(grant,'valid_intent',validate)
     assert not grant.allow(r,data) and not grant.used
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_submission_write'").fetchone()
 

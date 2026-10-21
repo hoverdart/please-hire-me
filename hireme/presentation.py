@@ -34,7 +34,7 @@ REASON_GUIDANCE = {
     'daily_limit': ('Daily application limit reached', 'The worker can continue on the next local calendar day.'),
     'captcha_blocked': ('A CAPTCHA needs you', 'Open the official posting and complete the application manually. Your desk will not bypass a CAPTCHA.'),
     'submission_unknown': ('The submission outcome needs verification', 'Check with the employer before applying again. This attempt will not be retried automatically.'),
-    'human_verification_unavailable': ('The application browser needs to be visible', 'Turn off background browsing and run from the worker desktop before enabling a human verification wait.'),
+    'human_verification_unavailable': ('The application browser needs to be visible', 'Turn off background browsing and run from the worker desktop before enabling a human verification wait. Then choose Recheck.'),
     'ashby_submission_unsupported': ('This employer’s submission protocol needs review', 'No final click was attempted. Complete manually or wait for a compatible adapter update.'),
     'account_blocked': ('Sign-in needs you', 'Sign in through the dedicated employer browser on the worker’s computer.'),
     'account_or_verification_blocked': ('Sign-in or verification needs you', 'Check the employer’s candidate portal and any verification message.'),

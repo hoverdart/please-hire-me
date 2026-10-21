@@ -58,6 +58,23 @@ def test_wait_requires_a_live_worker_lock_and_counts_the_current_action_once(sto
         assert current_wait(store) is None and summary(store)['attention_count']==1
 
 
+@pytest.mark.parametrize('state',['prepared','submitting','unknown','confirmed','awaiting_verification','not_submitted'])
+def test_desktop_recheck_can_retry_preflight_but_never_an_existing_attempt(store,job,package,state):
+    from hireme.job_holds import hold,recheck
+    hold(store,job,'human_verification_unavailable')
+    aid=store.prepare(job,package)
+    if state!='prepared':
+        store.begin_submit(aid)
+        if state!='submitting':store.finish(aid,state,'Synthetic outcome')
+    if state=='prepared':
+        assert recheck(store,job['id'])=={'ready':True,'reason':''}
+        assert store.db.execute('SELECT state FROM applications WHERE id=?',(aid,)).fetchone()[0]=='prepared'
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+    else:
+        with pytest.raises(ValueError,match='existing submission'):recheck(store,job['id'])
+        assert store.db.execute('SELECT state FROM applications WHERE id=?',(aid,)).fetchone()[0]==state
+
+
 @pytest.mark.parametrize('change',['expired','unbounded','boolean','not_finite','finished','run','job','unknown','paused','stopped','malformed','not_an_object'])
 def test_dashboard_never_offers_a_stale_or_unbound_human_wait(store,job,package,running_worker,change):
     aid,detail=waiting_application(store,job,package)

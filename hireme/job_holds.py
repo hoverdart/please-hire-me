@@ -180,6 +180,12 @@ def recheck(store,job_id):
         hold(store,job,error.reason,error.detail,'screening');return {'ready':False,'reason':error.reason}
     available=ready(store,job)
     previous=store.db.execute('SELECT category,retry_at,retry_count,reason,dependency FROM job_holds WHERE job_id=?',(job_id,)).fetchone()
+    if not available and previous and previous['reason']=='human_verification_unavailable':
+        # The desktop can recover without changing stored preferences. This
+        # explicit action retries only preflight; safe_state above excludes any
+        # existing submission intent and Browser checks actual visibility again.
+        available=True
+        store.event('human_browser_recheck_requested',job_id,{'reason':previous['reason']})
     if (not available and previous and previous['reason']=='human_work_sample'
             and previous['dependency']!=dependency(store,job,previous['category'],previous['reason'])):
         # An explicit review can request a fresh read after a guard repair.
