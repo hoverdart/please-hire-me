@@ -25,9 +25,9 @@ def inspect_backup(archive, temporary_parent):
             counts = {}
             for key, query in (
                 ('opportunities', 'SELECT COUNT(*) FROM jobs'),
-                ('applications', 'SELECT COUNT(*) FROM applications'),
-                ('confirmations', "SELECT COUNT(*) FROM applications WHERE state='confirmed'"),
-                ('outcomes_to_review', "SELECT COUNT(*) FROM applications WHERE state IN ('unknown','submitting','awaiting_verification')"),
+                ('applications', 'SELECT COUNT(*) FROM application_records'),
+                ('confirmations', "SELECT COUNT(*) FROM application_records WHERE state='confirmed'"),
+                ('outcomes_to_review', "SELECT COUNT(*) FROM application_records WHERE state IN ('unknown','submitting','awaiting_verification')"),
                 ('unanswered_questions', 'SELECT COUNT(*) FROM questions WHERE resolved=0'),
                 ('employer_accounts', 'SELECT COUNT(*) FROM employer_accounts'),
                 ('accounts_to_review', "SELECT COUNT(*) FROM employer_accounts WHERE state IN ('creating','signing_in','uncertain')"),

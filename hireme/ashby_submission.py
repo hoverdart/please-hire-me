@@ -42,6 +42,8 @@ class AshbySubmission:
         if digest(self.package)!=self.package_hash or not same(self.package,draft.package):
             raise Blocked('ashby_submission_unsupported','The approved application changed')
         from .answers import validate_package
+        from .approval_boundary import ApprovalBoundary
+        self.boundary=ApprovalBoundary(self.store,draft.job,self.package,application_id=application_id)
         validate_package(self.store,draft.job,self.package)
         self.tenant,self.posting=draft.identity
         context=draft.submission_contexts.get(self.tenant)
@@ -62,6 +64,7 @@ class AshbySubmission:
         self.attribution=attribution
         settings=self.store.settings();self.boundaries={key:settings[key] for key in BOUNDARIES}
         self.generation=self.store.control_generation()
+        self.boundary.check()
 
     def _form(self,form):
         if not isinstance(form,dict):raise Blocked('ashby_submission_unsupported','A submission form is missing')
@@ -81,6 +84,8 @@ class AshbySubmission:
         return render,definition,action
 
     def _acknowledged_values(self):
+        attachment_check=getattr(self.draft,'attachment_check',None)
+        if attachment_check:attachment_check()
         for (render,path),grant in self.draft.grants.items():
             form=self.draft.forms.get(render,{})
             values=form.get('values',{})
@@ -120,6 +125,8 @@ class AshbySubmission:
         if not isinstance(token,str) or not 0<len(token)<=20000:return False
         if fingerprint is not None and (not isinstance(fingerprint,str) or len(fingerprint)>2000):return False
         if not self.valid_intent() or time.monotonic()>=self.write_deadline:return False
+        self.boundary.check()
+        if time.monotonic()>=self.write_deadline:return False
         self.used=True
         self.request_signature=(request.url,request.method,digest(data))
         self.store.event('ashby_submission_write',self.aid,{'operation':operation,'survey_forms':len(self.surveys)})
@@ -131,7 +138,9 @@ class AshbySubmission:
         try:data=json.loads(request.post_data or '')
         except (ValueError,TypeError):return
         if (request.url,request.method,digest(data))!=self.request_signature:return
-        self.response_seen=True;self.failed=True
+        # response.json() can yield to an outcome poll on a slow worker. Keep
+        # this response pending until its native decoder publishes a result.
+        self.response_seen=True
         try:
             result=response.json()
             operation='submitMultipleFormsAction' if self.surveys else 'submitApplicationFormAction'
@@ -146,11 +155,13 @@ class AshbySubmission:
                 and isinstance(messages,dict) and not messages.get('blockMessageForCandidateHtml'))
             self.acknowledged=verified;self.failed=not verified
         except (ValueError,TypeError,AttributeError):pass
-        self.store.event('ashby_submission_response',self.aid,{'acknowledged':self.acknowledged})
+        finally:
+            self.failed=not self.acknowledged
+            self.store.event('ashby_submission_response',self.aid,{'acknowledged':self.acknowledged})
 
     def valid_intent(self,check_answers=True):
         """Recheck approval while a person is working, without granting a write."""
-        self.store.checkpoint()
+        self.boundary.check()
         settings=self.store.settings()
         if (not settings['live_enabled'] or self.store.control_generation()!=self.generation
                 or any(settings[key]!=value for key,value in self.boundaries.items())):
@@ -168,4 +179,5 @@ class AshbySubmission:
         self._form(self.context['application'])
         for form in self.context['surveys']:self._form(form)
         self._acknowledged_values()
+        self.boundary.check()
         return True

@@ -22,7 +22,7 @@ def summary(store, at=None):
     # Stored timestamps are UTC ISO strings with second resolution, like util.now().
     bounds = tuple(value.astimezone(timezone.utc).isoformat(timespec='seconds') for value in (start, end))
     counts = dict(store.db.execute('SELECT status,COUNT(*) FROM jobs GROUP BY status'))
-    submitted = store.db.execute("""SELECT COUNT(*) FROM applications
+    submitted = store.db.execute("""SELECT COUNT(*) FROM application_records
         WHERE state='confirmed' AND attempted>=? AND attempted<?""", bounds).fetchone()[0]
     model_requests = store.db.execute('SELECT COUNT(*) FROM model_requests WHERE timestamp>=? AND timestamp<?', bounds).fetchone()[0]
     condition, parameters = attention_sql('j')
@@ -34,7 +34,7 @@ def summary(store, at=None):
     attention = store.db.execute(f"""SELECT COUNT(*) FROM (
         SELECT q.job_id FROM questions q WHERE {question_condition}
         UNION SELECT j.id FROM jobs j WHERE {condition}
-        UNION SELECT job_id FROM applications WHERE state IN ('unknown','awaiting_verification')
+        UNION SELECT job_id FROM application_records WHERE state IN ('unknown','awaiting_verification')
         UNION SELECT ? WHERE ? IS NOT NULL
     )""", (*question_parameters,*parameters,human_job,human_job)).fetchone()[0]
     accounts = store.db.execute("SELECT COUNT(*) FROM employer_accounts WHERE state='uncertain'").fetchone()[0]
@@ -78,13 +78,17 @@ def export_csv(store):
     output = io.StringIO(newline='')
     writer = csv.writer(output)
     writer.writerow(EXPORT_COLUMNS)
-    for job in store.db.execute('''SELECT j.*,a.attempted FROM jobs j
-        LEFT JOIN applications a ON a.job_id=j.id ORDER BY j.first_seen DESC,j.id'''):
+    for job in store.db.execute('''SELECT j.*,a.attempted,a.state AS application_state,a.updated AS application_updated,
+        a.id IN (SELECT id FROM archived_applications) AS historical FROM jobs j
+        LEFT JOIN application_records a ON a.job_id=j.id ORDER BY j.first_seen DESC,j.id,a.created'''):
         try: location = json.loads(job['payload']).get('location', '')
         except (ValueError, TypeError): location = ''
+        display=dict(job)
+        if job['historical']:
+            display.update(status=job['application_state'],reason='Historical application; review its record in Application desk.')
         writer.writerow([spreadsheet_text(value) for value in (
-            job['company'], job['title'], location, job_display(dict(job))['status_label'],
-            job['score'], job['url'], job['first_seen'], job['updated'], job['attempted'], job['reason'])])
+            job['company'], job['title'], location, job_display(display)['status_label'],
+            job['score'], job['url'], job['first_seen'], job['application_updated'] if job['historical'] else job['updated'], job['attempted'], display['reason'])])
     # UTF-8 BOM helps common spreadsheet apps recognize non-ASCII employer names.
     return output.getvalue().encode('utf-8-sig')
 
@@ -161,5 +165,5 @@ def search_jobs(store, search='', status='all', sort='recent', offset=0, limit=5
         from .store import APPLICATION_METADATA
         placeholders = ','.join('?' for _ in jobs)
         applications = [dict(row) for row in store.db.execute(
-            f"SELECT {'*' if include_packages else APPLICATION_METADATA} FROM applications WHERE job_id IN ({placeholders})", [job['id'] for job in jobs])]
+            f"SELECT {'*' if include_packages else APPLICATION_METADATA} FROM application_records WHERE job_id IN ({placeholders})", [job['id'] for job in jobs])]
     return {'jobs': jobs, 'applications': applications, 'total': total, 'offset': offset, 'limit': limit}

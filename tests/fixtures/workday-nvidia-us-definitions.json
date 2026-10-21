@@ -1,0 +1,95 @@
+{
+  "proof_scope": "official_public_country_definitions",
+  "country": "bc33aa3152ec42d4995f4791a106ed09",
+  "definitions": {
+    "name": {
+      "url": "https://nvidia.wd5.myworkdayjobs.com/wday/calypso/cxs/jobapplication/nvidia/namedefinition?country=bc33aa3152ec42d4995f4791a106ed09",
+      "sha256": "3dff458fdc810397a7ff95fc918b958fbc31c60e8bd7a0094ff097d424107a91",
+      "data": {
+        "definitions": {
+          "name": {
+            "required": [
+              "firstName",
+              "lastName"
+            ],
+            "properties": {
+              "firstName": {
+                "hidden": false,
+                "label": "First Name",
+                "order": "b",
+                "type": "string",
+                "showDisplayOnlyOnPreferred": false,
+                "readOnly": false
+              },
+              "lastName": {
+                "hidden": false,
+                "label": "Last Name",
+                "order": "d",
+                "type": "string",
+                "showDisplayOnlyOnPreferred": false,
+                "readOnly": false
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "$ref": "#/definitions/name"
+          }
+        ]
+      }
+    },
+    "address": {
+      "url": "https://nvidia.wd5.myworkdayjobs.com/wday/calypso/cxs/jobapplication/nvidia/addressdefinition?country=bc33aa3152ec42d4995f4791a106ed09",
+      "sha256": "afaa60b0d1f0f9c2109a3df12b669f3342c677347d5e4d1cead3f8806277e7fd",
+      "data": {
+        "definitions": {
+          "address": {
+            "required": [],
+            "properties": {
+              "addressLine1": {
+                "hidden": false,
+                "label": "Address Line 1",
+                "order": "a",
+                "type": "string",
+                "readOnly": false
+              },
+              "city": {
+                "hidden": false,
+                "label": "City",
+                "order": "c",
+                "type": "string",
+                "readOnly": false
+              },
+              "countryRegion": {
+                "hidden": false,
+                "label": "State",
+                "order": "d",
+                "type": "object",
+                "readOnly": false
+              },
+              "postalCode": {
+                "hidden": false,
+                "label": "Postal Code",
+                "order": "e",
+                "type": "string",
+                "readOnly": false
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "$ref": "#/definitions/address"
+          }
+        ]
+      }
+    }
+  }
+}

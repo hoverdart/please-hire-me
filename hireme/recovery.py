@@ -8,7 +8,7 @@ from .util import Blocked
 def _unfinished(store):
     return {
         'interrupted_runs': store.db.execute("SELECT COUNT(*) FROM runs WHERE status='running'").fetchone()[0],
-        'unfinished_submissions': store.db.execute("SELECT COUNT(*) FROM applications WHERE state='submitting'").fetchone()[0],
+        'unfinished_submissions': store.db.execute("SELECT COUNT(*) FROM application_records WHERE state='submitting'").fetchone()[0],
         'unfinished_accounts': store.db.execute("SELECT COUNT(*) FROM employer_accounts WHERE state IN ('creating','signing_in')").fetchone()[0],
     }
 

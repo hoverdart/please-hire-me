@@ -92,15 +92,90 @@ def queue_report(store, run_id):
         body += '\n\nStopped because: ' + detail['reason']
     body += FOOTER
     enabled = store.settings()['gmail_reports']
-    # Idle paused schedules are useful local history, not new email updates.
-    # A pause after real attempts must still report those outcomes.
-    idle_pause=run['status']=='paused' and detail.get('attempts')==0 and not terminal and run['submitted']==0
-    state='suppressed' if idle_pause else 'pending' if enabled else 'disabled'
+    # Idle schedules remain local history. Completed screening and paused runs
+    # with no attempts add no application update to email. Failures/setup stops,
+    # legacy runs without an explicit count, and any actual outcome still report.
+    idle=run['status'] in {'finished','paused'} and detail.get('attempts')==0 and not terminal and run['submitted']==0
+    state='suppressed' if idle else 'pending' if enabled else 'disabled'
     with store.transaction():
         store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
                          (run_id, email, f"Application batch: {run['submitted']} confirmed — {run['status']}",
                           body, f'<{uuid.uuid4().hex}@please-hire-me.local>', state, now()))
     return run_id
+
+
+def recover_reports(store):
+    """Queue abandoned batches once, without inferring acceptance or retrying.
+
+    Store.recover must run first. A missing terminal event can use only the
+    current application bound to this browser attempt's durable submit intent;
+    a later attempt for the same job cannot supply its outcome.
+    """
+    recovered=0
+    runs=list(store.db.execute("""SELECT r.* FROM runs r LEFT JOIN report_outbox o ON o.id=r.id
+        WHERE r.status='interrupted' AND o.id IS NULL ORDER BY r.started,r.id"""))
+    for run in runs:
+        try:
+            with store.transaction():
+                started={};terminal={}
+                for event in store.db.execute("""SELECT seq,kind,subject,detail FROM events
+                        WHERE timestamp>=? AND kind IN ('application_started','application_finished') ORDER BY seq""",
+                        (run['started'],)):
+                    detail=json.loads(event['detail'])
+                    if detail.get('run_id')!=run['id']:continue
+                    if event['kind']=='application_started':started[event['subject']]=event['seq']
+                    else:terminal[event['subject']]=detail
+                if not started:continue
+                for job_id,sequence in started.items():
+                    if job_id in terminal:continue
+                    following=store.db.execute("""SELECT MIN(seq) FROM events
+                        WHERE kind='application_started' AND seq>?""",(sequence,)).fetchone()[0]
+                    end=following or 2**63-1
+                    intent=store.db.execute("""SELECT e.seq,e.subject,a.job_id,a.state FROM events e
+                        LEFT JOIN application_records a ON a.id=e.subject WHERE e.kind='submit_intent'
+                        AND e.seq>? AND e.seq<? ORDER BY e.seq DESC LIMIT 1""",(sequence,end)).fetchone()
+                    # Explicit retry may remove the old row or reuse its
+                    # deterministic ID. Its preserved audit still binds the
+                    # old intent; the newer row must not supply acceptance.
+                    matches=bool(intent and intent['job_id']==job_id)
+                    if intent and intent['job_id'] is None:
+                        for retry in store.db.execute("SELECT detail FROM events WHERE kind='application_retry_requested' AND subject=?",(intent['subject'],)):
+                            prior=json.loads(retry['detail']).get('previous_application',{})
+                            if prior.get('id')==intent['subject'] and prior.get('job_id')==job_id:matches=True
+                    recorded=(store.db.execute("""SELECT kind FROM events WHERE subject=? AND seq>? AND seq<?
+                        AND kind IN ('confirmed','unknown','awaiting_verification','not_submitted')
+                        ORDER BY seq DESC LIMIT 1""",(intent['subject'],intent['seq'],end)).fetchone() if matches else None)
+                    later=store.db.execute("""SELECT 1 FROM events WHERE kind='application_started'
+                        AND subject=? AND seq>? LIMIT 1""",(job_id,sequence)).fetchone()
+                    current=(intent['state'] if matches and not later else None)
+                    outcome=(recorded['kind'] if recorded else current if current in
+                             {'confirmed','unknown','awaiting_verification','not_submitted'} else
+                             'unknown' if matches else 'blocked')
+                    detail={'run_id':run['id'],'outcome':outcome,'recovered':True,
+                            'detail':('The worker stopped before the outcome was recorded. Verify the existing attempt before applying again.'
+                                      if outcome in {'unknown','awaiting_verification'} else
+                                      'The worker stopped during this attempt. Its saved application record supplies this outcome.'
+                                      if matches else 'The worker stopped before its outcome was recorded. Review the saved application history.')}
+                    store.event('application_finished',job_id,detail)
+                    terminal[job_id]=detail
+                detail=json.loads(run['detail']) if run['detail'].startswith('{') else {}
+                mode=detail.get('mode','live')
+                outcomes={}
+                for result in terminal.values():
+                    outcome=result['outcome'];outcomes[outcome]=outcomes.get(outcome,0)+1
+                confirmed=outcomes.get('confirmed',0) if mode=='live' else 0
+                detail.update(attempts=len(started),outcomes=outcomes,confirmed=confirmed,
+                              prepared=outcomes.get('prepared',0) if mode=='prepare' else 0,
+                              reason='Worker stopped before completing this batch; outcomes were recovered from saved application records.')
+                store.db.execute('UPDATE runs SET submitted=?,detail=? WHERE id=?',
+                                 (confirmed,json.dumps(detail),run['id']))
+                queue_report(store,run['id'])
+                recovered+=1
+        except Exception as error:
+            # A malformed old record cannot block a new cycle. The transaction
+            # leaves that report absent so a later recovery can try again.
+            store.event('batch_report_recovery_failed',run['id'],{'type':type(error).__name__})
+    return recovered
 
 
 def _combined(store, rows):

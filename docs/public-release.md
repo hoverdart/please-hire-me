@@ -8,7 +8,8 @@ The configured version is **0.5.0rc2**, a public release candidate for a self-ho
 | --- | --- | --- |
 | macOS / Linux / Raspberry Pi | Source installation, packaged dashboard and discovery resources, private onboarding, local scheduling and portable history | Installation and operation on the target machine |
 | Greenhouse / Ashby / Lever | Guarded supported forms, confirmed facts, scoped answers, hash-verified uploads, durable submission intents and outcome handling | Posting-specific employer acceptance; recognized hosts do not certify every form |
-| Workday configured tenants | Public discovery and posting inspection, manual sign-in handoff, default-off draft-write protocol | Authenticated step/save/upload transport and a posting-specific receipt; application completion remains manual |
+| NVIDIA Workday | Public discovery, owner-bound sessions, source-reviewed US manual-flow controller, confirmed structured history, exact operation grants and owned-draft reconciliation | Current native save/upload/receipt evidence and bounded commissioning; ordinary scheduling remains disabled until verified |
+| Other configured Workday tenants | Public discovery and posting inspection, manual sign-in handoff | Separate tenant-specific transport and employer-acceptance evidence; completion remains manual |
 | Handshake / Work at a Startup | Separate profiles, disabled connection/discovery/native-apply controls, immutable materials and fixture-validated machinery | Authorized access and independently validated platform endpoints, payloads, document acknowledgements and receipts |
 | Gmail | Owner-bound OAuth, recognized Greenhouse codes and independent batch-report outbox | Actual authorization, code binding and delivery; broader recruiter/interview/rejection synchronization is not implemented |
 | Employer accounts | Optional supported native signup/sign-in, exact credential readback, separate intents and manual reconciliation | Verified account transport and agreements; JavaScript/SSO and unsupported verification remain manual |
@@ -30,9 +31,9 @@ Fully transparent verification frames, including transparent parent containers, 
 
 Receipt rendering can remove verification frames. Their visibility is read together so a disappearing frame cannot leave a stale locator waiting while the receipt is present.
 
-The optional human-verification wait keeps a compatible Ashby application open after the final click for a person at the worker desktop. It starts disabled, requires a visible browser and lasts at most 600 seconds. The same durable intent permits one native submission of the acknowledged draft; it cannot save new answers, submit other forms or restart an uncertain attempt. Pause and timeout retain uncertainty. Desktop availability and fresh employer acceptance remain separate verification gates.
+Every live Ashby application requires one exact native final request and its correlated acknowledgement, including headless operation with no human wait. The optional human-verification wait starts disabled, requires a visible browser and lasts at most 600 seconds. The same durable intent cannot save new answers, submit other forms or restart an uncertain attempt. A pause revokes pending writes; an already transmitted request can still supply its acknowledgement and fresh receipt. Missing evidence remains uncertain. Desktop availability and fresh employer acceptance remain separate verification gates.
 
-Ashby live runs require acknowledged, source-bound field saves before final submission. Preparation mode suppresses these text-field saves. Unsupported form encodings remain held. Backups stage on private persistent storage and stream archive entries so large Pi ledgers do not require an equally large RAM disk or memory allocation.
+Ashby live runs require acknowledged, source-bound field saves before final submission. Approval boundaries recheck control generation, sources, decisions and policy after validation and immediately before transport. Preparation mode keeps document selections and answers local. Unsupported form encodings remain held. Backups stage on private persistent storage and stream archive entries so large Pi ledgers do not require an equally large RAM disk or memory allocation.
 
 Ashby's reviewed structured application-form identifier must name the exact posting and external board. The original identifier string must match the native field-save request and acknowledgement; unknown formats, changed definitions and other postings remain held.
 
@@ -42,15 +43,19 @@ Ashby radio and checkbox groups use the verified form's exact choice-label/value
 
 Choice labels are trimmed to match their visible text. Original wire values retain their whitespace, and labels that become ambiguous after trimming remain held.
 
+Ashby's nested SMS preference uses its separate native consent operation. It requires a confirmed texting preference, matching official employer policy context and phone field, and an acknowledged hidden consent value before final submission. Preparation suppresses the consent write; WhatsApp, additional contractual terms and unrecognized consent renderers remain held.
+
 Descriptive US work-authorization choices naming any employer require confirmed US citizenship or an unrestricted-authorization declaration, alongside US posting context. General authorization or a lack of sponsorship need cannot establish that status.
 
 An exact prefilled value in a verified official Ashby form response is already acknowledged; a visible browser value alone is insufficient. The posting's exact Application tab can provide a navigation-only entry when the page has ambiguous Apply buttons.
 
 Ashby location saves bind the approved location label to the provider ID from the reviewed official autocomplete response (or an exact official saved value). A different ID, label or unacknowledged save cannot authorize final submission. Tenant renames require a same-host page and an official posting response for the same requisition UUID; the original job, company and application history remain intact. An existing attempt under another tenant with that UUID is held against duplicate submission.
 
-Batch reports preserve unknown and verification-pending outcomes after browser errors, with instructions to verify the existing attempt before applying again. Temporary failures reading an official Greenhouse posting use bounded delayed retries; access restrictions and unrecognized responses require review before any fields are filled.
+Batch reports preserve unknown and verification-pending outcomes after browser errors, with instructions to verify the existing attempt before applying again. Interrupted runs recover missing reports from their own durable attempt records without borrowing outcomes from later attempts. Completed or paused cycles with zero attempts and no new outcomes remain local history; failures and meaningful application updates remain reportable. Temporary failures reading an official Greenhouse posting use bounded delayed retries; access restrictions and unrecognized responses require review before any fields are filled.
 
-Preparation can upload approved documents. Lever's native resume parser is limited to the exact approved PDF and the rendered employer account; the returned storage acknowledgement must match the form before submission. An upload acknowledgement is not an application receipt.
+Preparation suppresses remote uploads, parsing, field saves, consent and final submission. During a live run Lever's one-use native resume parser grant is limited to the exact approved PDF and the rendered employer account; the returned storage acknowledgement must match the form before submission. An upload acknowledgement is not an application receipt.
+
+NVIDIA's installed driver does not establish employer acceptance. It checks current native definitions, approved values, correlated save responses and fresh owned record readbacks. Unknown definitions, unsupported steps and saved values that the employer does not expose for readback remain actionable holds. Resume scan/upload evidence is separate from the final receipt. Existing employer applications supplement local duplicate and company-limit checks. Interrupted commissioning pauses on recovery before an ordinary worker can apply.
 
 ## Release gates
 
@@ -71,10 +76,12 @@ Use the [README](../README.md) for source installation and the [Pi guide](pi.md)
 
 Before upgrades, pause submissions, suspend scheduling, wait for active work to finish, and create and validate a private history backup. Test database migrations on a restored copy. Browser sessions and OAuth/provider credentials are excluded from history backups and need separate recovery.
 
-Rollback uses a verified previous code release and a private restored history copy. Never erase uncertain outcomes to retry them. Restore starts paused; inspect history and reconnect integrations before resuming.
+Rollback preserves the newest application ledger, including intents and outcomes created after deployment. Test previous-code compatibility on a copy before switching code. Never resume a pre-deployment history backup over newer application records. If compatibility is uncertain, keep the installation paused and preserve both copies. Restore starts paused and invalidates machine-bound execution authority; inspect history and reconnect integrations before resuming.
 
 ## Verification records
 
 [Contributing](../CONTRIBUTING.md) lists reproducible local checks. CI builds the wheel and source distribution, creates a versioned source archive, audits private-file/path classes and installs the wheel outside the checkout.
 
 Record checks against the exact revision, including pass/fail/skip results. Keep local, hosted CI, browser, device, scheduled-operation and employer-acceptance evidence distinct. Test totals and an old deployment report do not establish the state of a current installation. Personal application details, runtime logs, credentials and screenshots belong in private storage.
+
+The [final release runbook](final-release-runbook.md) defines the bounded commissioning, evidence collection and rollback sequence. `hireme release-check --json` reads a private snapshot without initializing or repairing applicant history; its integration checks describe saved configuration, not live connectivity or employer acceptance.

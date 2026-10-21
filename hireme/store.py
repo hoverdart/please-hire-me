@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS model_request_metadata (request_id INTEGER PRIMARY KE
 CREATE TABLE IF NOT EXISTS model_limit_override (id INTEGER PRIMARY KEY CHECK(id=1), expires REAL NOT NULL, previous TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS remote_draft_steps (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, tenant TEXT NOT NULL, step TEXT NOT NULL, request_hash TEXT NOT NULL, sources_hash TEXT NOT NULL, state TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL, acknowledgement TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS remote_draft_job ON remote_draft_steps(job_id,created);
+CREATE TABLE IF NOT EXISTS confirmed_history (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+ payload TEXT NOT NULL, source TEXT NOT NULL, confirmed INTEGER NOT NULL DEFAULT 0,
+ revision INTEGER NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workday_drafts (job_id TEXT PRIMARY KEY, tenant TEXT NOT NULL,
+ site TEXT NOT NULL, owner_hash TEXT NOT NULL, profile_binding TEXT NOT NULL,
+ remote_id TEXT NOT NULL, native_revision TEXT NOT NULL, flow_signature TEXT NOT NULL,
+ state TEXT NOT NULL, evidence TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS adapter_verifications (tenant TEXT NOT NULL, signature TEXT NOT NULL, version INTEGER NOT NULL, application_id TEXT NOT NULL, verified TEXT NOT NULL, PRIMARY KEY(tenant,signature,version));
 CREATE TABLE IF NOT EXISTS worker_control (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL);
 INSERT OR IGNORE INTO worker_control VALUES(1,0);
@@ -78,6 +85,15 @@ CREATE TABLE IF NOT EXISTS job_decisions (job_id TEXT PRIMARY KEY, decision TEXT
 CREATE TABLE IF NOT EXISTS applications (id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE,
  company_key TEXT NOT NULL, state TEXT NOT NULL, package TEXT NOT NULL, hash TEXT NOT NULL,
  created TEXT NOT NULL, updated TEXT NOT NULL, attempted TEXT, confirmation TEXT, screenshot TEXT);
+CREATE TABLE IF NOT EXISTS archived_applications (id TEXT PRIMARY KEY, job_id TEXT NOT NULL,
+ company_key TEXT NOT NULL, state TEXT NOT NULL, package TEXT NOT NULL, hash TEXT NOT NULL,
+ created TEXT NOT NULL, updated TEXT NOT NULL, attempted TEXT, confirmation TEXT, screenshot TEXT,
+ origin TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS archived_applications_job ON archived_applications(job_id);
+CREATE VIEW IF NOT EXISTS application_records AS
+ SELECT id,job_id,company_key,state,package,hash,created,updated,attempted,confirmation,screenshot FROM applications
+ UNION ALL
+ SELECT id,job_id,company_key,state,package,hash,created,updated,attempted,confirmation,screenshot FROM archived_applications;
 CREATE TABLE IF NOT EXISTS questions (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, host TEXT NOT NULL,
  label TEXT NOT NULL, options TEXT NOT NULL, reason TEXT NOT NULL, resolved INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL,
@@ -124,6 +140,7 @@ CREATE INDEX IF NOT EXISTS runs_status_started ON runs(status,started);
 """
 
 APPLICATION_METADATA = 'id,job_id,company_key,state,hash,created,updated,attempted,confirmation,screenshot'
+APPLICATION_COLUMNS = 'id,job_id,company_key,state,package,hash,created,updated,attempted,confirmation,screenshot'
 
 
 class Store:
@@ -161,6 +178,18 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def history_entries(self, kind=None, confirmed_only=True):
+        from .workday_history import entries
+        return entries(self, kind, confirmed_only)
+
+    def put_history_entry(self, kind, values, *, source, confirmed=False, entry_id=None):
+        from .workday_history import put
+        return put(self, kind, values, source=source, confirmed=confirmed, entry_id=entry_id)
+
+    def withdraw_history_entry(self, entry_id):
+        from .workday_history import withdraw
+        return withdraw(self, entry_id)
 
     @contextlib.contextmanager
     def transaction(self):
@@ -268,7 +297,7 @@ class Store:
             raise ValueError("A fact cannot be saved and cleared at the same time")
         with self.transaction():
             old = self.facts(False)
-            history = bool(self.db.execute("SELECT 1 FROM applications LIMIT 1").fetchone()
+            history = bool(self.db.execute("SELECT 1 FROM application_records LIMIT 1").fetchone()
                            or self.db.execute("SELECT 1 FROM employer_accounts LIMIT 1").fetchone())
             if old.get("email", {}).get("confirmed") and history:
                 if "email" in cleared:
@@ -533,8 +562,8 @@ class Store:
         with self.transaction():
             job=self.db.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone()
             if not job:raise ValueError('Job not found')
-            app=self.db.execute('SELECT state FROM applications WHERE job_id=?',(jid,)).fetchone()
-            if app and app[0] in ('submitting','unknown','awaiting_verification','confirmed'):
+            app=self.db.execute("SELECT 1 FROM application_records WHERE job_id=? AND state IN ('submitting','unknown','awaiting_verification','confirmed')",(jid,)).fetchone()
+            if app:
                 raise ValueError('This application already has a submission record; reconcile uncertain outcomes first')
             previous=self.db.execute('SELECT * FROM job_decisions WHERE job_id=?',(jid,)).fetchone()
             if decision=='undo':
@@ -565,7 +594,7 @@ class Store:
         normalize = company_normalizer(settings['company_aliases'])
         where = '' if states is None else ' WHERE a.state IN (' + ','.join('?' for _ in states) + ')'
         rows = self.db.execute('''SELECT a.id,a.job_id,a.company_key,a.state,a.created,a.attempted,j.company
-            FROM applications a LEFT JOIN jobs j ON j.id=a.job_id''' + where, () if states is None else states)
+            FROM application_records a LEFT JOIN jobs j ON j.id=a.job_id''' + where, () if states is None else states)
         history = []
         for row in rows:
             entry = dict(row)
@@ -575,14 +604,23 @@ class Store:
             history.append(entry)
         return history
 
-    def _check_budget(self, job, s):
+    def _check_budget(self, job, s, *, application_id=None):
         self.check_job_decision(job["id"])
+        if self.db.execute("SELECT 1 FROM archived_applications WHERE job_id=? AND state!='prepared'",(job['id'],)).fetchone():
+            raise Blocked('duplicate_or_uncertain','This requisition has a retained application from another worker')
+        if application_id is not None:
+            if self.db.execute('SELECT 1 FROM archived_applications WHERE id=?',(application_id,)).fetchone():
+                raise Blocked('application_changed','Historical application records cannot authorize employer writes')
+            reserved=self.application_record(application_id)
+            if (not reserved or reserved['job_id']!=job['id']
+                    or reserved['state'] not in ('prepared','submitting','awaiting_verification')):
+                raise Blocked('application_changed','The current application reservation is not valid for this posting')
         from .util import application_identity
         identity=application_identity(job['url'])
         # Different feeds use /application, /apply, embed and tracked links for
         # the same requisition. Company cooldowns expire; duplicate protection
         # must remain, including rejected and unresolved attempts.
-        history=self.db.execute("""SELECT a.job_id,j.url FROM applications a
+        history=self.db.execute("""SELECT a.job_id,j.url FROM application_records a
             JOIN jobs j ON j.id=a.job_id WHERE a.state!='prepared' AND a.job_id!=?
             UNION ALL SELECT d.job_id,j.url FROM job_decisions d
             JOIN jobs j ON j.id=d.job_id WHERE d.decision='manually_applied' AND d.job_id!=?""",
@@ -599,6 +637,8 @@ class Store:
         if ck in {self.company(x,s) for x in s["skip_companies"]+s["interview_companies"]}:
             raise Blocked("company_blocked")
         all_active=self.application_history(s,('submitting','unknown','confirmed','awaiting_verification'))
+        if application_id is not None:
+            all_active=[row for row in all_active if row['id']!=application_id]
         manual=[{'state':'manually_applied','created':r['created'],'attempted':r['created'],
                  'company_keys':{self.company(r['company'],s)}}
                 for r in self.db.execute("SELECT d.created,j.company FROM job_decisions d JOIN jobs j ON j.id=d.job_id WHERE d.decision='manually_applied'")]
@@ -608,7 +648,7 @@ class Store:
             raise Blocked("company_verification_pending","Complete the earlier application verification first")
         if any(r["state"] in ("submitting","unknown") for r in active):
             raise Blocked("company_uncertain","Reconcile the earlier attempt first")
-        spam_ids={row[0] for row in self.db.execute("SELECT id FROM applications WHERE state='not_submitted' AND LOWER(confirmation) LIKE '%possible spam%'")}
+        spam_ids={row[0] for row in self.db.execute("SELECT id FROM application_records WHERE state='not_submitted' AND LOWER(confirmation) LIKE '%possible spam%'")}
         if any(row['id'] in spam_ids and ck in row['company_keys'] for row in self.application_history(s,('not_submitted',))):
             raise Blocked('company_submission_rejected','An earlier submission was rejected as possible spam; complete manually or explicitly review the earlier attempt')
         if len(active)>=s["max_per_company"]:
@@ -690,6 +730,10 @@ class Store:
 
     def recover(self):
         with self.transaction():
+            from .workday_commission_state import recover_commission
+            recover_commission(self)
+            from .workday_state import recover_drafts
+            recover_drafts(self)
             self.db.execute("UPDATE employer_accounts SET state='uncertain',updated=? WHERE state IN ('creating','signing_in')",(now(),))
             rows=list(self.db.execute("SELECT id,job_id FROM applications WHERE state='submitting'"))
             for r in rows:
@@ -697,18 +741,27 @@ class Store:
                 self.db.execute("UPDATE jobs SET status='unknown',reason='Worker stopped after submit intent',updated=? WHERE id=?",(now(),r[1]))
                 self.db.execute("UPDATE verification_challenges SET state='held' WHERE application_id=?",(r[0],))
                 self.event("crash_recovered",r[0],{"state":"unknown"})
+            for r in list(self.db.execute("SELECT id FROM archived_applications WHERE state='submitting'")):
+                self.db.execute("UPDATE archived_applications SET state='unknown',updated=? WHERE id=?",(now(),r[0]))
+                self.db.execute("UPDATE verification_challenges SET state='held' WHERE application_id=?",(r[0],))
+                self.event('crash_recovered',r[0],{'state':'unknown','historical':True})
             self.db.execute("UPDATE runs SET status='interrupted',finished=? WHERE status='running'",(now(),))
 
     def reconcile(self, aid, submitted: bool, note: str):
         if not isinstance(note,str) or len(note.strip())<10:
             raise ValueError("Describe how you verified the outcome")
         with self.transaction():
-            r=self.db.execute("SELECT state,job_id FROM applications WHERE id=?",(aid,)).fetchone()
+            r=self.db.execute("SELECT state,job_id FROM application_records WHERE id=?",(aid,)).fetchone()
             if not r or r[0] not in ("unknown","awaiting_verification"):
                 raise ValueError("Only uncertain or verification-pending submissions can be reconciled")
             state="confirmed" if submitted else "not_submitted"
-            self.db.execute("UPDATE applications SET state=?,confirmation=?,updated=? WHERE id=?",(state,note,now(),aid))
-            self.db.execute("UPDATE jobs SET status=?,reason=?,updated=? WHERE id=?",(state,note,now(),r[1]))
+            historical=bool(self.db.execute('SELECT 1 FROM archived_applications WHERE id=?',(aid,)).fetchone())
+            table='archived_applications' if historical else 'applications'
+            if historical:
+                self.event('historical_application_reconciled',aid,{'previous_application':self.application_record(aid),'submitted':submitted,'note':note})
+            self.db.execute('UPDATE '+table+' SET state=?,confirmation=?,updated=? WHERE id=?',(state,note,now(),aid))
+            if not historical:
+                self.db.execute("UPDATE jobs SET status=?,reason=?,updated=? WHERE id=?",(state,note,now(),r[1]))
             self.event("human_reconciliation",aid,{"submitted":submitted,"note":note})
         # A not-submitted outcome is deliberately not retried automatically.
 
@@ -725,10 +778,46 @@ class Store:
             self.db.execute("UPDATE jobs SET status='discovered',reason='',updated=? WHERE id=?",(now(),app['job_id']))
             return app['job_id']
 
+    def retain_applications(self, records, *, origin):
+        """Retain independently recorded attempts without replacing the current job slot.
+
+        This operator-only import requires a paused, idle worker. Source records
+        retain their identities and payloads; they never receive execution grants.
+        """
+        if not isinstance(origin,str) or not origin.strip() or len(origin)>200:
+            raise ValueError('Name the private source snapshot')
+        columns=APPLICATION_COLUMNS.split(',')
+        with worker_lock(self.root),self.transaction():
+            if self.settings()['live_enabled']:raise ValueError('Pause applications before importing history')
+            count=0
+            for record in records:
+                if not isinstance(record,dict) or set(record)!=set(columns):
+                    raise ValueError('Choose complete original application records')
+                if (any(not isinstance(record[k],str) or not record[k] for k in columns[:8])
+                        or record['state'] not in {'prepared','submitting','unknown','awaiting_verification','confirmed','not_submitted'}
+                        or any(record[k] is not None and not isinstance(record[k],str) for k in columns[8:])
+                        or not self.db.execute('SELECT 1 FROM jobs WHERE id=?',(record['job_id'],)).fetchone()):
+                    raise ValueError('Invalid original application record')
+                try:
+                    for key in ('created','updated','attempted'):
+                        if record[key] is not None and datetime.fromisoformat(record[key]).utcoffset() is None:
+                            raise ValueError('Missing timestamp timezone')
+                except ValueError:
+                    raise ValueError('Original application timestamps must include a timezone') from None
+                existing=self.application_record(record['id'])
+                if existing:
+                    if any(existing[k]!=record[k] for k in columns):raise ValueError('Application identity conflicts with retained history')
+                    continue
+                self.db.execute('INSERT INTO archived_applications VALUES('+','.join('?' for _ in range(len(columns)+1))+')',
+                                (*[record[k] for k in columns],origin))
+                count+=1
+            self.event('application_history_imported','migration',{'origin':origin,'records':count})
+            return count
+
     def application_record(self, aid):
         if not isinstance(aid,str) or not aid or len(aid)>100:
             raise ValueError('Choose an existing application record')
-        row=self.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone()
+        row=self.db.execute('SELECT * FROM application_records WHERE id=?',(aid,)).fetchone()
         if not row:return None
         result=dict(row)
         receipt=self.db.execute('SELECT * FROM connection_receipts WHERE application_id=?',(aid,)).fetchone()
@@ -756,7 +845,7 @@ class Store:
                     ORDER BY attention DESC,j.score DESC,j.first_seen DESC LIMIT 500
                 ) SELECT j.* FROM ranked JOIN jobs j ON j.id=ranked.id
                   ORDER BY ranked.attention DESC,ranked.score DESC,ranked.first_seen DESC""",(*parameters,*question_parameters)),
-                "applications":rows(f"SELECT {'*' if include_packages else APPLICATION_METADATA} FROM applications ORDER BY (state IN ('unknown','awaiting_verification')) DESC,created DESC LIMIT 500"),
+                "applications":rows(f"SELECT {'*' if include_packages else APPLICATION_METADATA} FROM application_records ORDER BY (state IN ('unknown','awaiting_verification')) DESC,created DESC LIMIT 500"),
                 "questions":rows("SELECT q.* FROM questions q WHERE "+question_condition+" ORDER BY q.rowid" + (" LIMIT ?" if question_limit is not None else ''), (*question_parameters,question_limit) if question_limit is not None else question_parameters),
                 "runs":rows("SELECT * FROM runs ORDER BY started DESC LIMIT 30"),
                 "sources":rows("SELECT * FROM sources ORDER BY (error!='') DESC,checked DESC,id LIMIT 100"),

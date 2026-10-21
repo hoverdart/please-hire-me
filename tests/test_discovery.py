@@ -141,6 +141,36 @@ def test_ashby_preserves_structured_country_when_display_location_is_ambiguous()
     assert j['employment_countries']==['United States','Poland']
 
 
+@pytest.mark.parametrize('country,relocate,accepted',[
+    ('US','Yes',True),('CA','Yes',False),(None,'Yes',False),
+    (42,'Yes',False),([],'Yes',False),('US; Canada','Yes',False),('SF','Yes',False),
+    ('US','No',False),
+])
+def test_lever_official_country_survives_discovery_without_widening_preferences(store,country,relocate,accepted):
+    from hireme.discovery import probe
+    from hireme.policy import eligible
+    class Net:
+        def json(self,url):
+            assert url=='https://api.lever.co/v0/postings/example?mode=json'
+            return [{'hostedUrl':'https://jobs.lever.co/example/summer-intern',
+                     'text':'Software Engineer Intern Summer 2027',
+                     'categories':{'location':'San Diego, California','commitment':'Intern'},
+                     'country':country,'descriptionPlain':'Build Python and TypeScript software.'}]
+    store.put_facts({'summer_2027_relocate':relocate})
+    store.update_settings({'locations':['San Francisco Bay Area'],
+                           'school_locations':['San Francisco Bay Area'],
+                           'summer_2027_locations':['United States','Remote (US)']})
+    discovered=probe(Net(),'lv','example')
+    source_result(store,'lv:example',discovered)
+    saved=json.loads(store.db.execute('SELECT payload FROM jobs WHERE id=?',(discovered[0]['id'],)).fetchone()[0])
+    if accepted:
+        assert saved['location']=='San Diego, California; United States'
+        eligible(saved,store.settings(),store.facts())
+    else:
+        with pytest.raises(Blocked,match='location_mismatch'):
+            eligible(saved,store.settings(),store.facts())
+
+
 def test_discovery_excludes_new_grad_before_ready_and_releases_on_preference_change(store):
     store.update_settings({'seniority':['internship','part-time','summer-internship']})
     graduate=posting('https://jobs.lever.co/acme/graduate','Acme','Software Engineer, New Grad','San Francisco, US','test')

@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 2
+ELIGIBILITY_VERSION = 5
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -21,6 +21,81 @@ GRAD=re.compile(r"(?:graduat\w*.{0,35}(?:between|from)\s+)(\d{4})(?:.{0,20}(?:an
 NO_SPONSOR=re.compile(r"(?:do(?:es)? not|cannot|can.t|will not|unable to|not (?:available|offered)).{0,35}sponsor|sponsorship.{0,30}(?:not (?:available|offered)|unavailable)|without.{0,15}sponsorship",re.I)
 CITIZEN=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:us citizen|u\.s\. citizen|us person|u\.s\. person)|(?:us citizen|u\.s\. citizen|us person).{0,25}(?:required|only)|\bitar\b|(?:active|must have|requires?).{0,20}security clearance",re.I)
 US_CITIZEN_GATE=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:u\.?s\.?|united states) citizen(?:ship|s)?|(?:u\.?s\.?|united states) citizen(?:ship|s)?.{0,25}(?:required|only)",re.I)
+DOCTORAL = r'(?:\bph\.?\s*d\b\.?|\bdoctor(?:al|ate)\b(?:\s+degree)?|\bdoctor of philosophy\b)'
+LOWER_DEGREE = r"(?:\b(?:bachelor(?:['’]s)?|master(?:['’]s)?|undergraduate|b\.?s|b\.?a|b\.?sc|m\.?s|m\.?sc)\b\.?)"
+MASTER_WORD = r"\bmaster(?:['’]s)?\b"
+MASTER_ABBREVIATION = r'\bm\.?\s*s(?:c)?\b\.?'
+UNDERGRADUATE = r"(?:\b(?:bachelor(?:['’]s)?|undergraduate|associate(?:['’]s)?|b\.?s|b\.?a|b\.?sc)\b\.?)"
+DOCTORAL_FACTS = {'phd','doctorate','doctoral','doctoraldegree','doctoratedegree','doctorofphilosophy'}
+MASTER_FACTS = {'ms','ma','msc','master','masters','mastersdegree','masterofscience','masterofarts'}
+LOWER_DEGREE_FACTS = {'bs','ba','bsc','bachelor','bachelors','bachelorsdegree','bachelorofscience','bachelorofarts',
+                      'undergraduate','associate','associates','associatesdegree','highschool','highschooldiploma'}
+
+
+def _doctoral_requirement(title, description):
+    """Recognize an exclusive doctoral level, not preferences or team prose."""
+    def exclusive(fragment):
+        if (re.search(rf'\b(?:no|without requiring)\s+{DOCTORAL}',fragment,re.I)
+                or re.search(rf'{DOCTORAL}\s*(?:degree\s*)?(?:is\s+)?(?:not\s+(?:required|necessary)|preferred|optional|is a plus)',fragment,re.I)):
+            return False
+        alternatives=rf'(?:{LOWER_DEGREE}.{{0,25}}(?:\bor\b|/).{{0,25}}{DOCTORAL}|{DOCTORAL}.{{0,25}}(?:\bor\b|/).{{0,25}}{LOWER_DEGREE})'
+        return not re.search(alternatives,fragment,re.I)
+    if re.search(r'\bintern(?:ships?)?\b',title,re.I) and re.search(DOCTORAL,title,re.I) and exclusive(title):
+        return True
+    study=r'(?:enrolled|pursuing|working\s+(?:toward|towards|on)|studying|hold|have|possess)'
+    prerequisite=rf'(?:(?:\bmust\s+|\brequired to\s+)(?:(?:be|currently)\s+){{0,2}}{study}\b|\blimited to\b|\bopen only to\b|\bonly\s+(?:accepting|considering)\b)'
+    mandatory=rf'{prerequisite}[^\n;.!?]{{0,100}}{DOCTORAL}|\bonly\s+(?:current\s+)?{DOCTORAL}|{DOCTORAL}\s*(?:degree\s*)?(?:is\s+)?(?:required|mandatory)\b'
+    return any(exclusive(description[max(0,match.start()-30):match.end()+100])
+               for match in re.finditer(mandatory,description,re.I))
+
+
+def _check_doctoral_degree(title, description, facts):
+    if not _doctoral_requirement(title,description):return
+    # A school, graduation date or completed degree does not establish current
+    # doctoral study. Only the explicitly confirmed degree in progress can.
+    value=re.sub(r'[^a-z]','',facts.get('degree',{}).get('value','').casefold())
+    if value in DOCTORAL_FACTS:return
+    if value in LOWER_DEGREE_FACTS|MASTER_FACTS:
+        raise Blocked('degree_mismatch','This internship requires doctoral study; your confirmed degree in progress does not match')
+    raise Blocked('degree_requirement_review','This internship requires doctoral study; confirm your current degree before applying')
+
+
+def _graduate_requirement(title, description):
+    """Recognize required graduate study, including a PhD-or-MS alternative."""
+    # MS can also name a software vendor. Require degree wording in prose,
+    # and a degree position in titles, rather than interpreting "MS SQL".
+    master_context=rf'{MASTER_ABBREVIATION}(?=\s*(?:degree\b|program\b|students?\b|candidates?\b|in\b|or\b|is\b|required\b|mandatory\b|[/,.!?]|$))'
+    graduate=rf'(?:{DOCTORAL}|{MASTER_WORD}|{master_context})'
+    def exclusive(fragment):
+        if (re.search(rf'\b(?:no|without requiring)\s+{graduate}',fragment,re.I)
+                or re.search(rf'{graduate}\s*(?:(?:degree|program)\s*)?(?:in\s+[^\n;.!?]{{0,80}}?)?(?:is\s+)?(?:not\s+(?:required|necessary)|preferred|optional|(?:is\s+)?a plus)',fragment,re.I)):
+            return False
+        alternatives=rf'(?:{UNDERGRADUATE}[^\n;!?]{{0,80}}(?:\bor\b|/)[^\n;!?]{{0,40}}{graduate}|{graduate}[^\n;!?]{{0,80}}(?:\bor\b|/)[^\n;!?]{{0,40}}{UNDERGRADUATE})'
+        return not re.search(alternatives,fragment,re.I)
+    title_degree=(re.search(rf'{DOCTORAL}|{MASTER_WORD}',title,re.I)
+        or re.search(rf'{MASTER_ABBREVIATION}\s+(?:(?:research|software|engineering|engineer|data|science|hardware|systems|design)\s+){{0,4}}intern(?:ships?)?\b',title,re.I)
+        or re.search(rf'\bintern(?:ships?)?\b.{{0,60}}[-–(,]\s*{MASTER_ABBREVIATION}\s*[) ]*$',title,re.I))
+    if re.search(r'\bintern(?:ships?)?\b',title,re.I) and title_degree and exclusive(title):
+        return True
+    # A direct requirement bullet may omit "must" (NVIDIA: "Pursuing PhD
+    # or MS ..."). Only a clause that addresses the applicant gets that rule;
+    # collaborating with, or being mentored by, graduate researchers does not.
+    description=re.sub(r'<[^>]+>','\n',description)
+    study=r'(?:enrolled(?:\s+in)?|pursuing|working\s+(?:toward|towards|on)|studying|hold|have|possess)'
+    prerequisite=rf'(?:(?:\bmust\s+|\brequired to\s+)(?:(?:be|currently)\s+){{0,2}}{study}\b|\blimited to\b|\bopen only to\b|\bonly\s+(?:accepting|considering)\b)'
+    direct=rf'(?:^|[\n;:])\s*(?:[-*•]\s*)?(?:currently\s+)?(?:pursuing|enrolled\s+in|working\s+(?:toward|towards|on)|studying)\b'
+    mandatory=rf'(?:{prerequisite}|{direct})[^\n;.!?]{{0,100}}?{graduate}|\bonly\s+(?:current\s+)?{graduate}|{graduate}\s*(?:(?:degree|program)\s*)?(?:is\s+)?(?:required|mandatory)\b'
+    return any(exclusive(description[max(0,match.start()-30):match.end()+120])
+               for match in re.finditer(mandatory,description,re.I))
+
+
+def _check_graduate_degree(title, description, facts):
+    if not _graduate_requirement(title,description):return
+    value=re.sub(r'[^a-z]','',facts.get('degree',{}).get('value','').casefold())
+    if value in DOCTORAL_FACTS|MASTER_FACTS:return
+    if value in LOWER_DEGREE_FACTS:
+        raise Blocked('degree_mismatch','This internship requires master’s or doctoral study; your confirmed degree in progress does not match')
+    raise Blocked('degree_requirement_review','This internship requires master’s or doctoral study; confirm your current degree before applying')
 
 
 
@@ -41,14 +116,14 @@ def employment_kind(job):
     phrased descriptions. An incidental mention of interns is not a role type.
     """
     title=job.get('title','')
-    intern=r'\bintern(?:ship)?\b|\bco[- ]?op\b'
+    intern=r'\bintern(?:ships?)?\b|\bco[- ]?op\b'
     part=r'\bpart[- ]?time\b'
     graduate=r'\bnew[- ]?grad(?:uate)?\b|\bearly[- ]career\b'
     if re.search(graduate,title,re.I):return 'new-grad'
     if re.search(intern,title,re.I):return 'internship'
     if re.search(part,title,re.I):return 'part-time'
     metadata=str(job.get('employment_type') or '')
-    if re.fullmatch(r'intern(?:ship)?|co[- ]?op',metadata,re.I):return 'internship'
+    if re.fullmatch(r'intern(?:ships?)?|co[- ]?op',metadata,re.I):return 'internship'
     if re.fullmatch(r'part[- ]?time',metadata,re.I):return 'part-time'
     if re.fullmatch(r'full[- ]?time',metadata,re.I):return 'new-grad'
     if job.get('source')=='simplify:internships':return 'internship'
@@ -78,6 +153,8 @@ def eligible(job,s,facts):
     kind,summer=listing_scope(job,s);internship=kind=='internship'
     title=job.get("title",""); desc=job.get("description",""); location=job.get("location","")
     text=title+"\n"+desc
+    _check_doctoral_degree(title,desc,facts)
+    _check_graduate_degree(title,desc,facts)
     seasonal=facts.get("summer_2027_relocate",{}).get("value")=="Yes"
     locations=(s["summer_2027_locations"] if summer else s["school_locations"]) if seasonal else s["locations"]
     patterns=[LOCATIONS.get(l,re.escape(l)) for l in locations]

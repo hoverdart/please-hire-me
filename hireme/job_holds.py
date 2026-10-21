@@ -5,17 +5,18 @@ import time
 from datetime import datetime,timezone,timedelta
 from zoneinfo import ZoneInfo
 from .field_context import MAPPING_VERSION, ADAPTER_VERSION, CAPTCHA_DETECTION_VERSION
-from .presentation import NOT_MATCH_REASONS, WAIT_REASONS
+from .presentation import NOT_MATCH_REASONS, WAIT_REASONS, REASON_GUIDANCE
 from .util import digest, now, Blocked
 
-FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stale_answer','answer_too_long','numeric_answer_needed','phone_country_review','model_budget_exhausted'}
-MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer','invalid_fields','invalid_single_line_answer','numeric_answer_out_of_range','repeated_entry_review','unsupported_widget','ashby_draft_unsupported','ashby_submission_unsupported'}
+FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stale_answer','answer_too_long','numeric_answer_needed','phone_country_review','model_budget_exhausted','history_confirmation_required','history_changed'}
+MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer','invalid_fields','invalid_single_line_answer','numeric_answer_out_of_range','repeated_entry_review','unsupported_widget','ashby_draft_unsupported','ashby_submission_unsupported','workday_unapproved_operation','workday_package_incomplete','workday_submit_not_reserved'}
 DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed','writing_link_unverified'}
 ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','account_fields_unavailable','captcha_blocked','account_or_verification_blocked','account_automation_disabled','account_result_uncertain','account_creation_held','account_credentials_unavailable','company_verification_pending','account_blocked','account_required','company_uncertain','email_verification_required','captcha','email_verification_failed'}
+WORKDAY_ACCOUNT_REASONS = {'workday_session_unverified','workday_identity_mismatch','workday_acceptance_unverified','remote_draft_permission_required'}
 TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output','writing_unsupported','ashby_draft_save_failed'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
 
-ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review'}
+ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review'}
 
 # Each exclusion is already a proven blocker. Other profile/preferences edits
 # cannot make that blocker pass and must not release it for another browser run.
@@ -27,6 +28,8 @@ ELIGIBILITY_INPUTS = {
     'parttime_out_of_scope': (set(),{'seniority'}),
     'location_mismatch': ({'summer_2027_relocate'},{'locations','summer_2027_locations','school_locations'}),
     'experience_mismatch': ({'professional_years'},{'max_years_required'}),
+    'degree_mismatch': ({'degree'},set()),
+    'degree_requirement_review': ({'degree'},set()),
     'sponsorship_mismatch': ({'needs_sponsorship'},set()),
     'citizenship_mismatch': ({'us_person'},set()),
     'citizenship_or_clearance_review': ({'citizenship','us_person'},set()),
@@ -39,13 +42,15 @@ ELIGIBILITY_INPUTS = {
 }
 
 def category(reason):
+    if reason=='workday_schema_unreviewed':return 'unsupported'
+    if reason=='workday_native_read_failed':return 'account'
     if reason.startswith('connection_') and reason != 'connection_identity_review':return 'connection'
     if reason in NOT_MATCH_REASONS or reason in ELIGIBILITY_REVIEWS:return 'eligibility'
     if reason in FACT_REASONS:return 'information'
     if reason in MAPPING_REASONS:return 'mapping'
     if reason in DOCUMENT_REASONS:return 'documents'
-    if reason in ACCOUNT_REASONS or reason=='account_agreement_review':return 'account'
-    if reason=='multi_step_requires_adapter':return 'unsupported'
+    if reason in ACCOUNT_REASONS|WORKDAY_ACCOUNT_REASONS or reason=='account_agreement_review':return 'account'
+    if reason in {'multi_step_requires_adapter','workday_transport_unverified','workday_preparation_requires_draft'}:return 'unsupported'
     if reason in TRANSIENT:return 'transient'
     if reason in WAIT_REASONS|{'company_uncertain','company_verification_pending','company_submission_rejected'}:return 'limits'
     return 'review'
@@ -53,6 +58,27 @@ def category(reason):
 def dependency(store, job, kind, reason=None):
     saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
     posting=json.loads(saved['payload']) if saved else job
+    if reason=='remote_draft_uncertain':
+        # Only a native readback/reconciliation changes this dependency. Facts,
+        # settings and adapter upgrades never authorize repeating a saved step.
+        return digest({
+            'draft':[tuple(row) for row in store.db.execute('SELECT state,native_revision,evidence FROM workday_drafts WHERE job_id=?',(job['id'],))],
+            'steps':[tuple(row) for row in store.db.execute('SELECT id,state,acknowledgement,updated FROM remote_draft_steps WHERE job_id=? ORDER BY id',(job['id'],))],
+        })
+    workday=None
+    if reason and (reason.startswith('workday_') or reason=='remote_draft_permission_required'):
+        from .workday import VERSION
+        from .workday_profiles import owner_hash,profile_binding,transport,operational_evidence
+        profile=transport(job['host'])
+        workday={'version':VERSION,'profile':profile.signature if profile else None,
+            'binding':profile_binding(store,job['host']),'owner':owner_hash(store),
+            'verified':[tuple(sorted(row.items())) for row in operational_evidence(store,job['host'],VERSION)],
+            'remote_drafts':store.settings()['remote_drafts']}
+        if reason=='workday_preparation_requires_draft':
+            workday['draft']=[tuple(row) for row in store.db.execute('SELECT state,native_revision,evidence FROM workday_drafts WHERE job_id=?',(job['id'],))]
+            return digest(workday)
+        if reason in WORKDAY_ACCOUNT_REASONS or reason=='workday_transport_unverified':
+            return digest(workday)
     if reason and reason.startswith('connection_'):
         from .platform_connections import configuration,VERSION
         connection_id=job.get('connection_id')
@@ -78,6 +104,7 @@ def dependency(store, job, kind, reason=None):
             data['citizenship_policy']=CITIZENSHIP_VERSION
         return digest(data)
     data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION}
+    if workday is not None:data['workday']=workday
     if reason in {'captcha','captcha_blocked'}:data['captcha_detection']=CAPTCHA_DETECTION_VERSION
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})
     if kind in {'information','mapping','documents','eligibility','account'}:
@@ -85,6 +112,7 @@ def dependency(store, job, kind, reason=None):
         keys={'summer_2027_locations','school_locations','locations','roles','seniority','skip_companies','interview_companies','company_aliases','min_fit_score','max_years_required','min_annual_usd','min_hourly_usd'} if kind=='eligibility' else {'prior_employers','contextual_preferences','tailored_writing','cover_letters','signed_in_portals','employer_accounts','gmail_verification'}
         data['settings']={k:v for k,v in store.settings().items() if k in keys}
     if kind in {'information','mapping','documents'}:
+        data['history']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed FROM confirmed_history ORDER BY id')]
         data['answers']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM answers ORDER BY id')]
         data['templates']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM templates ORDER BY id')]
         data['documents']=[tuple(r) for r in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')]
@@ -103,8 +131,13 @@ def safe_state(store, job_id):
     row=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job_id,)).fetchone()
     return not row or row[0]=='prepared'
 
+def _uncertain_draft(store,job_id):
+    return bool(store.db.execute("SELECT 1 FROM remote_draft_steps WHERE job_id=? AND state IN ('intent','unknown') LIMIT 1",(job_id,)).fetchone()
+                or store.db.execute("SELECT 1 FROM workday_drafts WHERE job_id=? AND state='unknown'",(job_id,)).fetchone())
+
 def ready(store, job, at=None):
     if not safe_state(store,job['id']):return False
+    if _uncertain_draft(store,job['id']):return False
     row=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
     if not row:return True
     if row['reason']=='model_budget_exhausted' and model_available(store,at):return True
@@ -116,7 +149,10 @@ def ready(store, job, at=None):
                 or row['retry_at'] is not None and (at or time.time())>=row['retry_at'])
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
-    if row['category']=='review':return False
+    if row['category']=='review':
+        return (row['reason']=='remote_draft_uncertain'
+                and bool(store.db.execute("SELECT 1 FROM workday_drafts WHERE job_id=? AND state='acknowledged'",(job['id'],)).fetchone())
+                and row['dependency']!=dependency(store,job,'review',row['reason']))
     return row['dependency']!=dependency(store,job,row['category'],row['reason'])
 
 def model_available(store,at=None):
@@ -149,6 +185,8 @@ def hold(store, job, reason, detail='', stage='application', at=None):
         'limits':'Wait for existing company or daily limits to clear.',
         'review':'Review this failure before allowing another attempt.'}
     if reason=='model_budget_exhausted':guidance[kind]='Approve the unanswered fields, or wait for the next model allowance. Request limits remain unchanged.'
+    if reason in REASON_GUIDANCE and (reason.startswith('workday_') or reason in {'remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
+        guidance[kind]=REASON_GUIDANCE[reason][1]
     # References and field labels only: no answer values, passwords, or OTPs.
     evidence={'stage':stage,'category':kind,'field':str(detail)[:300] if reason in FACT_REASONS|MAPPING_REASONS else '',
         'fields':[{**f,'options':json.loads(f['options'])} for f in fields],
@@ -173,6 +211,7 @@ def recheck(store,job_id):
     if not row:raise ValueError('Opportunity not found')
     store.check_job_decision(job_id)
     if not safe_state(store,job_id):raise ValueError('Verify the existing submission outcome; another attempt is not authorized')
+    if _uncertain_draft(store,job_id):return {'ready':False,'reason':'remote_draft_uncertain'}
     job=json.loads(row['payload'])
     from .policy import eligible
     try:eligible(job,store.settings(),store.facts())
@@ -180,6 +219,11 @@ def recheck(store,job_id):
         hold(store,job,error.reason,error.detail,'screening');return {'ready':False,'reason':error.reason}
     available=ready(store,job)
     previous=store.db.execute('SELECT category,retry_at,retry_count,reason,dependency FROM job_holds WHERE job_id=?',(job_id,)).fetchone()
+    if not available and previous and previous['reason'] in {'workday_session_unverified','workday_identity_mismatch'}:
+        # Recheck requests a fresh authenticated read; the adapter must verify
+        # the actual owner/session before any write. Unknown drafts stay above.
+        available=True
+        store.event('workday_session_recheck_requested',job_id,{'reason':previous['reason']})
     if not available and previous and previous['reason']=='human_verification_unavailable':
         # The desktop can recover without changing stored preferences. This
         # explicit action retries only preflight; safe_state above excludes any

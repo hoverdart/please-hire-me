@@ -13,6 +13,7 @@ HOSTS={'jobs.lever.co','jobs.eu.lever.co'}
 class LeverResume:
     def __init__(self,browser,document):
         self.browser=browser;self.document=document;self.request_keys=set();self.storage_id=None
+        self.used=False
         account=browser.page.locator('input[type=hidden][name=accountId]')
         storage=browser.page.locator('input[type=hidden][name=resumeStorageId]')
         if account.count()!=1 or storage.count()!=1:raise Blocked('upload_verification_failed','Lever resume controls are unavailable')
@@ -22,7 +23,7 @@ class LeverResume:
 
     def grant(self,request,key):
         url=urlsplit(request.url);browser=self.browser
-        if (browser.current_host not in HOSTS or url.hostname!=browser.current_host or url.scheme!='https'
+        if (self.used or browser.current_host not in HOSTS or url.hostname!=browser.current_host or url.scheme!='https'
                 or url.path!='/parseResume' or url.query or url.username or url.password or request.method!='POST'):return False
         blob=browser.upload_payloads.get(self.document['hash']);body=request.post_data_buffer or b''
         if not blob or not 0<len(body)<=len(blob)+8192:return None
@@ -51,6 +52,8 @@ class LeverResume:
                  (self.document['hash']+'.pdf').encode()+b'"\r\nContent-Type: application/pdf\r\n\r\n'+blob+
                  b'\r\n--'+boundary.encode()+b'\r\nContent-Disposition: form-data; name="accountId"\r\n\r\n'+
                  self.account.encode()+b'\r\n--'+boundary.encode()+b'--\r\n')
+        if browser.write_boundary:browser.write_boundary.check()
+        self.used=True
         self.request_keys={key,(request.url,request.method,hashlib.sha256(payload).hexdigest())}
         return {'post_data':payload}
 

@@ -10,6 +10,7 @@ import pytest
 from hireme.ashby_drafts import AshbyDraft,VARIABLES
 from hireme.browser import Browser
 from hireme.util import Blocked,digest
+from tests.ashby_document_fixture import AshbyDocuments
 
 QUERY=(Path(__file__).parent/'fixtures/ashby-set-form-value.graphql').read_text()
 REQ='11111111-1111-4111-8111-111111111111'
@@ -301,12 +302,13 @@ def test_browser_human_handoff_preserves_one_intent_and_exact_native_submission(
          'company':'Acme','title':'Software Engineer Intern Summer 2027','description':'Build Python software.',
          'location':'San Francisco, United States','source':'fixture'}
     store.upsert_job(job);remote={};writes=[];clicks=[]
+    documents=AshbyDocuments(store,'acme',REQ,RENDER,DEFINITION)
     action='44444444-4444-4444-8444-444444444444'
     survey={'id':'55555555-5555-4555-8555-555555555555','sourceFormDefinitionId':DEFINITION,
             'formControls':[{'identifier':action,'title':'Submit','__typename':'FormControl'}],'sections':[]}
     def native_form():
         value=form(remote);value['formControls']=[{'identifier':action,'title':'Submit','__typename':'FormControl'}]
-        return value
+        return documents.form(value)
     variables={'organizationHostedJobsPageName':'acme','jobPostingId':REQ,'recaptchaToken':'fixture-human-token',
                'sourceAttributionCode':None,'viewedAutomatedProcessingLegalNoticeRuleId':None,'deviceFingerprint':None}
     operation='ApiSubmitMultipleFormsAction' if surveys else 'ApiSubmitSingleApplicationFormAction'
@@ -334,12 +336,16 @@ if(mode==='changed_payload')finalPayload.variables.answer='unapproved';
 try{const response=await fetch(endpoint,{method:'POST',body:JSON.stringify(finalPayload)});if(response.ok){
 const frame=document.getElementById('fixture-challenge');document.body.innerHTML='Thank you for applying. Your application was received.';if(frame)document.body.append(frame);}}catch{}
 };</script>'''
+    html=documents.html(html)
     headed=os.environ.get('HIREME_TEST_HUMAN_VISIBLE')=='1'
     if headed:store.update_settings({'headless':False})
     with Browser(store) as b:
         # The fixture drives actual frame detection and request routing in a
         # headless test browser. Visible desktop operation is a separate gate.
-        store.update_settings({'headless':False,'human_verification_wait_seconds':1})
+        # Native browser/approval work must fit on the Pi as well as the Mac.
+        # Only the explicit timeout case tests the one-second deadline; other
+        # cases must reach their intended payload/acknowledgement checks.
+        store.update_settings({'headless':False,'human_verification_wait_seconds':1 if mode=='timeout' else 10})
         if not headed:b.visible=True
         assert b.visible
         actual_event=store.event
@@ -353,7 +359,8 @@ const frame=document.getElementById('fixture-challenge');document.body.innerHTML
         class Route:
             def __init__(self,route):self.route=route;self.request=route.request
             def abort(self):self.route.abort()
-            def continue_(self):
+            def continue_(self,**changes):
+                if documents.respond(b,self.route,changes):return
                 data=json.loads(self.request.post_data)
                 if data['operationName']=='ApiJobPosting':result={'data':{'jobPosting':{'id':REQ,'applicationForm':native_form(),'surveyForms':[survey] if surveys else []}}}
                 elif data['operationName']=='ApiSetFormValue':
@@ -369,26 +376,16 @@ const frame=document.getElementById('fixture-challenge');document.body.innerHTML
                 route.fulfill(status=200,content_type='text/html',body='<p>Synthetic challenge</p>' if 'www.google.com' in route.request.url else html)
             else:b._route(Route(route))
         b.page.route('**/*',serve)
-        # Upload transport has separate fixtures. Acknowledge this synthetic
-        # document immediately after its exact hash-verified file is selected.
-        actual_control=b._control
-        class FixtureFile:
-            def __init__(self,locator):self.locator=locator
-            def __getattr__(self,name):return getattr(self.locator,name)
-            def set_input_files(self,path):
-                self.locator.set_input_files(path)
-                h=hashlib.sha256(Path(path).read_bytes()).hexdigest();assert h in b.upload_payloads
-                b.uploaded_files.add(h);b.ashby_attached_files.add(h)
-        def control(field,option=None):
-            locator=actual_control(field,option)
-            return FixtureFile(locator) if field['type']=='file' else locator
-        b._control=control
         if mode in {'complete','lingering_frame'}:assert b.apply(job)=='confirmed'
         elif mode=='bad_ack':assert b.apply(job)=='unknown'
         else:
             with pytest.raises(Blocked):b.apply(job)
         assert clicks==[1]
-    assert len(writes)==int(mode in {'complete','lingering_frame','bad_ack'})
+    assert writes==([final_payload] if mode in {'complete','lingering_frame','bad_ack'} else [])
+    if mode=='bad_ack':
+        assert b.ashby_submission.used and not b.ashby_submission.acknowledged
+        responses=store.db.execute("SELECT detail FROM events WHERE kind='ashby_submission_response'").fetchall()
+        assert len(responses)==1 and json.loads(responses[0][0])=={'acknowledged':False}
     assert store.db.execute('SELECT state FROM applications').fetchone()[0]==('confirmed' if mode in {'complete','lingering_frame'} else 'unknown')
     assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0]==1
 
@@ -515,6 +512,16 @@ def test_browser_saves_only_approved_fields_before_final_intent_and_keeps_prepar
          'company':'Acme','title':'Software Engineer Intern Summer 2027','description':'Build Python software.',
          'location':'San Francisco, United States','source':'fixture'}
     store.upsert_job(job);remote={};final=[]
+    documents=AshbyDocuments(store,'acme',REQ,RENDER,DEFINITION)
+    action='44444444-4444-4444-8444-444444444444'
+    native={'operationName':'ApiSubmitSingleApplicationFormAction',
+            'query':(Path(__file__).parent/'fixtures/ashby-submit-single-application-form.graphql').read_text(),
+            'variables':{'organizationHostedJobsPageName':'acme','jobPostingId':REQ,'recaptchaToken':'synthetic-token',
+                         'formRenderIdentifier':RENDER,'formDefinitionIdentifier':DEFINITION,'actionIdentifier':action}}
+    def official_form():
+        value=form(remote)
+        value['formControls']=[{'identifier':action,'title':'Submit','__typename':'FormControl'}]
+        return documents.form(value)
     metadata=[('_systemfield_name','Name','text'),('_systemfield_email','Email','email')]
     if restored_phone:
         remote['_systemfield_phone']=store.facts()['phone']['value']
@@ -527,34 +534,31 @@ const endpoint='/api/non-user-graphql';
 const initial='''+json.dumps(initial)+''';
 fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiJobPosting',query:'query ApiJobPosting { jobPosting { id } }',variables:{organizationHostedJobsPageName:'acme',jobPostingId:'''+json.dumps(REQ)+'''}})});
 for(const el of document.querySelectorAll('input:not([type=file])'))el.addEventListener('input',()=>{if(el.value===initial[el.id])return;fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiSetFormValue',query,variables:{organizationHostedJobsPageName:'acme',formRenderIdentifier:'''+json.dumps(RENDER)+''',formDefinitionIdentifier:'''+json.dumps(DEFINITION)+''',path:el.id,value:el.value}})}).catch(()=>{})});
-document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=await fetch(endpoint,{method:'POST',body:JSON.stringify({operationName:'ApiSubmitApplication'})});if(r.ok)document.body.innerHTML='Thank you for applying. Your application was received.'};
+document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=await fetch(endpoint,{method:'POST',body:JSON.stringify('''+json.dumps(native)+''')});if(r.ok)document.body.innerHTML='Thank you for applying. Your application was received.'};
 </script></body></html>'''
+    html=documents.html(html)
     with Browser(store) as b:
         class Route:
             def __init__(self,route):self.route=route;self.request=route.request
             def abort(self):self.route.abort()
-            def continue_(self):
+            def continue_(self,**changes):
+                if documents.respond(b,self.route,changes):return
                 data=json.loads(self.request.post_data)
-                if data['operationName']=='ApiJobPosting':result={'data':{'jobPosting':{'id':REQ,'applicationForm':form(remote)}}}
+                if data['operationName']=='ApiJobPosting':result={'data':{'jobPosting':{'id':REQ,'applicationForm':official_form()}}}
                 elif data['operationName']=='ApiSetFormValue':
                     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
-                    v=data['variables'];remote[v['path']]=v['value'];result={'data':{'setFormValue':form(remote)}}
+                    v=data['variables'];remote[v['path']]=v['value'];result={'data':{'setFormValue':official_form()}}
                     if not ack:result['errors']=[{'message':'Synthetic save rejected'}]
                 else:
-                    assert data['operationName']=='ApiSubmitApplication'
+                    assert data==native
                     assert store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
                     assert remote=={**initial,'_systemfield_name':'Test Person','_systemfield_email':'test@candidate.invalid'}
-                    final.append(data);result={'data':{'submitted':True}}
+                    final.append(data);result={'data':{'submitApplicationFormAction':{'applicationFormResult':{'__typename':'FormSubmitSuccess'},'messages':{}}}}
                 self.route.fulfill(status=200,content_type='application/json',body=json.dumps(result))
         def serve(route):
             if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
             else:b._route(Route(route))
         b.page.route('**/*',serve)
-        original=b._verify
-        def verify(answers,documents,fields):
-            b.uploaded_files.update(d['hash'] for d in documents);b.ashby_attached_files.update(d['hash'] for d in documents)
-            return original(answers,documents,fields)
-        b._verify=verify
         if live and not ack:
             with pytest.raises(Blocked,match='ashby_draft_save_failed'):b.apply(job,live=True)
             assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()

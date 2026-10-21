@@ -7,8 +7,8 @@ from decimal import Decimal,InvalidOperation
 from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
-MAPPING_VERSION = 25
-ADAPTER_VERSION = 28
+MAPPING_VERSION = 26
+ADAPTER_VERSION = 29
 CAPTCHA_DETECTION_VERSION = 4
 
 def field_context(host, field, context=None):
@@ -25,6 +25,7 @@ def field_context(host, field, context=None):
             'employer': context.get('company', ''),
             'role': context.get('title',''), 'job_location': context.get('location',''), 'section': field.get('section', ''),
             **({'section_entry':field['section_entry']} if 'section_entry' in field else {}),
+            **({'communication_channel':field['ashby_texting_consent']} if field.get('ashby_texting_consent') else {}),
             **({'employment_country':employment_country} if GENERIC_WORK_COUNTRY.search(field['label']) and employment_country else {}),
             **({'employment_countries':sorted(context['employment_countries'])} if GENERIC_WORK_COUNTRY.search(field['label']) and context.get('employment_countries') else {}),
             'label': ' '.join(field['label'].casefold().split()).rstrip(' *?:'),

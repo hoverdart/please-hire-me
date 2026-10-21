@@ -23,9 +23,29 @@ def test_internship_search_excludes_incidental_description_mentions(store,job,ti
  ({'title':'Software Engineer','description':'This role is an internship for students.'},'internship'),
  ({'title':'Software Engineer','source':'simplify:internships'},'internship'),
  ({'title':'Software Engineer New Grad','source':'simplify:internships'},'new-grad'),
+ ({'title':'NVIDIA 2027 Internships: Software Engineering','employment_type':'FullTime'},'internship'),
+ ({'title':'Software Engineering Internships Summer 2027'},'internship'),
+ ({'title':'Software Engineer','employment_type':'Internships'},'internship'),
+ ({'title':'Software Engineer New Grad','employment_type':'Internships'},'new-grad'),
+ ({'title':'Software Engineer New Grad - Internships Program'},'new-grad'),
+ ({'title':'Software Engineer - Interns Team','description':'Mentor interns on the team.'},'new-grad'),
+ ({'title':'Software Engineer','employment_type':'Interns'},'new-grad'),
+ ({'title':'Software Engineer','description':'Our internships program hires students. You will mentor interns.'},'new-grad'),
 ])
 def test_role_type_uses_advertised_title_and_structured_context(job,changes,kind):
     assert employment_kind({**job,**changes})==kind
+
+
+def test_official_nvidia_2027_internships_software_title_is_eligible_without_fulltime_opt_in(store,job):
+    # Official JR2023495 aggregates internships under the plural title.
+    title='NVIDIA 2027 Internships: Software Engineering'
+    store.update_settings({'seniority':['internship','summer-internship']})
+    candidate={**job,'title':title,'employment_type':'FullTime'}
+    assert eligible(candidate,store.settings(),store.facts())[0]>0
+    # A year alone does not establish a summer-only placement.
+    store.update_settings({'seniority':['summer-internship']})
+    with pytest.raises(Blocked,match='internship_out_of_scope'):
+        eligible(candidate,store.settings(),store.facts())
 
 
 def test_part_time_scope_and_hourly_minimum(store,job):

@@ -22,7 +22,7 @@ def skip_company(store, job_id):
             settings = validate_settings({'skip_companies': [*settings['skip_companies'], company]}, settings)
             store.db.execute('UPDATE config SET value=? WHERE id=1', (json.dumps(settings),))
         candidates = store.db.execute("""SELECT id,company FROM jobs WHERE status IN ('discovered','blocked','prepared')
-            AND NOT EXISTS(SELECT 1 FROM applications a WHERE a.job_id=jobs.id AND a.state!='prepared')""")
+            AND NOT EXISTS(SELECT 1 FROM application_records a WHERE a.job_id=jobs.id AND a.state!='prepared')""")
         ids = [row['id'] for row in candidates if normalize(row['company']) == key]
         stamp = now()
         for jid in ids:

@@ -1195,6 +1195,10 @@ def validate_package(store, job, package):
         field=answer["field"]
         prov=answer.get("provenance",{})
         if not _fits_writing_limits(answer["value"],field,writing_context):raise Blocked("answer_too_long",field["label"])
+        if 'history_entry_id' in prov:
+            from .workday_history import validate_answer
+            validate_answer(store,answer)
+            continue
         if 'sample_parts' in prov:
             if field_key(field['label'])=='high_school_graduation_year':
                 raise Blocked('unsupported_or_stale_answer',field['label'])

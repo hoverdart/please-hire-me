@@ -22,7 +22,7 @@ def search_outcomes(store, search='', status='pending', offset=0, limit=25):
         escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
         conditions.append("outcome_search(j.company,j.title,a.company_key) LIKE ? ESCAPE '\\'")
         parameters.append('%' + escaped + '%')
-    joined = ' FROM applications a LEFT JOIN jobs j ON j.id=a.job_id'
+    joined = ' FROM application_records a LEFT JOIN jobs j ON j.id=a.job_id'
     where = ' WHERE ' + ' AND '.join(conditions)
     total = store.db.execute('SELECT COUNT(*)' + joined + where, parameters).fetchone()[0]
     offset = min(offset, max(0, (total - 1) // limit * limit))

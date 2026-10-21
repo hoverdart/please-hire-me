@@ -358,6 +358,45 @@ main {
   gap: 8px;
   flex-shrink: 0;
 }
+.history-actions {
+  flex-wrap: wrap;
+}
+.history-entry {
+  padding: 16px 0;
+  border-top: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+}
+.history-entry h3 {
+  margin: 0 0 8px;
+}
+.history-entry dl {
+  margin: 8px 0 12px;
+  display: grid;
+  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr);
+  column-gap: 16px;
+}
+.history-entry dt {
+  font-size: 13px;
+  color: var(--muted);
+}
+.history-entry dd {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+#history-form {
+  margin-top: 20px;
+}
+#history-form .confirmation {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+}
+#history-form .confirmation input {
+  flex: 0 0 auto;
+  width: auto;
+  margin-top: 4px;
+}
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

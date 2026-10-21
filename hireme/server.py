@@ -15,6 +15,43 @@ from .util import private_dir,atomic_json,Blocked
 MAX_BODY=21*1024*1024
 
 
+class HistoryConflict(ValueError):
+    pass
+
+
+def _history_entries(store):
+    """Expose the editable record without its duplicate internal JSON payload."""
+    return [{key: row[key] for key in ('id','kind','values','source','confirmed','revision','created','updated')}
+            for row in store.history_entries(confirmed_only=False)]
+
+
+def _change_history(store,data,withdraw=False):
+    allowed={'id','revision'} if withdraw else {'id','revision','kind','values','source','confirmed'}
+    if not isinstance(data,dict) or set(data)-allowed:
+        raise ValueError('Provide one education or employment entry')
+    revision=data.get('revision')
+    if type(revision) is not int or revision<0:
+        raise ValueError('Refresh the history entry before saving')
+    entry_id=data.get('id')
+    if entry_id is not None and (not isinstance(entry_id,str) or not re.fullmatch(r'[a-f0-9]{32}',entry_id)):
+        raise ValueError('Invalid history entry identity')
+    if withdraw and not entry_id:
+        raise ValueError('Choose an existing history entry')
+    if not withdraw and (data.get('confirmed') is not True or not isinstance(data.get('kind'),str)):
+        raise ValueError('Review and confirm this entry before saving')
+    with store.transaction():
+        old=store.db.execute('SELECT kind,revision FROM confirmed_history WHERE id=?',(entry_id,)).fetchone() if entry_id else None
+        if entry_id and not old:
+            raise ValueError('History entry not found; refresh before editing')
+        if revision!=(old['revision'] if old else 0):
+            raise HistoryConflict('This entry changed in another window. Discard this draft and reopen the saved entry before editing.')
+        if withdraw:
+            store.withdraw_history_entry(entry_id)
+        else:
+            store.put_history_entry(data['kind'],data.get('values'),source=data.get('source'),confirmed=True,entry_id=entry_id)
+    return {'saved':not withdraw,'withdrawn':withdraw,'history':_history_entries(store)}
+
+
 def _action_failure(error, discovery_only=False):
     if isinstance(error, Blocked) and error.reason == 'paused': return None
     if isinstance(error, Blocked) and error.reason == 'cycle_timeout':
@@ -159,6 +196,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     snapshot['jobs']=annotate_jobs(store,snapshot['jobs'])
                     from .coverage import cycle_funnel
                     snapshot['cycle_funnel']=cycle_funnel(store)
+                    snapshot['history']=_history_entries(store)
                     snapshot['demo']=demo
                     from .recovery import worker_status
                     activity=worker_status(store)
@@ -173,6 +211,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         try:running_mode=json.loads(row['detail'] or '{}').get('mode') if row else None
                         except (TypeError,ValueError):pass
                     return self.send(200,{**snapshot,'fact_labels':FACTS,'boolean_facts':sorted(BOOLEANS),'required':sorted(REQUIRED),'worker_running':activity['running'],'worker_mode':running_mode,'worker_error':local_error})
+                if path=='/api/history':return self.send(200,{'history':_history_entries(store)})
                 if path=='/api/coverage':
                     from .coverage import coverage
                     return self.send(200,coverage(store))
@@ -404,6 +443,9 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         from .materials import save_basic_context
                         if data.get('confirmed') is not True:raise ValueError('Confirm your factual context before saving')
                         result=save_basic_context(store,data.get('text'),data.get('revision'))
+                    elif path in ('/api/history','/api/history-withdraw'):
+                        try:result=_change_history(store,data,withdraw=path.endswith('-withdraw'))
+                        except HistoryConflict as error:return self.send(409,{'error':str(error)})
                     elif path=='/api/context-text':
                         from .materials import import_material,review_material
                         text=data['text'];role=data['role']

@@ -55,9 +55,11 @@ def test_unknown_operation_never_granted(store,workday_job):
         WriteGrant(store,workday_job,'My Information','https://attacker.invalid/save','POST',b'{}')
 
 
-def test_unknown_authenticated_transport_never_grants_write(store,workday_job):
+def test_unknown_authenticated_transport_never_grants_write(store,workday_job,monkeypatch):
     from types import SimpleNamespace
     from hireme.workday import WorkdayAdapter
+    from hireme.workday_profiles import REVIEWED_TRANSPORTS
+    monkeypatch.setitem(REVIEWED_TRANSPORTS,workday_job['host'],None)
     b=SimpleNamespace(store=store,_snapshot=lambda:[],_verify=lambda *a:None)
     adapter=WorkdayAdapter(b,workday_job)
     snapshot=adapter.snapshot('My Information')

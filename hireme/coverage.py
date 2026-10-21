@@ -64,11 +64,14 @@ def coverage(store):
     for label,tenant,wd,site,host in WORKDAY:
         configured=group('Workday','portal:'+label)
         configured.update(configured=True,host=host)
-    for row in store.db.execute('SELECT j.host,j.source,j.status,a.state,a.attempted FROM jobs j LEFT JOIN applications a ON a.job_id=j.id'):
+    for row in store.db.execute('''SELECT j.host,j.source,j.status,a.attempted,a.confirmed,a.uncertain FROM jobs j
+        LEFT JOIN (SELECT job_id,MAX(attempted IS NOT NULL) AS attempted,MAX(state='confirmed') AS confirmed,
+            MAX(state IN ('unknown','submitting','awaiting_verification')) AS uncertain
+            FROM application_records GROUP BY job_id) a ON a.job_id=j.id'''):
         g=group(ats(row['host']),row['source']);g['discovered']+=1
         g['eligible']+=row['status'] in {'prepared','confirmed','unknown','submitting','awaiting_verification'}
-        g['attempted']+=bool(row['attempted']);g['confirmed']+=row['state']=='confirmed'
-        g['blocked']+=row['status']=='blocked';g['uncertain']+=row['state'] in {'unknown','submitting','awaiting_verification'}
+        g['attempted']+=bool(row['attempted']);g['confirmed']+=bool(row['confirmed'])
+        g['blocked']+=row['status']=='blocked';g['uncertain']+=bool(row['uncertain'])
     # Browser attempts that stopped before submit intent still count as attempts.
     attempts={r['subject'] for r in store.db.execute("SELECT DISTINCT subject FROM events WHERE kind='application_started'")}
     actual={}

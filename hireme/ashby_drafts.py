@@ -77,6 +77,7 @@ class AshbyDraft:
         self.job=job;self.forms={};self.grants={};self.pending={};self.saved=set();self.failed=False
         self.package=None;self.remaining=0
         self.postings={};self.submission_contexts={};self.locations={};self.schools={};self.navigation_url=job['url']
+        self.texting_contexts={};self.texting=None
 
     def bind_page(self, url):
         """Follow a tenant rename only after the same official posting was read.
@@ -115,6 +116,10 @@ class AshbyDraft:
                         values[path]=value['value']
         self.forms[render]={'definition':definition,'entries':entries,'controls':form.get('formControls'),
                             'values':values if not form.get('errorMessages') and not form.get('formErrors') else {}}
+        from .ashby_texting import saved_consent
+        self.forms[render]['texting_value']=saved_consent(form) if not form.get('errorMessages') and not form.get('formErrors') else None
+        from .ashby_attachments import file_values
+        self.forms[render]['file_values']=file_values(form)
 
     def observe_posting(self, request, response):
         if not self.identity or response.status!=200:return
@@ -132,6 +137,11 @@ class AshbyDraft:
             result=response.json()
             posting=result.get('data',{}).get('jobPosting',{})
             if result.get('errors') or str(posting.get('id','')).lower()!=self.identity[1]:return
+            from .ashby_texting import CONTEXT_KEYS
+            application=posting.get('applicationForm')
+            self.texting_contexts[tenant.casefold()]={
+                **{key:posting.get(key) for key in CONTEXT_KEYS},
+                'render':application.get('id') if isinstance(application,dict) else None}
             def submission_form(form):
                 if not isinstance(form,dict):return None
                 return {key:form.get(key) for key in ('id','sourceFormDefinitionId','formControls')}
@@ -219,11 +229,15 @@ class AshbyDraft:
 
     def enable(self, browser, answers, package):
         from .answers import selections,validate_package
+        from .approval_boundary import ApprovalBoundary
+        boundary=ApprovalBoundary(self.store,self.job,package)
         validate_package(self.store,self.job,package)
         self.store._check_budget(self.job,self.store.settings())
-        grants={};saved=set()
+        grants={};saved=set();texting=[]
         for answer in answers:
             field=answer['field'];path=field.get('ashby_path');entry=field.get('ashby_entry_id','')
+            if field.get('ashby_texting_consent'):
+                texting.append(answer);continue
             if not path:
                 if field.get('required'):raise Blocked('ashby_draft_unsupported','Required field has no verified Ashby path')
                 continue
@@ -291,13 +305,21 @@ class AshbyDraft:
             # the server's savedValue. The verified official form response is
             # an acknowledgement of that exact value; a DOM prefill is not.
             if path in form['values'] and same(form['values'][path],value):saved.add(key)
-        self.grants=grants;self.package=package;self.remaining=4*len(grants);self.saved=saved;self.failed=False
+        if len(texting)>1:raise Blocked('ashby_draft_unsupported','Multiple Ashby texting controls need review')
+        from .ashby_texting import AshbyTexting
+        consent=AshbyTexting(self,texting[0],answers,grants) if texting else None
+        boundary.check()
+        self.boundary=boundary
+        self.grants=grants;self.package=package;self.remaining=4*len(grants);self.saved=saved;self.failed=False;self.texting=consent
         for _,path in sorted(saved):
             self.store.event('ashby_draft_saved',self.job['id'],{'path':path,'source':'official_form'})
 
     def allow(self, request, data, key):
         if not self.package or not self.identity or not isinstance(data,dict):return False
         if set(data)!={'operationName','query','variables'}:return False
+        from .ashby_texting import OPERATION
+        if data.get('operationName')==OPERATION:
+            return self.texting.allow(request,data,key) if self.texting else False
         parsed=urlsplit(request.url)
         if (request.method!='POST' or parsed.scheme!='https' or parsed.hostname!='jobs.ashbyhq.com'
                 or parsed.path!='/api/non-user-graphql' or parsed.port not in (None,443)
@@ -314,15 +336,22 @@ class AshbyDraft:
         if (not grant or str(variables.get('organizationHostedJobsPageName','')).casefold()!=self.identity[0]
                 or variables.get('formDefinitionIdentifier')!=grant['definition']
                 or not same(variables.get('value'),grant['value']) or self.remaining<=0):return False
-        if not self.store.settings()['live_enabled']:raise Blocked('paused')
-        from .answers import validate_package
-        validate_package(self.store,self.job,self.package)
-        self.store._check_budget(self.job,self.store.settings())
+        self.authorize_save()
         self.remaining-=1;self.pending[key]=field
         self.store.event('ashby_draft_write',self.job['id'],{'path':field[1],'value_hash':digest(grant['value'])})
         return True
 
+    def authorize_save(self):
+        self.boundary.check()
+        from .answers import validate_package
+        validate_package(self.store,self.job,self.package)
+        self.store._check_budget(self.job,self.store.settings())
+        self.boundary.check()
+
     def observe_save(self, response, key):
+        if self.texting and self.texting.observe_save(response,key):
+            self.failed=self.failed or self.texting.failed
+            return
         field=self.pending.pop(key,None)
         if field is None:return
         try:
@@ -345,4 +374,5 @@ class AshbyDraft:
 
     @property
     def complete(self):
-        return bool(self.package) and not self.failed and not self.pending and set(self.grants)<=self.saved
+        return (bool(self.package) and not self.failed and not self.pending and set(self.grants)<=self.saved
+                and (self.texting is None or self.texting.complete))

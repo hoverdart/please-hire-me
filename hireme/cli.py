@@ -29,6 +29,18 @@ def main(argv=None):
     p=sub.add_parser('export-ledger',help='Save job metadata as a CSV spreadsheet');p.add_argument('path',type=Path)
     p=sub.add_parser('dashboard');p.add_argument('--port',type=dashboard_port,default=8766);p.add_argument('--open',action='store_true',help='Open the workspace in your default browser');p.add_argument('--hide-token',action='store_true',help=argparse.SUPPRESS)
     p=sub.add_parser('doctor',help='Check local setup without sending applications');p.add_argument('--verify-login',action='store_true');p.add_argument('--json',action='store_true')
+    p=sub.add_parser('release-check',help='Read a private release snapshot without initializing or changing applicant history')
+    p.add_argument('--expected-revision');p.add_argument('--require-paused',action='store_true');p.add_argument('--require-scheduler',action='store_true');p.add_argument('--output',type=Path)
+    p.add_argument('--json',action='store_true',help='Output JSON (the default)')
+    p=sub.add_parser('workday',help='Inspect or commission an exact reviewed Workday flow')
+    actions=p.add_subparsers(dest='action',required=True)
+    status=actions.add_parser('status',help='Read capability evidence without changing applicant history')
+    status.add_argument('--tenant',choices=['nvidia','salesforce','intel','arrowstreetcapital','gresearch'])
+    status.add_argument('--json',action='store_true',help='Output JSON (the default)')
+    for action in ('commission','reconcile'):
+        command=actions.add_parser(action,help='Commission one eligible job' if action=='commission' else 'Read back one held draft without retrying submission')
+        command.add_argument('--job-id',required=True)
+        command.add_argument('--json',action='store_true',help='Output JSON (the default)')
     sub.add_parser('model-probe',help='Make one synthetic structured inference request; consumes model allowance')
     p=sub.add_parser('import-material');p.add_argument('path',type=Path);p.add_argument('--kind',choices=['writing_sample','cover_letter','context'],required=True)
     p=sub.add_parser('import-resume');p.add_argument('path',type=Path);p.add_argument('--transcript',action='store_true')
@@ -57,6 +69,36 @@ def main(argv=None):
     p=sub.add_parser('import-legacy');p.add_argument('path',type=Path,default=REPO,nargs='?')
     args=parser.parse_args(argv)
     os.umask(0o077)
+    if args.command=='release-check':
+        from .release_check import check_release,write_report
+        try:
+            result=check_release(args.data_dir,REPO,expected_revision=args.expected_revision,
+                                 require_paused=args.require_paused,require_scheduler=args.require_scheduler)
+            if args.output is not None:write_report(args.output,result)
+        except (OSError,ValueError):
+            print('Release evidence could not be saved. Use a complete revision and a new file in an existing private directory.',file=sys.stderr)
+            return 2
+        print(json.dumps(result,indent=2,sort_keys=True))
+        return 0 if result['ready'] else 1
+    if args.command=='workday' and args.action=='status':
+        from .release_check import ReadOnlyLedger
+        from .workday import status as workday_status
+        import sqlite3
+        view=None
+        try:
+            view=ReadOnlyLedger(args.data_dir)
+            result=workday_status(view)
+            if args.tenant:
+                from .portals import WORKDAY
+                host=next(row[4] for row in WORKDAY if row[1]==args.tenant)
+                result={**result,'tenants':[row for row in result['tenants'] if row['host']==host]}
+            print(json.dumps(result,indent=2,sort_keys=True))
+            return 0
+        except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):
+            print('Workday evidence could not be read. Applicant history was not initialized or repaired.',file=sys.stderr)
+            return 2
+        finally:
+            if view is not None:view.close()
     if args.command=='demo':
         from .demo import run
         try:run(REPO,args.port,open_browser=args.open);return 0
@@ -118,6 +160,10 @@ def main(argv=None):
             import webbrowser
             from .server import dashboard_url
             if not webbrowser.open(dashboard_url(store.root,args.port)):raise ValueError('Open the dashboard from a terminal in the Pi desktop session')
+        elif args.command=='workday':
+            from .workday import commission,reconcile
+            result=(commission if args.action=='commission' else reconcile)(store,REPO,args.job_id)
+            print(json.dumps(result,indent=2,sort_keys=True))
         elif args.command=='pi':
             from . import pi
             if args.action=='configure':result=pi.configure(store)
@@ -209,7 +255,13 @@ def main(argv=None):
                      **browser_options,accept_downloads=False)
                 page=ctx.pages[0] if ctx.pages else ctx.new_page();page.goto(url)
                 print('Sign in yourself in the dedicated browser. Press Enter here when finished.')
-                input();ctx.close()
+                try:
+                    input()
+                    from .workday_profiles import NVIDIA
+                    if host==NVIDIA:
+                        from .workday_sessions import read_profile,capture
+                        capture(store,ctx,read_profile(page))
+                finally:ctx.close()
             store.update_settings({'signed_in_portals':sorted(set(store.settings()['signed_in_portals'])|{host})})
         elif args.command=='connection':
             from . import platform_connections as pc

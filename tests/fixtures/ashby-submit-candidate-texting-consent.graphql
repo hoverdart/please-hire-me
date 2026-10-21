@@ -1,0 +1,76 @@
+mutation ApiSubmitCandidateTextingConsent($organizationHostedJobsPageName: String!, $formRenderIdentifier: String!, $formDefinitionIdentifier: String, $consent: CommunicationConsent!) {
+  submitCandidateTextingConsent(
+    organizationHostedJobsPageName: $organizationHostedJobsPageName
+    formRenderIdentifier: $formRenderIdentifier
+    formDefinitionIdentifier: $formDefinitionIdentifier
+    consent: $consent
+  ) {
+    ...FormRenderParts
+    __typename
+  }
+}
+
+fragment JSONBoxParts on JSONBox {
+  value
+  __typename
+}
+
+fragment FileParts on File {
+  id
+  filename
+  __typename
+}
+
+fragment FormFieldEntryParts on FormFieldEntry {
+  id
+  field
+  fieldValue {
+    ... on JSONBox {
+      ...JSONBoxParts
+      __typename
+    }
+    ... on File {
+      ...FileParts
+      __typename
+    }
+    ... on FileList {
+      files {
+        ...FileParts
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+  isRequired
+  descriptionHtml
+  isHidden
+  __typename
+}
+
+fragment FormRenderParts on FormRender {
+  id
+  formControls {
+    identifier
+    title
+    __typename
+  }
+  errorMessages
+  formErrors {
+    message
+    fieldEntryId
+    __typename
+  }
+  sections {
+    title
+    descriptionHtml
+    fieldEntries {
+      ...FormFieldEntryParts
+      __typename
+    }
+    isHidden
+    __typename
+  }
+  sourceFormDefinitionId
+  __typename
+}

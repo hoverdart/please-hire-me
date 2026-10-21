@@ -602,21 +602,22 @@ def test_upload_dom_changes_do_not_redirect_answers_to_stale_indices(store,ats):
     assert len(ats[1])==1 and b'Test Person' in ats[1][0]
 
 
-def test_upload_bucket_requires_approved_file_and_response_ack(store,monkeypatch):
+def test_unbound_upload_bytes_cannot_authorize_a_greenhouse_upload_or_ack(store,monkeypatch):
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     b=Browser(store);b.current_host='job-boards.greenhouse.io';b.upload_payloads={'approved-hash':b'%PDF-approved-content'}
     class Request:
         url='https://grnhse-prod-jben-us-west-2.s3.us-west-2.amazonaws.com/'
         method='POST'
+        headers={'content-type':'multipart/form-data; boundary=unbound'}
         post_data_buffer=b'multipart-prefix%PDF-approved-contentmultipart-suffix'
     class Route:
         request=Request();action=None
         def abort(self):self.action='abort'
         def continue_(self):self.action='continue'
-    r=Route();b._route(r);assert r.action=='continue'
+    r=Route();b._route(r);assert r.action=='abort'
     class Response:
         request=r.request;status=204
-    b._upload_response(Response());assert 'approved-hash' in b.uploaded_files
+    b._upload_response(Response());assert 'approved-hash' not in b.uploaded_files
     r.request.post_data_buffer=b'arbitrary-unapproved-file';b._route(r);assert r.action=='abort'
     r.request.url='https://attacker-bucket.s3.us-west-2.amazonaws.com/';r.request.post_data_buffer=b'%PDF-approved-content';b._route(r);assert r.action=='abort'
 
@@ -898,7 +899,7 @@ def test_ashby_hydration_autosave_does_not_prevent_preparing_form(store,monkeypa
         b._verify=verify_with_synthetic_upload
         assert b.apply(job,live=False)=='prepared'
         assert not b.denied_write
-    assert store.db.execute("SELECT count(*) FROM events WHERE kind='draft_autosave_suppressed'").fetchone()[0]>=1
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='preparation_write_suppressed'").fetchone()[0]>=1
 
 
 def test_greenhouse_checkbox_choices_keep_question_and_choose_only_one(store,ats):
@@ -955,7 +956,7 @@ def test_batched_ashby_autosave_is_aborted_but_submission_batch_stays_blocked(st
     assert b.denied_write and b.denied_request['operations']==['Submit']
 
 
-def test_ashby_upload_handle_only_for_approved_document_bytes(store,monkeypatch):
+def test_ashby_upload_handle_requires_a_bound_native_document_field(store,monkeypatch):
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     b=Browser(store);b.current_host='jobs.ashbyhq.com';b.upload_payloads={'approved':b'pdf-bytes'}
     class Request:
@@ -965,12 +966,12 @@ def test_ashby_upload_handle_only_for_approved_document_bytes(store,monkeypatch)
         request=Request();action=None
         def abort(self):self.action='abort'
         def continue_(self):self.action='continue'
-    route=Route();b._route(route);assert route.action=='continue'
+    route=Route();b._route(route);assert route.action=='abort' and b.denied_write
     data=json.loads(route.request.post_data);data['variables']['filename']='unknown.pdf';route.request.post_data=json.dumps(data)
     b._route(route);assert route.action=='abort' and b.denied_write
 
 
-def test_ashby_s3_upload_requires_approved_bytes_and_exact_destination(store,monkeypatch):
+def test_unbound_ashby_s3_upload_cannot_use_approved_bytes_or_filename_as_authority(store,monkeypatch):
     from hireme.browser import ASHBY_UPLOAD_HOST
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     b=Browser(store);b.current_host='jobs.ashbyhq.com';b.upload_payloads={'approved':b'approved-pdf-content'}
@@ -980,16 +981,16 @@ def test_ashby_s3_upload_requires_approved_bytes_and_exact_destination(store,mon
         request=Request();action=None
         def abort(self):self.action='abort'
         def continue_(self):self.action='continue'
-    route=Route();b._route(route);assert route.action=='continue'
+    route=Route();b._route(route);assert route.action=='abort'
     # Chromium omits multipart file bytes from the intercepted request body.
     route.request.post_data_buffer=b'filename=approved.pdf; signed form fields'
-    b._route(route);assert route.action=='continue'
+    b._route(route);assert route.action=='abort'
     route.request.post_data_buffer=b'unapproved';b._route(route);assert route.action=='abort'
     route.request.url='https://'+ASHBY_UPLOAD_HOST+'.attacker.invalid/'
     route.request.post_data_buffer=b'approved-pdf-content';b._route(route);assert route.action=='abort'
 
 
-def test_ashby_attachment_requires_handle_from_approved_successful_upload(store,monkeypatch):
+def test_ashby_attachment_requires_bound_form_target_and_full_native_ack(store,monkeypatch):
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     b=Browser(store);b.current_host='jobs.ashbyhq.com'
     b.ashby_file_handles={'known':'approved'}
@@ -1001,11 +1002,11 @@ def test_ashby_attachment_requires_handle_from_approved_successful_upload(store,
         def abort(self):self.action='abort'
         def continue_(self):self.action='continue'
     r=Route();b._route(r);assert r.action=='abort'
-    b.uploaded_files.add('approved');b.denied_write=False;b._route(r);assert r.action=='continue'
+    b.uploaded_files.add('approved');b.denied_write=False;b._route(r);assert r.action=='abort'
     class Response:
         request=Request();status=200
         def json(self):return {'data':{'setFormValueToFile':{'id':'form'}}}
-    b._upload_response(Response());assert 'approved' in b.ashby_attached_files
+    b._upload_response(Response());assert 'approved' not in b.ashby_attached_files
 
 
 def test_ashby_yesno_buttons_preserve_required_question_and_confirmed_answer(store,ats):

@@ -78,7 +78,12 @@ def probe(net,ats,slug):
         for j in d:
             sr=j.get("salaryRange") or {}
             comp={"min":sr.get("min"),"max":sr.get("max"),"currency":sr.get("currency"),"period":sr.get("interval")}
-            out.append(posting(j.get("hostedUrl") or j["applyUrl"],slug,j["text"],j.get("categories",{}).get("location", ""),f"lv:{slug}",j.get("descriptionPlain", "")+" "+" ".join(x.get("content", "") for x in j.get("lists",[])),compensation=comp,
+            location=j.get("categories",{}).get("location", "")
+            country=j.get('country')
+            country={'US':'United States','CA':'Canada','GB':'United Kingdom'}.get(country) if isinstance(country,str) else None
+            if country:
+                location='; '.join(part for part in (location,country) if part)
+            out.append(posting(j.get("hostedUrl") or j["applyUrl"],slug,j["text"],location,f"lv:{slug}",j.get("descriptionPlain", "")+" "+" ".join(x.get("content", "") for x in j.get("lists",[])),compensation=comp,
                                **({'employment_type':j['categories']['commitment']} if isinstance(j.get('categories',{}).get('commitment'),str) else {})))
     elif ats=="sr":
         offset=0

@@ -29,6 +29,9 @@ SNAPSHOT=r"""selector => {
  function details(el) {
   const wrapper=el.closest('[data-field-path],.ashby-application-form-field-entry,.application-question,.field,.field-wrapper');
   const descriptions=Array.from(wrapper?.querySelectorAll('.ashby-application-form-question-description,.field-description,.helper-text,.body__secondary')||[]);
+  const texting=el.type==='radio'&&el.closest('.ashby-application-form-texting-consent-description');
+  const consentBody=texting&&texting.querySelector('[class*="_consentBody_"]');
+  if(consentBody)descriptions.splice(0,descriptions.length,consentBody);
   // Lever separates a single checkbox's heading from the actual declaration
   // in its label. Approval must bind that wording and its policy links, too.
   if(el.type==='checkbox' && wrapper?.matches('.application-question') && wrapper.querySelectorAll('input[type=checkbox]').length===1){
@@ -47,7 +50,8 @@ SNAPSHOT=r"""selector => {
   const date_format=el.type==='date'?'YYYY-MM-DD':el.classList.contains('ashby-application-form-input-date')?'MM/DD/YYYY':null;
   const ashby=el.closest('[data-field-path][data-field-entry-id]');
   return {...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {}),...(date_format?{date_format}: {}),
-    ...(ashby?{ashby_path:ashby.dataset.fieldPath,ashby_entry_id:ashby.dataset.fieldEntryId}:{})};
+    ...(ashby?{ashby_path:ashby.dataset.fieldPath,ashby_entry_id:ashby.dataset.fieldEntryId}:{}),
+    ...(texting&&['communicationConsent','smsConsent'].includes(el.name)?{ashby_texting_consent:'sms'}:{})};
  }
  function leverLabel(el){
   const question=el.closest('.application-question');
@@ -112,7 +116,9 @@ SNAPSHOT=r"""selector => {
    question=ashbyGroup?.querySelector('.ashby-application-form-question-title')?.innerText||el.getAttribute('description')||parent?.querySelector('legend')?.innerText||leverLabel(el)||el.closest('[class*=field],[class*=question]')?.querySelector('label')?.innerText||question;
    // Ashby's SMS radios are nested inside the Phone field. The enclosing
    // heading describes the phone input, not this separate consent control.
-   if(type==='radio'&&el.closest('.ashby-application-form-texting-consent-description'))question='Consent to receiving text messages';
+   if(type==='radio'&&el.closest('.ashby-application-form-texting-consent-description')){
+    question=el.name==='whatsAppConsent'?'Consent to receiving WhatsApp messages':'Consent to receiving text messages';
+   }
    value=group.filter(x=>x.checked).map(x=>Array.from(x.labels||[]).map(l=>l.innerText).join(' ').trim()||x.value).join('; ');
   }else if(type==='select'){options=Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.textContent.trim())}
   else if(type==='checkbox'){options=['Yes','No'];value=el.checked?'Yes':'No'}
@@ -120,6 +126,9 @@ SNAPSHOT=r"""selector => {
   const entry=el.closest(entrySelector);
   const entryPeers=entry ? Array.from(document.querySelectorAll(entrySelector)).filter(x=>x.getClientRects().length&&x.tagName===entry.tagName&&(entry.getAttribute('data-automation-id') ? x.getAttribute('data-automation-id')===entry.getAttribute('data-automation-id') : x.className===entry.className)) : [];
   out.push({index,indices,...(leverLocation?{lever_location:true}:{}),...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
+   ...((type==='radio'&&el.closest('.ashby-application-form-texting-consent-description')
+        || ['checkbox','radio','checkbox-group'].includes(type)&&/^jobs(?:\.eu)?\.lever\.co$/i.test(location.hostname))
+       ?{option_values:indices.map(i=>controls[i].value)}:{}),
    ...(el.closest('.education--form,[data-automation-id="educationSection"],[data-automation-id="education"]') ? {section:'education'} : el.closest('.employment--form,.employment-form,.experience--form,[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]') ? {section:'employment'} : {}),
    ...(entryPeers.length>1 ? {section_entry:entryPeers.indexOf(entry)} : {}),
    required:required||/[\*✱]/.test(question),
@@ -177,9 +186,14 @@ class Browser:
         self.store=store; self.test_url=test_url; self.context=None; self.playwright=None
         self.page=None; self.aid=None; self.attempted=False; self.current_host=""; self.host_cache={}; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set()
         self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set();self.lever_resume=None
+        self.ashby_attachment_state=None;self.post_submit_denial_recorded=False
         self.workday_grant=None
+        self.workday_read_scope=None
         self.submission_requests={}
         self.ashby_draft=None;self.ashby_submission=None
+        self.native_submission=None;self.greenhouse_uploads={};self.greenhouse_upload_fields={};self.greenhouse_native_options={};self.greenhouse_upload_pending={}
+        self.write_boundary=None
+        self.preparing=False
         self.visible=False;self.human_verification_seconds=0
         self.receipt_baseline=''
 
@@ -201,6 +215,9 @@ class Browser:
             self.playwright.stop(); raise Blocked("browser_unavailable","Install Chrome or choose Chromium in settings; close the dedicated sign-in window")
         self.context.set_default_timeout(15000)
         self.context.route("**/*",self._route)
+        if not getattr(self,'profile_directory',None):
+            from .workday_sessions import restore
+            restore(self.store,self.context)
         self.page=self.context.pages[0] if self.context.pages else self.context.new_page()
         for p in self.context.pages:
             if p!=self.page:p.close()
@@ -221,21 +238,73 @@ class Browser:
             try:self.store.checkpoint()
             except Blocked:return route.abort()
         url=route.request.url; p=urlsplit(url)
+        if (self.preparing and p.hostname in {'email-address-validator.us.greenhouse.io','email-address-validator.eu.greenhouse.io'}
+                and p.path=='/address/validate'):
+            self.store.event('preparation_write_suppressed',None,{'host':p.hostname,'path':p.path,'method':route.request.method})
+            return route.abort()
+        ashby_read=False
+        if (self.current_host==p.hostname=='jobs.ashbyhq.com' and p.scheme=='https'
+                and p.port in (None,443) and not p.username and not p.password
+                and p.path=='/api/non-user-graphql' and route.request.method=='POST'):
+            try:
+                data=json.loads(route.request.post_data or '')
+                queries=data if isinstance(data,list) else [data]
+                ashby_read=bool(queries) and all(isinstance(q,dict) and isinstance(q.get('query'),str)
+                    and re.match(r'^\s*query\b',q['query'])
+                    and not re.search(r'\b(?:mutation|subscription)\b',q['query']) for q in queries)
+            except (ValueError,TypeError):pass
+        if route.request.method not in ('GET','HEAD','OPTIONS') and not ashby_read and self.write_boundary:
+            try:self.write_boundary.check(application_id=self.aid if self.attempted else None)
+            except Blocked:
+                self.denied_write=True
+                self.denied_request={'host':p.hostname,'path':p.path,'method':route.request.method,'reason':'approval_changed'}
+                self._record_post_submit_denial()
+                return route.abort()
         # Workday job search uses POST for a read. Recognize it before a
         # one-use remote-write grant so background searches cannot consume it.
         from .workday import search_read
         if search_read(self.current_host,url,route.request.method,getattr(route.request,'post_data_buffer',None)):
             if p.hostname not in self.host_cache:self.host_cache[p.hostname]=public_host(p.hostname)
-            return route.continue_() if self.host_cache[p.hostname] else route.abort()
+            return self._continue_route(route) if self.host_cache[p.hostname] else route.abort()
+        from .workday_native import native_read
+        try:
+            reviewed_read=native_read(self.current_host,url,route.request.method,
+                getattr(route.request,'post_data_buffer',None) or b'',
+                getattr(route.request,'headers',{}),scope=self.workday_read_scope)
+        except Blocked:reviewed_read=False
+        if reviewed_read:
+            if p.hostname not in self.host_cache:self.host_cache[p.hostname]=public_host(p.hostname)
+            return self._continue_route(route,_reviewed_read=True) if self.host_cache[p.hostname] else route.abort()
+        if self.preparing and route.request.method not in ('GET','HEAD','OPTIONS'):
+            # A preparation can render approved local values, but must not send
+            # a resume parser, attachment, autosave, consent or final mutation.
+            try:
+                data=json.loads(route.request.post_data or '')
+                queries=data if isinstance(data,list) else [data]
+                reading=(p.hostname==self.current_host=='jobs.ashbyhq.com'
+                         and p.path=='/api/non-user-graphql' and route.request.method=='POST'
+                         and bool(queries) and all(isinstance(q,dict) and isinstance(q.get('query'),str)
+                             and re.match(r'^\s*query\b',q['query'])
+                             and not re.search(r'\b(?:mutation|subscription)\b',q['query']) for q in queries))
+            except (ValueError,TypeError):reading=False
+            if not reading:
+                self.store.event('preparation_write_suppressed',None,{'host':p.hostname,'path':p.path,'method':route.request.method})
+                return route.abort()
         if self.workday_grant and route.request.method not in ('GET','HEAD','OPTIONS') and p.hostname==self.current_host:
-            try:approved=self.workday_grant.consume(url,route.request.method,route.request.post_data_buffer or b'')
+            try:
+                consume=getattr(self.workday_grant,'consume_request',None)
+                approved=(consume(route.request) if consume else
+                          self.workday_grant.consume(url,route.request.method,route.request.post_data_buffer or b''))
             except Blocked:approved=False
-            if approved:return route.continue_()
+            if approved:return self._continue_route(route,**approved) if isinstance(approved,dict) else self._continue_route(route)
             self.denied_write=True
             self.denied_request={'host':p.hostname,'path':p.path,'method':route.request.method}
             return route.abort()
         if self.auth_write and route.request.method not in ('GET','HEAD','OPTIONS'):
             grant=self.auth_write
+            if grant.get('boundary'):
+                try:grant['boundary'].check()
+                except Blocked:return route.abort()
             settings=self.store.settings()
             if not settings['employer_accounts'] or not settings['live_enabled']:
                 return route.abort()
@@ -244,12 +313,12 @@ class Browser:
                       and url==grant['url'] and sorted(pairs)==sorted(tuple(pair) for pair in grant['pairs']))
             if approved:
                 grant['used']=True
-                return route.continue_()
+                return self._continue_route(route)
             self.denied_write=True
             return route.abort()
         if self.test_url and url.startswith(self.test_url):
             self._record_submission_request(route.request)
-            return route.continue_()
+            return self._continue_route(route)
         host=p.hostname
         if p.scheme!="https" or not host or p.port not in (None,443):return route.abort()
         if host not in self.host_cache:self.host_cache[host]=public_host(host)
@@ -267,7 +336,7 @@ class Browser:
             shard=self.current_host.split('.')[1]
             if host in {shard+'.myworkday.com',shard+'.myworkdaycdn.com'}:
                 static=bool(re.fullmatch(r'/wday/asset/[A-Za-z0-9._/-]+',p.path)) and '..' not in p.path.split('/')
-                return route.continue_() if route.request.method in ('GET','HEAD','OPTIONS') and static and not p.username and not p.password else route.abort()
+                return self._continue_route(route) if route.request.method in ('GET','HEAD','OPTIONS') and static and not p.username and not p.password else route.abort()
         if self.current_host in TENANTS and host==self.current_host and route.request.method not in ('GET','HEAD','OPTIONS'):
             # Marking a browser attempt does not authorize arbitrary Workday
             # account, draft or final writes. Exact grants above are required.
@@ -275,12 +344,18 @@ class Browser:
             self.denied_request={'host':host,'path':p.path,'method':route.request.method}
             return route.abort()
         if host in UPLOAD_HOSTS:
-            if self.attempted and self.ashby_submission:return route.abort()
-            payload=getattr(route.request,'post_data_buffer',None) or b''
-            approved=self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and route.request.method=='POST' and any(data in payload or h.encode() in payload for h,data in self.upload_payloads.items())
-            approved=approved or (host==ASHBY_UPLOAD_HOST and self.current_host=='jobs.ashbyhq.com'
-                                  and route.request.method=='POST' and any(data in payload or (h+'.pdf').encode() in payload for h,data in self.upload_payloads.items()))
-            return route.continue_() if approved else route.abort()
+            if self.attempted and self.current_host=='jobs.ashbyhq.com':return route.abort()
+            if self.current_host=='jobs.ashbyhq.com':
+                from .ashby_attachments import grant_upload
+                try:grant=grant_upload(self,route.request,self._request_key(route.request))
+                except Blocked:grant=False
+                return (self._continue_route(route,**grant) if isinstance(grant,dict) else self._continue_route(route)) if grant else route.abort()
+            if self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
+                from .greenhouse_submission import grant_upload
+                try:grant=grant_upload(self,route.request,self._request_key(route.request))
+                except Blocked:grant=False
+                return (self._continue_route(route,**grant) if isinstance(grant,dict) else self._continue_route(route)) if grant else route.abort()
+            return route.abort()
         # No arbitrary website can receive personal values through an injected pixel or redirect.
         asset_hosts={"www.google.com","www.gstatic.com","fonts.googleapis.com","fonts.gstatic.com",
           "www.recaptcha.net","recaptcha.google.com","cdn.jsdelivr.net","cdnjs.cloudflare.com",
@@ -304,14 +379,15 @@ class Browser:
         if route.request.method not in ("GET","HEAD","OPTIONS"):
             allowed={self.current_host}
             if self.current_host in {"boards.greenhouse.io","job-boards.greenhouse.io","boards.eu.greenhouse.io","job-boards.eu.greenhouse.io"}:
-                allowed|={"boards-api.greenhouse.io","boards.greenhouse.io","job-boards.greenhouse.io"}
+                allowed|=({'boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}
+                          if '.eu.greenhouse.io' in self.current_host else
+                          {'boards-api.greenhouse.io','boards.greenhouse.io','job-boards.greenhouse.io'})
             if self.current_host=="jobs.ashbyhq.com":allowed|={"api.ashbyhq.com","storage.googleapis.com"}
             if self.current_host in {"jobs.lever.co","jobs.eu.lever.co"}:allowed|={"api.lever.co"}
             # CAPTCHA endpoints may evaluate passive scoring, but no challenge solving is attempted.
             allowed|={"www.google.com","www.recaptcha.net","recaptcha.google.com"}
             if host not in allowed and not hcaptcha:return route.abort()
-            if self.attempted and self.ashby_submission and host not in {'www.google.com','www.recaptcha.net','recaptcha.google.com'}:
-                if self.denied_write:return route.abort()
+            if self.attempted and self.current_host=='jobs.ashbyhq.com' and host not in {'www.google.com','www.recaptcha.net','recaptcha.google.com'}:
                 try:data=json.loads(route.request.post_data or '')
                 except (ValueError,TypeError):data=None
                 queries=data if isinstance(data,list) else [data]
@@ -321,49 +397,57 @@ class Browser:
                                  and re.match(r'^\s*query\b',q['query'])
                                  and not re.search(r'\b(?:mutation|subscription)\b',q['query']) for q in queries))
                 if not reading:
+                    if self.denied_write:return route.abort()
                     try:
-                        if self.ashby_submission.allow(route.request,data):
+                        if self.ashby_submission and self.ashby_submission.allow(route.request,data):
                             self._record_submission_request(route.request)
-                            return route.continue_()
+                            return self._continue_route(route)
                     except Blocked:pass
                     self.denied_write=True
                     self.denied_request={'host':host,'path':p.path,'method':route.request.method}
+                    self._record_post_submit_denial()
                     return route.abort()
+            if self.attempted and self.native_submission and not hcaptcha and host not in {'www.google.com','www.recaptcha.net','recaptcha.google.com'}:
+                try:
+                    grant=self.native_submission.grant(route.request,self._request_key(route.request))
+                    if grant:
+                        self._record_submission_request(route.request)
+                        return self._continue_route(route,**grant) if isinstance(grant,dict) else self._continue_route(route)
+                except Blocked:pass
+                self.denied_write=True
+                self.denied_request={'host':host,'path':p.path,'method':route.request.method}
+                self._record_post_submit_denial()
+                return route.abort()
             if not self.attempted and host not in {"www.google.com","www.recaptcha.net","recaptcha.google.com"} and not hcaptcha:
                 if self.lever_resume:
                     grant=self.lever_resume.grant(route.request,self._request_key(route.request))
-                    if grant:return route.continue_(**grant)
+                    if grant:return self._continue_route(route,**grant)
                 payload=route.request.post_data or ""
                 reading=False;data=None
                 try:
                     data=json.loads(payload)
                     queries=data if isinstance(data,list) else [data]
-                    reading=all(isinstance(q,dict) and isinstance(q.get('query'),str) and re.match(r'^\s*query\b',q['query']) for q in queries)
+                    reading=bool(queries) and all(isinstance(q,dict) and isinstance(q.get('query'),str)
+                        and re.match(r'^\s*query\b',q['query'])
+                        and not re.search(r'\b(?:mutation|subscription)\b',q['query']) for q in queries)
                 except (ValueError,TypeError):pass
+                if (host==self.current_host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql'
+                        and isinstance(data,dict) and data.get('operationName') in {'ApiCreateFileUploadHandle','ApiSetFormValueToFile'}):
+                    from .ashby_attachments import grant_attachment
+                    try:
+                        if grant_attachment(self,route.request,data,self._request_key(route.request)):
+                            return self._continue_route(route)
+                    except Blocked:pass
+                    self.denied_write=True
+                    self.denied_request={'host':host,'path':p.path,'method':route.request.method}
+                    return route.abort()
                 if host==self.current_host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql' and self.ashby_draft:
                     try:
                         if self.ashby_draft.allow(route.request,data,self._request_key(route.request)):
-                            return route.continue_()
+                            return self._continue_route(route)
                     except Blocked as error:
                         self.denied_write=True;self.denied_request={'host':host,'path':p.path,'method':route.request.method,'reason':error.reason}
                         return route.abort()
-                if host==self.current_host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql' and isinstance(data,dict):
-                    variables=data.get('variables',{})
-                    if (data.get('operationName')=='ApiCreateFileUploadHandle'
-                            and isinstance(data.get('query'),str)
-                            and re.match(r'^\s*mutation\s+ApiCreateFileUploadHandle\b',data['query'])
-                            and isinstance(variables,dict)):
-                        filename=variables.get('filename')
-                        uploading_document=next((blob for h,blob in self.upload_payloads.items() if filename==h+'.pdf'),None)
-                        reading=bool(uploading_document and variables.get('contentType')=='application/pdf'
-                                     and variables.get('contentLength')==len(uploading_document))
-                if (host==self.current_host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql'
-                        and isinstance(data,dict) and data.get('operationName')=='ApiSetFormValueToFile'
-                        and isinstance(data.get('query'),str)
-                        and re.match(r'^\s*mutation\s+ApiSetFormValueToFile\b',data['query'])):
-                    variables=data.get('variables',{})
-                    handle=variables.get('fileHandle') if isinstance(variables,dict) else None
-                    reading=isinstance(handle,str) and self.ashby_file_handles.get(handle) in self.uploaded_files
                 # Upload-only requests are permitted on known ATS upload paths, never arbitrary mutations.
                 reading=reading or p.path=='/uncacheable_attributes/presigned_fields'
                 passive_check=p.path.startswith("/cdn-cgi/challenge-platform/")
@@ -377,7 +461,8 @@ class Browser:
                               and p.path=='/api/non-user-graphql'
                               and bool(queries if isinstance(data,(dict,list)) else [])
                               and all(isinstance(q,dict) and (
-                                  isinstance(q.get('query'),str) and re.match(r'^\s*query\b',q['query']) or
+                                  isinstance(q.get('query'),str) and re.match(r'^\s*query\b',q['query'])
+                                  and not re.search(r'\b(?:mutation|subscription)\b',q['query']) or
                                   q.get('operationName') in {'ApiSetFormValue','ApiSubmitCandidateTextingConsent'} and isinstance(q.get('query'),str)
                                   and re.match(r'^\s*mutation\s+'+re.escape(q['operationName'])+r'\b',q['query'])
                               ) for q in queries))
@@ -391,15 +476,57 @@ class Browser:
                         self.store.event('request_blocked',None,detail)
                     return route.abort()
         self._record_submission_request(route.request)
-        return route.continue_()
+        return self._continue_route(route)
+
+    def _continue_route(self,route,*,_reviewed_read=False,**overrides):
+        """Last local authority check, after native payload validation."""
+        request=route.request
+        reading=_reviewed_read or request.method in ('GET','HEAD','OPTIONS')
+        if not reading:
+            from .workday import search_read
+            reading=search_read(self.current_host,request.url,request.method,getattr(request,'post_data_buffer',None))
+            parsed=urlsplit(request.url)
+            if (not reading and self.current_host==parsed.hostname=='jobs.ashbyhq.com'
+                    and parsed.scheme=='https' and parsed.path=='/api/non-user-graphql'
+                    and request.method=='POST'):
+                try:
+                    data=json.loads(request.post_data or '')
+                    queries=data if isinstance(data,list) else [data]
+                    reading=bool(queries) and all(isinstance(q,dict) and isinstance(q.get('query'),str)
+                        and re.match(r'^\s*query\b',q['query'])
+                        and not re.search(r'\b(?:mutation|subscription)\b',q['query']) for q in queries)
+                except (ValueError,TypeError):pass
+        if not reading:
+            try:
+                if self.write_boundary:self.write_boundary.check(application_id=self.aid if self.attempted else None)
+                if self.native_submission:self.native_submission.boundary.check()
+                if self.auth_write and self.auth_write.get('boundary'):self.auth_write['boundary'].check()
+                if (self.ashby_submission and self.ashby_submission.used
+                        and self.ashby_submission.request_signature
+                        and self.ashby_submission.request_signature[:2]==(request.url,request.method)
+                        and self.ashby_submission.request_signature==(request.url,request.method,digest(json.loads(request.post_data or '{}')))
+                        and time.monotonic()>=self.ashby_submission.write_deadline):
+                    raise Blocked('cycle_timeout','The approved final request expired before transport')
+            except Blocked:
+                self.denied_write=True
+                self.denied_request={'host':urlsplit(request.url).hostname,'path':urlsplit(request.url).path,
+                                     'method':request.method,'reason':'approval_changed'}
+                self._record_post_submit_denial()
+                return route.abort()
+        return route.continue_(**overrides)
 
     def _record_submission_request(self,request):
-        if self.aid and self.attempted and request.method not in ('GET','HEAD','OPTIONS') and urlsplit(request.url).hostname==self.current_host:
+        if self.aid and self.attempted and request.method not in ('GET','HEAD','OPTIONS') and (urlsplit(request.url).hostname==self.current_host or self.native_submission):
             key=self._request_key(request)
             # Context routing and page response callbacks can wrap the same
             # request differently. Correlate immutable transport content; drop
             # ambiguous overlapping duplicates rather than misattribute them.
             self.submission_requests[key]=self.aid if key not in self.submission_requests else None
+
+    def _native_submission_acknowledged(self):
+        if self.current_host=='jobs.ashbyhq.com':return bool(self.ashby_submission and self.ashby_submission.acknowledged)
+        if self.native_submission:return self.native_submission.receipt_matches(self.page.url)
+        return bool(self.test_url)
 
     @staticmethod
     def _request_key(request):
@@ -407,6 +534,16 @@ class Browser:
 
     def _upload_response(self,response):
         request=response.request
+        if self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
+            from .greenhouse_submission import observe_upload
+            with contextlib.suppress(Exception):observe_upload(self,response,self._request_key(request))
+        if self.native_submission:
+            with contextlib.suppress(Exception):self.native_submission.observe(response,self._request_key(request))
+        if self.current_host=='jobs.ashbyhq.com':
+            from .ashby_attachments import observe_attachment
+            with contextlib.suppress(Exception):observe_attachment(self,response,self._request_key(request))
+        if self.workday_grant and hasattr(self.workday_grant,'observe_response'):
+            with contextlib.suppress(Exception):self.workday_grant.observe_response(response)
         if self.ashby_submission:
             with contextlib.suppress(Exception):self.ashby_submission.observe_response(response)
         if self.lever_resume:self.lever_resume.observe(response,self._request_key(request))
@@ -422,27 +559,6 @@ class Browser:
             with contextlib.suppress(Exception):
                 self.store.event('submission_response',application_id,{'stage':'after_submit','host':urlsplit(request.url).hostname,
                     'path':urlsplit(request.url).path,'method':request.method,'status':response.status})
-        if (request.method=='POST' and self.current_host=='jobs.ashbyhq.com'
-                and urlsplit(request.url).hostname=='jobs.ashbyhq.com'
-                and urlsplit(request.url).path=='/api/non-user-graphql' and 200<=response.status<300):
-            try:
-                query=json.loads(request.post_data or '{}')
-                if not isinstance(query,dict) or query.get('operationName') not in ('ApiCreateFileUploadHandle','ApiSetFormValueToFile'):return
-                result=response.json()
-                variables=query.get('variables',{})
-                if query.get('operationName')=='ApiCreateFileUploadHandle':
-                    h=next((h for h in self.upload_payloads if variables.get('filename')==h+'.pdf'),None)
-                    handle=result.get('data',{}).get('fileUploadHandle',{}).get('handle')
-                    if h and isinstance(handle,str):self.ashby_file_handles[handle]=h
-                elif query.get('operationName')=='ApiSetFormValueToFile':
-                    h=self.ashby_file_handles.get(variables.get('fileHandle'))
-                    if h in self.uploaded_files and not result.get('errors') and result.get('data',{}).get('setFormValueToFile'):
-                        self.ashby_attached_files.add(h)
-            except Exception:pass  # Late responses may arrive while the context closes.
-        if request.method!='POST' or urlsplit(request.url).hostname not in UPLOAD_HOSTS or not 200<=response.status<300:return
-        payload=request.post_data_buffer or b''
-        for h,data in self.upload_payloads.items():
-            if data in payload or h.encode() in payload:self.uploaded_files.add(h)
 
     def _wait_ready(self):
         self.page.wait_for_function("""() => document.body &&
@@ -486,9 +602,22 @@ class Browser:
                 raise Blocked('posting_fetch_failed','The Ashby posting did not finish rendering before timeout; no fields were filled')
             self.page.wait_for_timeout(100)
 
+    def _record_post_submit_denial(self):
+        final_grant=self.ashby_submission or self.native_submission
+        if (self.denied_write and self.attempted and final_grant and final_grant.used
+                and not self.post_submit_denial_recorded):
+            self.store.event('post_submit_write_blocked',self.aid,self.denied_request or {})
+            self.post_submit_denial_recorded=True
+
     def _guard(self,job,allow_verification=False):
         if not self.attempted:self.store.checkpoint()
-        if self.denied_write:raise Blocked("unapproved_draft_write","Unrecognized pre-submit request blocked: "+json.dumps(self.denied_request or {},sort_keys=True))
+        final_grant=self.ashby_submission or self.native_submission
+        if self.denied_write and not (self.attempted and final_grant and final_grant.used):
+            raise Blocked("unapproved_draft_write","Unrecognized pre-submit request blocked: "+json.dumps(self.denied_request or {},sort_keys=True))
+        # A blocked follow-up mutation never gains authority, but it must not
+        # erase the native result of the one final request already transmitted.
+        # Outcome classification still requires its matching ACK and receipt.
+        self._record_post_submit_denial()
         url=self.page.url; host=urlsplit(url).hostname
         if self.test_url and url.startswith(self.test_url):pass
         elif host!=self.current_host:
@@ -520,6 +649,7 @@ class Browser:
         return text
 
     def _wait_submission_outcome(self,job,accept_verification=True):
+        from playwright.sync_api import Error as BrowserError
         # ATS processing routinely exceeds one second, especially on the Pi.
         deadline=time.monotonic()+45
         human_deadline=None;phase=None;result='interrupted'
@@ -528,28 +658,46 @@ class Browser:
                 'run_id':getattr(self.store,'active_run_id',None),'expires_at':time.time()+seconds})
         try:
             while True:
-                if self.ashby_submission and not self.ashby_submission.valid_intent(check_answers=False):
-                    raise Blocked('application_changed','The approved application changed during verification')
+                final_grant=self.ashby_submission or self.native_submission
+                if final_grant and not final_grant.used:
+                    if self.ashby_submission:
+                        if not self.ashby_submission.valid_intent(check_answers=False):
+                            raise Blocked('application_changed','The approved application changed during verification')
+                    else:final_grant.boundary.check()
                 try:text=self._guard(job,allow_verification=True)
+                except BrowserError as error:
+                    # Confirmation navigation can replace the DOM while its
+                    # read is in flight, especially on the Pi. Observe again
+                    # within the same deadline; closed pages and other errors
+                    # still preserve an uncertain final outcome.
+                    if (not self.attempted or not final_grant or not final_grant.used
+                            or 'Execution context was destroyed, most likely because of a navigation' not in str(error)
+                            or time.monotonic()>=deadline):
+                        raise
+                    self.page.wait_for_timeout(100)
+                    continue
                 except Blocked as error:
-                    if (error.reason!='captcha_blocked' or not self.human_verification_seconds
-                            or not self.ashby_submission):raise
-                    if self.ashby_submission.used:
+                    if error.reason!='captcha_blocked' or not final_grant:raise
+                    if final_grant.used:
                         # A closing verification frame can outlive the native
                         # submit response. Observe the existing request only;
                         # never offer or authorize a second submission.
                         if phase!='checking_receipt':
                             deadline=time.monotonic()+45;announce('checking_receipt',45);phase='checking_receipt'
                         text=self.page.locator('body').inner_text(timeout=5000)
-                        received=(self.ashby_submission.acknowledged and submission_receipt(text,self.receipt_baseline)
+                        received=(self._native_submission_acknowledged() and submission_receipt(text,self.receipt_baseline)
                                   and not self.page.locator('input[type=email]').count())
-                        if received or self.ashby_submission.failed or time.monotonic()>=deadline:
+                        if received or final_grant.failed or time.monotonic()>=deadline:
                             result='outcome_check_complete';return text
                         self.page.wait_for_timeout(250)
                         continue
+                    if not self.human_verification_seconds:raise
                     if human_deadline is None:
                         human_deadline=time.monotonic()+self.human_verification_seconds
-                        self.ashby_submission.write_deadline=human_deadline
+                        if self.ashby_submission:self.ashby_submission.write_deadline=human_deadline
+                        else:
+                            final_grant.deadline=human_deadline
+                            final_grant.boundary.deadline=human_deadline
                     remaining=human_deadline-time.monotonic()
                     if remaining<=0:
                         result='timed_out';raise Blocked('captcha_blocked') from None
@@ -559,12 +707,15 @@ class Browser:
                     self.page.wait_for_timeout(250)
                     continue
                 if phase=='challenge':
-                    self.store.checkpoint();deadline=time.monotonic()+45
+                    if not final_grant.used:self.store.checkpoint()
+                    deadline=time.monotonic()+45
                     announce('checking_receipt',45);phase='checking_receipt'
                 if (REJECTED.search(text)
                         or submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
-                           and (not self.ashby_submission or self.ashby_submission.acknowledged)
+                           and self._native_submission_acknowledged()
                         or self.ashby_submission and self.ashby_submission.failed
+                        or self.native_submission and self.native_submission.response_seen and self.native_submission.failed
+                           and submission_receipt(text,self.receipt_baseline)
                         or accept_verification and self._email_verification(text)
                         or self.page.locator('[aria-invalid=true]').count() or time.monotonic()>=deadline):
                     result='outcome_check_complete';return text
@@ -645,6 +796,10 @@ class Browser:
             return 'awaiting_verification'
         self.store.checkpoint()
         self.receipt_baseline=self.page.locator('body').inner_text(timeout=5000)
+        if self.native_submission:
+            prepare=getattr(self.native_submission,'prepare_verification',None)
+            if not callable(prepare):raise Blocked('verification_form_changed')
+            prepare(code)
         self.store.begin_verification(self.aid)
         verification_submit.click(timeout=15000)
         text=self._wait_submission_outcome(job,accept_verification=False)
@@ -653,7 +808,8 @@ class Browser:
         screenshot_kwargs={'mask':[owner if owner.count()==1 else control.locator('xpath=..')]} if control.count() else {}
         screenshot_name=self._outcome_screenshot(screenshot,**screenshot_kwargs)
         text=re.sub(r'\s*'.join(re.escape(c) for c in code),'[verification code redacted]',text)
-        confirmed=submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
+        confirmed=(submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
+                   and self._native_submission_acknowledged())
         outcome='confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
         self.store.finish(self.aid,outcome,text,screenshot_name)
         return outcome
@@ -895,10 +1051,12 @@ class Browser:
             if actual!=value:raise Blocked('field_verification_failed',f['label'])
         for d in documents:
             if self.lever_resume and d['hash']==self.lever_resume.document['hash']:self.lever_resume.verify()
-            if self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and d['hash'] not in self.uploaded_files:
+            if not self.preparing and self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and d['hash'] not in self.uploaded_files:
                 raise Blocked('upload_verification_failed','Greenhouse has not acknowledged the approved PDF upload')
-            if self.current_host=='jobs.ashbyhq.com' and (d['hash'] not in self.uploaded_files or d['hash'] not in self.ashby_attached_files):
-                raise Blocked('upload_verification_failed','The approved PDF did not receive a successful upload response')
+            if not self.preparing and self.current_host=='jobs.ashbyhq.com':
+                from .ashby_attachments import attached
+                if not attached(self,d):
+                    raise Blocked('upload_verification_failed','The approved PDF is not acknowledged at its intended employer form field')
             if d['hash'] in self.uploaded_files and d['filename'] in body:continue
             el=self._control(d['field'])
             sizes=el.evaluate('(e)=>Array.from(e.files||[]).map(f=>f.size)')
@@ -915,11 +1073,16 @@ class Browser:
 
     def apply(self,job,live=True):
         self.workday_grant=None
+        self.workday_read_scope=None
+        self.preparing=not live
         # A DNS outage is not a permanent private-address verdict. Re-resolve
         # unavailable destinations at the next attempt, retaining actual denials.
         self.host_cache={host:allowed for host,allowed in self.host_cache.items() if allowed is not None}
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
+        self.ashby_attachment_state=None;self.post_submit_denial_recorded=False
         self.ashby_submission=None;self.human_verification_seconds=0
+        self.native_submission=None;self.greenhouse_uploads={};self.greenhouse_upload_fields={};self.greenhouse_native_options={};self.greenhouse_upload_pending={}
+        self.write_boundary=None
         self.lever_resume=None
         self.store.check_job_decision(job['id'])
         if live:
@@ -931,6 +1094,12 @@ class Browser:
         self.ashby_draft=AshbyDraft(self.store,job) if self.current_host=='jobs.ashbyhq.com' and not self.test_url else None
         if self.test_url:self.current_host=urlsplit(self.test_url).hostname
         elif job['host'] not in ATS_HOSTS|PORTAL_HOSTS:raise Blocked('unapproved_destination')
+        if live and not self.test_url:
+            from .workday import TENANTS
+            native={'jobs.ashbyhq.com','jobs.lever.co','jobs.eu.lever.co','boards.greenhouse.io',
+                    'job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}
+            if job['host'] not in native|set(TENANTS):
+                raise Blocked('unsupported_form','Automatic applying for this portal needs reviewed native submission support; open the job link to finish manually')
         from .ats_adapters import adapter_for
         adapter=adapter_for(job)
         navigation,verified_posting=adapter.navigation(job,checkpoint=self.store.checkpoint,deadline=getattr(self.store,'run_deadline',None)) if not self.test_url else (job['url'],None)
@@ -977,6 +1146,23 @@ class Browser:
         if self.ashby_draft:self.ashby_draft.job=job
         eligible(job,self.store.settings(),self.store.facts())
         self.store.upsert_job(job)
+        from .workday import TENANTS,WorkdayController
+        if job['host'] in TENANTS:
+            controller=WorkdayController(self,job)
+            if live and getattr(self,'workday_commission_job',None)==job['id']:
+                outcome=controller.commission()
+                if outcome=='confirmed':
+                    from .workday import verify_capability
+                    record=self.store.db.execute('SELECT id FROM applications WHERE job_id=? AND state=?',(job['id'],'confirmed')).fetchone()
+                    if not record:raise Blocked('submission_unknown')
+                    try:verify_capability(self.store,job['host'],controller.profile.signature,record['id'])
+                    except Exception as error:
+                        # Operational promotion is separate from an employer's
+                        # already persisted acceptance. Preserve its true outcome.
+                        with contextlib.suppress(Exception):
+                            self.store.event('workday_capability_held',record['id'],{'type':type(error).__name__})
+                return outcome
+            return controller.apply(live=live)
         all_answers=[]; all_docs=[]; steps=[]; refreshes=0; retained_docs=[]
         for step in range(8):
             try:self._guard(job)
@@ -1058,19 +1244,27 @@ class Browser:
                 failures=[reason for _,reason in pending if reason in PROVIDER_FAILURES]
                 if len(failures)==len(pending):raise Blocked(failures[0],labels)
                 raise Blocked('missing_answers',labels)
+            if live:
+                from .approval_boundary import ApprovalBoundary
+                proof={'job_id':job['id'],'url':job['url'],'answers':all_answers+answers,'documents':all_docs+documents,
+                       'facts_hash':digest(self.store.facts()),'steps':steps+[{'step':step,'fields':fields,'url':self.page.url}]}
+                self.write_boundary=ApprovalBoundary(self.store,job,proof)
+                from .answers import validate_package
+                validate_package(self.store,job,proof)
+                self.write_boundary.check()
             for d in documents:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')
                 self.upload_payloads[d['hash']]=path.read_bytes()
                 if d in retained_docs:continue
                 control=self._control(d['field'])
-                if self.current_host in {'jobs.lever.co','jobs.eu.lever.co'} and d['kind']=='resume' and control.get_attribute('id')=='resume-upload-input':
+                if live and self.current_host in {'jobs.lever.co','jobs.eu.lever.co'} and d['kind']=='resume' and control.get_attribute('id')=='resume-upload-input':
                     from .lever_resume import LeverResume
                     self.lever_resume=LeverResume(self,d)
                 control.set_input_files(str(path))
             if documents:
                 with contextlib.suppress(Exception):self.page.wait_for_load_state('networkidle',timeout=8000)
-                if self.lever_resume or self.current_host in {'jobs.ashbyhq.com','boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
+                if live and (self.lever_resume or self.current_host in {'jobs.ashbyhq.com','boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}):
                     expected_uploads=[self.lever_resume.document['hash']] if self.lever_resume else [d['hash'] for d in documents]
                     deadline=time.monotonic()+20
                     while any(h not in self.uploaded_files for h in expected_uploads) and time.monotonic()<deadline:
@@ -1140,14 +1334,24 @@ class Browser:
             self._guard(job)
             self._verify(answers,documents,fields)
             self.store.checkpoint()
+            if self.write_boundary:self.write_boundary.check()
             self.receipt_baseline=self.page.locator('body').inner_text(timeout=5000)
-            if self.ashby_draft and self.store.settings()['human_verification_wait_seconds']:
-                if not self.visible:
+            if not self.test_url and self.current_host in {'jobs.ashbyhq.com','jobs.lever.co','jobs.eu.lever.co','boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
+                wait_seconds=self.store.settings()['human_verification_wait_seconds']
+                if wait_seconds and not self.visible:
                     raise Blocked('human_verification_unavailable','Human verification requires a visible application browser on the worker desktop')
+                self.human_verification_seconds=wait_seconds
+            if self.ashby_draft:
                 from .ashby_submission import AshbySubmission
                 attribution=self.page.evaluate("() => {try{return localStorage.getItem('ashby_utm_source')}catch{return null}}")
                 self.ashby_submission=AshbySubmission(self.ashby_draft,self.aid,attribution)
-                self.human_verification_seconds=self.store.settings()['human_verification_wait_seconds']
+            elif not self.test_url and self.current_host in {'jobs.lever.co','jobs.eu.lever.co'}:
+                from .lever_submission import LeverSubmission
+                self.native_submission=LeverSubmission(self,job,package,self.aid,submit)
+            elif not self.test_url and self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
+                from .greenhouse_submission import GreenhouseSubmission
+                self.native_submission=GreenhouseSubmission(self,job,package,self.aid,submit)
+            if self.write_boundary:self.write_boundary.check()
             self.store.begin_submit(self.aid); self.attempted=True
             requested=time.time()
             stage='submit_click'
@@ -1159,7 +1363,7 @@ class Browser:
                 screenshot=self.store.root/'screenshots'/(self.aid+'-after.jpg')
                 screenshot_name=self._outcome_screenshot(screenshot)
                 confirmed=(submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
-                           and (not self.ashby_submission or self.ashby_submission.acknowledged))
+                           and self._native_submission_acknowledged())
                 outcome='not_submitted' if REJECTED.search(text) else 'confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
                 # Employer errors/receipts often appear below a long posting.
                 evidence=text if outcome=='awaiting_verification' or len(text)<=4000 else text[:2000]+'\n…\n'+text[-2000:]

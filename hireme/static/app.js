@@ -24,6 +24,7 @@ let postingImportBusy = false,
 let accountTransferBusy = false;
 let accountCredentialBusy = false;
 let transcriptWithdrawalBusy = false;
+let historyBusy = false, renderedHistorySignature = null;
 const selectedDownloadBusy = new Set();
 const selectedDownloadHashes = {};
 let postingCheckRequest = 0;
@@ -100,7 +101,7 @@ function updateDraftControls() {
   }
 }
 window.addEventListener("beforeunload", (event) => {
-  const unfinished = [$("#facts-form"), $("#settings-form"), $("#account-credentials-form"), $("#basic-context-form"), $("#context-form")].some(
+  const unfinished = [$("#facts-form"), $("#settings-form"), $("#account-credentials-form"), $("#basic-context-form"), $("#context-form"), $("#history-form")].some(
     (form) => dirtyForms.has(form) || form.dataset.saving === "true",
   );
   if (!unfinished && !opportunityNotes.hasDrafts()) return;
@@ -601,6 +602,13 @@ const toolDestinations = [
     aliases: "profile resume transcript identity",
     view: "profile",
     target: "#heading",
+  },
+  {
+    label: "Education and employment",
+    description: "Confirm individual schools, jobs and their dates for applications.",
+    aliases: "history institution degree employer work experience expected graduation",
+    view: "profile",
+    target: "#history-add-education",
   },
   {
     label: "Writing and context",
@@ -1592,6 +1600,12 @@ function table(jobs, parent, filtered = false) {
       info.append(el("p", job.next_step, "help"));
     if (job.hold) {
       info.append(el("p", job.hold.next_action, "help"));
+      if (["history_confirmation_required", "history_changed"].includes(job.hold.reason || job.reason)) {
+        const history = el("button", "Review education and employment", "secondary");
+        history.type = "button";
+        history.onclick = openHistory;
+        info.append(history);
+      }
       const evidence = el("details");
       evidence.append(el("summary", "Why this is held"), el("p", `${job.hold.category} · ${job.hold.stage}`, "help"));
       if (job.hold.field) evidence.append(el("p", job.hold.field));
@@ -1824,6 +1838,8 @@ const questionReasons = {
   numeric_answer_needed: "This field needs a number.",
   answer_too_long: "The saved answer is longer than this field allows.",
   repeated_entry_review: "This form repeats a section; confirm the answer for this entry.",
+  history_confirmation_required: "Confirm the school or job entry in Education and employment before this application can continue.",
+  history_changed: "The saved school or job entry changed. Review its current details before continuing.",
 };
 const contextReasons = new Set(["missing_fact", "option_mismatch", "stale_answer", "mapping_review"]);
 function shortLabel(label, limit = 140) {
@@ -1839,6 +1855,94 @@ function answerInContext(label) {
   $("#context-inbox").scrollIntoView({ behavior: "smooth", block: "start" });
   box.focus();
   box.setSelectionRange(box.value.length, box.value.length);
+}
+function openHistory() {
+  show("profile");
+  $("#history-panel").scrollIntoView({ block: "start", behavior: "auto" });
+  $("#history-add-education").focus({ preventScroll: true });
+}
+function historyFeedback(text, error = false) {
+  const feedback = $("#history-feedback");
+  feedback.textContent = text;
+  feedback.classList.toggle("error", error);
+  feedback.setAttribute("role", error ? "alert" : "status");
+}
+function editHistory(kind, entry = null) {
+  const form = $("#history-form");
+  if (historyBusy || state.demo) return;
+  if (dirtyForms.has(form)) {
+    historyFeedback("Save or discard your current entry draft before opening another entry.", true);
+    return;
+  }
+  form.reset();
+  form.dataset.kind = kind;
+  form.dataset.entryId = entry?.id || "";
+  form.dataset.revision = entry?.revision || 0;
+  for (const [key, value] of Object.entries(entry?.values || {}))
+    if (form.elements[key]) form.elements[key].value = String(value);
+  form.elements.source.value = entry?.source || "";
+  form.elements.confirmed.checked = false;
+  $("#history-editor-title").textContent = `${entry ? "Edit" : "Add"} ${kind}`;
+  form.hidden = false;
+  historyFeedback(entry ? "Review every saved detail and confirm again to save changes." : "Only the details you enter and confirm here will be saved.");
+  renderHistory();
+  form.elements[kind === "education" ? "institution" : "organization"].focus();
+}
+const historyLabels = {
+  institution: "Institution", degree: "Degree", field_of_study: "Field of study", gpa: "GPA",
+  organization: "Organization", title: "Job title", location: "Location", current: "Current",
+  start: "Start month", end: "Actual end month", expected_end: "Expected end month", description: "Responsibilities and accomplishments",
+};
+function renderHistory() {
+  const form = $("#history-form"), busy = historyBusy || state.demo;
+  for (const group of form.querySelectorAll("[data-history-kind]"))
+    group.hidden = group.dataset.historyKind !== (form.dataset.kind || "education");
+  for (const control of form.elements) {
+    const group = control.closest("[data-history-kind]");
+    control.disabled = busy || Boolean(group?.hidden);
+  }
+  for (const id of ["#history-add-education", "#history-add-employment"]) $(id).disabled = busy;
+  const signature = JSON.stringify([state.history || [], busy]);
+  if (signature === renderedHistorySignature) return;
+  renderedHistorySignature = signature;
+  const list = $("#history-list");
+  list.replaceChildren();
+  if (!state.history?.length) list.append(el("p", "No structured entries saved yet.", "help"));
+  for (const entry of state.history || []) {
+    const row = el("article", undefined, "history-entry");
+    row.dataset.historyId = entry.id;
+    row.append(el("h3", entry.kind === "education" ? entry.values.institution : `${entry.values.title} · ${entry.values.organization}`));
+    row.append(el("p", `${entry.kind === "education" ? "Education" : "Employment"} · ${entry.confirmed ? "Confirmed for applications" : "Not in use"} · revision ${entry.revision}`, "help"));
+    const details = el("dl");
+    for (const [key, value] of Object.entries(entry.values)) {
+      details.append(el("dt", historyLabels[key] || key), el("dd", key === "current" ? value ? "Yes" : "No" : value));
+    }
+    details.append(el("dt", "Confirmed source"), el("dd", entry.source));
+    const actions = el("div", undefined, "actions history-actions");
+    const edit = el("button", entry.confirmed ? "Edit entry" : "Review and confirm", "secondary");
+    edit.type = "button"; edit.disabled = busy;
+    edit.onclick = () => editHistory(entry.kind, entry);
+    actions.append(edit);
+    if (entry.confirmed) {
+      const withdraw = el("button", "Stop using entry", "secondary");
+      withdraw.type = "button"; withdraw.disabled = busy;
+      withdraw.onclick = async () => {
+        if (historyBusy) return;
+        historyBusy = true;
+        renderHistory();
+        try {
+          const result = await api("/api/history-withdraw", { id: entry.id, revision: entry.revision });
+          state.history = result.history;
+          historyFeedback("Entry withdrawn from future applications. Its saved details and earlier application records are kept.");
+          await refresh();
+        } catch (error) { historyFeedback(error.message, true); }
+        finally { historyBusy = false; renderHistory(); }
+      };
+      actions.append(withdraw);
+    }
+    row.append(details, actions);
+    list.append(row);
+  }
 }
 function renderQuestionList() {
   if (
@@ -1897,6 +2001,14 @@ function renderQuestionList() {
           : link(x.url, `${x.company} · ${x.title}`),
       );
     box.append(el("p", questionReasons[x.reason] || x.reason.replaceAll("_", " "), "subtle"));
+    if (["history_confirmation_required", "history_changed"].includes(x.reason)) {
+      const review = el("button", "Review education and employment", "secondary");
+      review.type = "button";
+      review.onclick = openHistory;
+      box.append(review);
+      q.append(box);
+      continue;
+    }
     const f = el("form");
     let options;
     try {
@@ -3225,6 +3337,7 @@ function render() {
   renderMail();
   renderDocumentStatus();
   if (!editing("#facts-form")) renderFacts();
+  renderHistory();
   renderContextNeeds();
   if (!editing("#basic-context-form")) {
     const context = state.basic_context || { text: "", revision: 0 };
@@ -4762,6 +4875,38 @@ $("#context-review-discard").onclick = () => {
   contextDraft = null;
   $("#context-review-form").reset();
   renderContextReview();
+};
+
+$("#history-add-education").onclick = () => editHistory("education");
+$("#history-add-employment").onclick = () => editHistory("employment");
+$("#history-discard").onclick = () => {
+  const form = $("#history-form");
+  form.reset(); form.hidden = true; saved(form);
+  historyFeedback("Entry draft discarded. Saved entries are unchanged.");
+};
+$("#history-form").addEventListener("input", (event) => {
+  if (event.target.name !== "confirmed") event.currentTarget.elements.confirmed.checked = false;
+});
+$("#history-form").onsubmit = async (event) => {
+  event.preventDefault();
+  if (historyBusy || state.demo) return;
+  const form = event.target, data = new FormData(form), values = {};
+  for (const [key, value] of data) {
+    if (["source", "confirmed"].includes(key) || !String(value).trim()) continue;
+    values[key] = key === "current" ? value === "true" : String(value).trim();
+  }
+  const body = {kind: form.dataset.kind, values, source: form.elements.source.value,
+    confirmed: form.elements.confirmed.checked, revision: Number(form.dataset.revision || 0)};
+  if (form.dataset.entryId) body.id = form.dataset.entryId;
+  historyBusy = true; form.dataset.saving = "true"; renderHistory();
+  try {
+    const result = await api("/api/history", body);
+    state.history = result.history;
+    form.reset(); form.hidden = true; saved(form);
+    historyFeedback("Confirmed entry saved. Held applications will check the updated history on the next run.");
+    await refresh();
+  } catch (error) { historyFeedback(error.message, true); }
+  finally { delete form.dataset.saving; historyBusy = false; renderHistory(); }
 };
 
 $("#basic-context-form").onsubmit = async (event) => {

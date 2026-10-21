@@ -1,0 +1,14 @@
+mutation ApiCreateFileUploadHandle($organizationHostedJobsPageName: String!, $fileUploadContext: FileUploadContext!, $filename: String!, $contentType: String!, $contentLength: Int!) {
+  fileUploadHandle: createFileUploadHandle(
+    organizationHostedJobsPageName: $organizationHostedJobsPageName
+    fileUploadContext: $fileUploadContext
+    filename: $filename
+    contentType: $contentType
+    contentLength: $contentLength
+  ) {
+    handle
+    url
+    fields
+    __typename
+  }
+}

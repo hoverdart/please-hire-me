@@ -158,6 +158,8 @@ def complete_native_account(browser, job):
     never application-submit authorization.
     """
     store=browser.store
+    from .approval_boundary import ApprovalBoundary
+    boundary=ApprovalBoundary(store,job)
     store.checkpoint()
     if not store.settings()['employer_accounts'] or not store.settings()['live_enabled']:
         raise Blocked('account_automation_disabled')
@@ -253,9 +255,10 @@ def complete_native_account(browser, job):
         vault.begin_creation(origin,company)
     else:
         vault.begin_signin(key)
-    browser.auth_write={'url':info['action'],'pairs':pairs,'used':False}
+    browser.auth_write={'url':info['action'],'pairs':pairs,'used':False,'boundary':boundary}
     confirmed=False
     try:
+        boundary.check()
         store.checkpoint()
         buttons.first.click()
         browser._wait_ready()

@@ -136,6 +136,8 @@ Backups contain history, documents and evidence and are **not encrypted**. Store
 
 Do not run the same applicant simultaneously on Mac and Pi. Pause the source and remove its schedule before moving history; locks do not coordinate across machines.
 
+If both machines have independent application history, stop both before migration. Do not restore one over the other. An operator can retain original attempts in the destination's historical application records after verifying both private snapshots. These records remain visible in Application desk, outcome review, CSV exports and backups, and continue to enforce company limits and duplicate protection. Retained records cannot authorize employer writes. Reconcile each uncertain attempt separately; reconciling an older attempt does not replace the newer receipt for that job.
+
 Employer passwords use a separate encrypted transfer. Pause both instances, restore matching history first, then use **Needs you → Move employer passwords to another computer**. Choose and repeat a passphrase of at least 12 characters. Keep the passphrase separately and remove the transfer file after verifying recovery.
 
 ```bash

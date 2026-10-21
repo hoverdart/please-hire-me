@@ -67,7 +67,7 @@ def _validate_references(store):
             document(*row,directory)
     for row in store.db.execute('SELECT hash,filename,kind FROM application_artifacts'):
         document(row['hash'],row['filename'],'documents',text_only=row['kind'] in {'introduction','profile_suggestion'})
-    for app in store.db.execute('SELECT package,screenshot FROM applications'):
+    for app in store.db.execute('SELECT package,screenshot FROM application_records'):
         # Preserve damaged/legacy package text for recovery. Readable references
         # still must resolve, even after the current upload was replaced/withdrawn.
         try:package=json.loads(app['package'])

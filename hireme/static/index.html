@@ -931,6 +931,39 @@
               sent directly by your school, handle that through the employer.
             </p>
           </div>
+          <div class="section" id="history-panel">
+            <h2>Education and employment</h2>
+            <p class="help">Confirm each school and role separately so applications can use the right entry. Enter dates you know as a month and year; blank fields remain unknown. Your resume and notes do not fill these records automatically.</p>
+            <div id="history-list" aria-live="polite"></div>
+            <div class="actions history-actions">
+              <button type="button" id="history-add-education" class="secondary">Add education</button>
+              <button type="button" id="history-add-employment" class="secondary">Add employment</button>
+            </div>
+            <p id="history-feedback" class="help" role="status"></p>
+            <form id="history-form" class="form-grid" hidden>
+              <h3 id="history-editor-title" class="wide">Add education</h3>
+              <div class="form-grid wide" data-history-kind="education">
+                <label>Institution<input name="institution" maxlength="1000" required /></label>
+                <label>Degree<input name="degree" maxlength="1000" /></label>
+                <label>Field of study<input name="field_of_study" maxlength="1000" /></label>
+                <label>GPA<input name="gpa" maxlength="1000" /></label>
+                <label>Expected end month<input name="expected_end" type="month" /></label>
+              </div>
+              <div class="form-grid wide" data-history-kind="employment" hidden>
+                <label>Organization<input name="organization" maxlength="1000" required disabled /></label>
+                <label>Job title<input name="title" maxlength="1000" required disabled /></label>
+                <label class="wide">Responsibilities and accomplishments<textarea name="description" rows="3" maxlength="8000" disabled></textarea></label>
+              </div>
+              <label>Location<input name="location" maxlength="1000" /></label>
+              <label>Current status<select name="current"><option value="">Not specified</option><option value="true">Current</option><option value="false">Not current</option></select></label>
+              <label>Start month<input name="start" type="month" /></label>
+              <label>Actual end month<input name="end" type="month" /></label>
+              <p class="help wide">Use an actual end month only after leaving. For education, choose either an actual or expected end month.</p>
+              <label class="wide">Source you checked<textarea name="source" rows="2" maxlength="2000" required placeholder="For example, my enrollment record or employment records"></textarea></label>
+              <label class="confirmation wide"><input type="checkbox" name="confirmed" required /> I checked this entry against the source above and confirm these details are accurate for applications.</label>
+              <div class="actions history-actions wide"><button type="submit">Save confirmed entry</button><button type="button" id="history-discard" class="secondary">Discard entry draft</button></div>
+            </form>
+          </div>
           <div class="section" id="context-inbox">
             <h2>Add context in your own words</h2>
             <p class="help">Write anything applications ask about: classes, projects, team or office preferences, availability. Claude organizes it into facts and short notes. Nothing is saved until you review it.</p>

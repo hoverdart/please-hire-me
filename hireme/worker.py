@@ -17,6 +17,8 @@ from .job_holds import ready, hold, clear, safe_state as safe_job_state
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
     with worker_lock(store.root):
         store.recover()
+        from .reports import recover_reports
+        recover_reports(store)
         store.run_generation=store.control_generation() if live else None
         store.preparation_generation=(store.control_generation() if requested_generation is None else requested_generation) if not live else None
         rid=uuid.uuid4().hex; s=store.settings(); count=0; attempts=0; reasons={}; outcomes={}; start=time.monotonic();discovered_count=None;eligible_count=None
@@ -25,6 +27,9 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         max_attempts=min(max_attempts or s['max_attempts_per_cycle'],s['max_attempts_per_cycle'])
         store.db.execute("INSERT INTO runs(id,started,status,detail) VALUES(?,?,'running',?)",(rid,now(),json.dumps({'mode':'live' if live else 'prepare'})))
         try:
+            from .workday_commission_state import bind_run
+            bind_run(store,rid,job_ids=job_ids,live=live,discover=discover,limit=limit,
+                     max_attempts=max_attempts,browser_factory=browser_factory)
             if store.missing_setup() or not s['onboarding_complete']:
                 raise Blocked('setup_incomplete',', '.join(store.missing_setup()))
             store.checkpoint()
@@ -67,7 +72,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                         if time.monotonic()-batch_started>=.25:break
             eligible_count=len(ranked)
             today=datetime.now(ZoneInfo(s['timezone'])).date()
-            sent_today=sum(1 for r in store.db.execute("SELECT attempted FROM applications WHERE state='confirmed'")
+            sent_today=sum(1 for r in store.db.execute("SELECT attempted FROM application_records WHERE state='confirmed'")
                           if r[0] and datetime.fromisoformat(r[0]).astimezone(ZoneInfo(s['timezone'])).date()==today)
             # Seven normally; use spare slots when behind the daily trajectory. Never exceed ten.
             expected=max(s['target_per_cycle'],(s['target_per_day']*datetime.now(ZoneInfo(s['timezone'])).hour)//24-sent_today)
