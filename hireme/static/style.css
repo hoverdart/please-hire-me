@@ -2106,5 +2106,9 @@ input[type=checkbox], input[type=radio] { accent-color: var(--action); }
 }
 
 .dialog-body > .section, #saved-views-panel { padding: 18px 0; margin: 18px 0; border: 0; border-top: 1px solid var(--rule); border-radius: 0; box-shadow: none; background: transparent; }
+#saved-views-panel { padding-inline: 24px; }
+@media (max-width: 600px) {
+  #saved-views-panel { padding-inline: 16px; }
+}
 #reusable-sources-title { margin-top: 32px; }
 #providers > h2 { margin-top: 28px; }
