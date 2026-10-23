@@ -13,6 +13,9 @@ from .store import Store
 from .util import private_dir,atomic_json,Blocked
 
 MAX_BODY=21*1024*1024
+REQUEST_TIMEOUT=30
+UPLOAD_PATHS={'/api/resume','/api/transcript','/api/gmail-client','/api/material-upload',
+              '/api/posting-import-preview','/api/posting-import'}
 
 
 class HistoryConflict(ValueError):
@@ -132,12 +135,16 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
             raise
 
     class Handler(BaseHTTPRequestHandler):
+        timeout=REQUEST_TIMEOUT  # Bound idle reads without timing out active uploads.
         def log_message(self,*args):pass  # URL capability and personal input must not enter access logs.
         def _valid_host(self):
-            return self.headers.get('Host') in (f'127.0.0.1:{port}',f'localhost:{port}')
+            return len(self.headers.get_all('Host',[]))==1 and self.headers.get('Host') in (f'127.0.0.1:{port}',f'localhost:{port}')
         def _auth(self):
             origin=self.headers.get('Origin')
-            return self._valid_host() and secrets.compare_digest(self.headers.get('X-Hireme-Token',''),token) and origin in (None,f'http://127.0.0.1:{port}',f'http://localhost:{port}')
+            return (self._valid_host() and len(self.headers.get_all('X-Hireme-Token',[]))==1
+                    and len(self.headers.get_all('Origin',[]))<=1
+                    and secrets.compare_digest(self.headers.get('X-Hireme-Token','').encode('utf-8'),token.encode('utf-8'))
+                    and origin in (None,f'http://127.0.0.1:{port}',f'http://localhost:{port}'))
         def _respond_headers(self,code,size,ctype,download=None):
             self.send_response(code)
             self.send_header('Content-Type',ctype)
@@ -163,8 +170,8 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
         def do_GET(self):
             path=urlsplit(self.path).path
             if not self._valid_host():return self.send(403,{'error':'Invalid host'})
-            if path in ('/','/app.js','/notes.js','/workspace.js','/style.css'):
-                name={'/':'index.html','/app.js':'app.js','/notes.js':'notes.js','/workspace.js':'workspace.js','/style.css':'style.css'}[path]
+            if path in ('/','/app.js','/notes.js','/workspace.js','/recruiting.js','/insights.js','/history-import.js','/style.css'):
+                name={'/':'index.html','/app.js':'app.js','/notes.js':'notes.js','/workspace.js':'workspace.js','/recruiting.js':'recruiting.js','/insights.js':'insights.js','/history-import.js':'history-import.js','/style.css':'style.css'}[path]
                 return self.send(200,(assets/name).read_bytes(),'text/html; charset=utf-8' if path=='/' else 'text/css' if path=='/style.css' else 'text/javascript')
             if not self._auth():return self.send(403,{'error':'Open the dashboard URL printed by .venv/bin/python -m hireme dashboard'})
             store=Store(root)
@@ -194,8 +201,11 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     from .platform_connections import list_connections,annotate_jobs
                     snapshot['platform_connections']=list_connections(store)
                     snapshot['jobs']=annotate_jobs(store,snapshot['jobs'])
-                    from .coverage import cycle_funnel
+                    from .coverage import cycle_funnel,application_outcomes
                     snapshot['cycle_funnel']=cycle_funnel(store)
+                    snapshot['application_outcomes']=application_outcomes(store)
+                    from .recruiting_feedback import summary as feedback_summary
+                    snapshot['recruiting_feedback']=feedback_summary(store)
                     snapshot['history']=_history_entries(store)
                     snapshot['demo']=demo
                     from .recovery import worker_status
@@ -212,6 +222,19 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         except (TypeError,ValueError):pass
                     return self.send(200,{**snapshot,'fact_labels':FACTS,'boolean_facts':sorted(BOOLEANS),'required':sorted(REQUIRED),'worker_running':activity['running'],'worker_mode':running_mode,'worker_error':local_error})
                 if path=='/api/history':return self.send(200,{'history':_history_entries(store)})
+                if path=='/api/history-import':
+                    from .history_import import preview
+                    if demo:return self.send(200,{'resume_hash':None,'lines':[],'candidates':[],'history':[],'demo':True})
+                    try:return self.send(200,preview(store))
+                    except ValueError as error:return self.send(400,{'error':str(error)})
+                if path=='/api/recruiting-insights':
+                    from .recruiting_insights import report
+                    query=parse_qs(urlsplit(self.path).query)
+                    try:return self.send(200,report(store,group_by=query.get('group_by',['source'])[0],
+                        lookback=int(query.get('lookback',['90'])[0]),window=int(query.get('window',['14'])[0]),
+                        metric=query.get('metric',['attempts'])[0],group_id=query.get('group_id',[''])[0],
+                        offset=int(query.get('offset',['0'])[0]),group_offset=int(query.get('group_offset',['0'])[0])))
+                    except ValueError as error:return self.send(400,{'error':str(error)})
                 if path=='/api/coverage':
                     from .coverage import coverage
                     return self.send(200,coverage(store))
@@ -233,6 +256,15 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                 if path=='/api/diagnostics':
                     from .doctor import dashboard_diagnostics
                     return self.send(200,dashboard_diagnostics(store,demo=demo))
+                if path=='/api/recruiting-feedback':
+                    if demo:return self.send(200,{'messages':[],'total':0,'offset':0,'limit':25,'counts':{}})
+                    from .recruiting_feedback import listing
+                    query=parse_qs(urlsplit(self.path).query)
+                    try:return self.send(200,listing(store,state=query.get('state',['pending'])[0],offset=int(query.get('offset',['0'])[0])))
+                    except (ValueError,Blocked) as error:return self.send(400,{'error':str(error)})
+                if path.startswith('/api/job-feedback/'):
+                    from .recruiting_feedback import for_job
+                    return self.send(200,{'messages':for_job(store,unquote(path[len('/api/job-feedback/'):]))})
                 if path.startswith('/api/job-note/'):
                     from .job_notes import get_note
                     try:return self.send(200,get_note(store,unquote(path[len('/api/job-note/'):])))
@@ -290,6 +322,12 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     try:data,name=recorded_pdf(store,unquote(parts[0]),int(parts[1]),parts[2])
                     except ValueError as error:return self.send(400,{'error':str(error)})
                     return self.send(200,data,'application/pdf',download=name)
+                if path.startswith('/api/application-journey/'):
+                    from .application_journey import journey
+                    try:record=journey(store,unquote(path[len('/api/application-journey/'):]))
+                    except ValueError as error:return self.send(400,{'error':str(error)})
+                    if not record:return self.send(404,{'error':'Application record not found'})
+                    return self.send(200,record)
                 if path.startswith('/api/application/'):
                     try:record=store.application_record(unquote(path[len('/api/application/'):]))
                     except ValueError as error:return self.send(400,{'error':str(error)})
@@ -326,7 +364,11 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
             if not self._auth():return self.send(403,{'error':'Unauthorized local request'})
             if demo:return self.send(403,{'error':'This is a read-only sample workspace. Start the regular dashboard to save your own information.'})
             try:
-                size=int(self.headers.get('Content-Length','0'))
+                lengths=self.headers.get_all('Content-Length',[])
+                if (self.headers.get_all('Transfer-Encoding',[]) or len(lengths)!=1
+                        or not re.fullmatch(r'[0-9]{1,10}',lengths[0])):
+                    return self.send(400,{'error':'Provide one valid Content-Length without Transfer-Encoding'})
+                size=int(lengths[0])
                 path=urlsplit(self.path).path
                 if path in ('/api/posting-import-preview','/api/posting-import'):
                     from .posting_import import MAX_BYTES
@@ -337,6 +379,10 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     return self.send(200,inspect_upload(self.rfile,size,root))
                 if not 0<size<=MAX_BODY:return self.send(413,{'error':'Request too large'})
                 raw=self.rfile.read(size)
+                if len(raw)!=size:return self.send(400,{'error':'Upload interrupted. Choose the file or action and try again.'})
+                if path not in UPLOAD_PATHS:
+                    data=json.loads(raw)
+                    if not isinstance(data,dict):raise ValueError('Provide a JSON action object')
                 store=Store(root)
                 try:
                     if path in ('/api/resume','/api/transcript'):
@@ -359,7 +405,6 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         from .posting_import import preview_postings,import_postings
                         result=preview_postings(store,raw) if path.endswith('-preview') else import_postings(store,raw,self.headers.get('X-Import-Hash',''))
                         return self.send(200,result)
-                    data=json.loads(raw)
                     if path.startswith('/api/connections/'):
                         if not isinstance(data,dict):raise ValueError('Provide a connection action object')
                         from . import platform_connections as pc
@@ -385,6 +430,9 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                             with worker_lock(store.root):result=generate(store,job,'profile_suggestion','Tell us about yourself: write a concise professional profile using my confirmed experience and approved sources.')
                         else:return self.send(404,{'error':'Unknown connection action'})
                         return self.send(200,result)
+                    if path in ('/api/history-import/suggest','/api/history-import/confirm'):
+                        from .history_import import suggest,confirm
+                        return self.send(200,(suggest if path.endswith('/suggest') else confirm)(store,data))
                     if path=='/api/artifacts/generate':
                         if not isinstance(data,dict) or set(data)-{'job_id','kind','prompt'}:raise ValueError('Provide a saved job and material purpose')
                         from .application_artifacts import generate
@@ -395,7 +443,13 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         job=json.loads(row['payload'])
                         if data.get('kind')=='profile_suggestion':raise ValueError('Use the profile suggestion action')
                         with worker_lock(store.root):result=generate(store,job,data.get('kind'),data.get('prompt'))
-                        return self.send(200,result)
+                        return self.send(200,{**result,'company':job['company'],'title':job['title']})
+                    if path=='/api/recruiting-feedback/sync':
+                        from .recruiting_feedback import sync
+                        return self.send(200,sync(store))
+                    if path=='/api/recruiting-feedback/review':
+                        from .recruiting_feedback import review
+                        return self.send(200,review(store,data))
                     if path=='/api/account-credentials':
                         from .accounts import AccountVault
                         if not isinstance(data,dict):raise ValueError('Provide employer-scoped credentials')
@@ -566,6 +620,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     else:return self.send(404,{'error':'Not found'})
                     return self.send(200,result)
                 finally:store.close()
+            except TimeoutError:return self.send(408,{'error':'Upload timed out. Choose the file or action and try again.'})
             except (ValueError,KeyError,TypeError) as e:return self.send(400,{'error':str(e)})
             except Blocked as e:return self.send(409,{'error':str(e)})
             except Exception as e:return self.send(500,{'error':type(e).__name__})

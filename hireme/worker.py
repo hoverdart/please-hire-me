@@ -150,6 +150,12 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                 if live:flush_reports(store)
             except Exception as e:
                 store.event('batch_report_failed',rid,{'reason':getattr(e,'reason',type(e).__name__)})
+            if live and store.settings()['gmail_feedback']:
+                try:
+                    from .recruiting_feedback import sync
+                    store.event('recruiting_feedback_sync',rid,sync(store))
+                except Exception as error:
+                    store.event('recruiting_feedback_sync_failed',rid,{'reason':getattr(error,'reason',type(error).__name__)})
 
 
 def daemon(store,repo):

@@ -60,7 +60,10 @@ def _validate_references(store):
         parent=store.root/directory
         if parent.is_symlink():raise ValueError('Unsafe private storage directory')
         path=parent/name
-        if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=h:raise ValueError('Referenced private document is missing or changed')
+        if path.is_symlink() or not path.is_file():raise ValueError('Referenced private document is missing or changed')
+        if path.stat().st_size>MAX_MEMBER:raise ValueError('Referenced private document exceeds the supported backup size')
+        with path.open('rb') as source:
+            if hashlib.file_digest(source,'sha256').hexdigest()!=h:raise ValueError('Referenced private document is missing or changed')
         validated.add(reference)
     for table,directory in (('documents','documents'),('generated_documents','documents'),('materials','materials')):
         for row in store.db.execute('SELECT hash,filename FROM '+table):
@@ -140,8 +143,13 @@ def create_backup(store, destination: Path):
                     archive.writestr('manifest.json',manifest_data)
                 if Path(tempname).stat().st_size>1024*1024*1024:
                     raise ValueError('Compressed private history exceeds the supported backup size')
+                # Finish writing the ZIP before publishing its durable name.
+                with open(tempname,'rb') as completed:os.fsync(completed.fileno())
                 # Link is exclusive: never overwrite an archive appearing concurrently.
                 os.link(tempname,destination)
+                directory_fd=os.open(destination.parent,os.O_RDONLY)
+                try:os.fsync(directory_fd)
+                finally:os.close(directory_fd)
             finally:
                 Path(tempname).unlink(missing_ok=True)
     return {'path':str(destination),'files':len(manifest),'credentials_included':False,'restores_paused':True}

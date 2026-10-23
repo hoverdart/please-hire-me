@@ -13,6 +13,9 @@
     <script src="/notes.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/workspace.js" defer></script>
+    <script src="/recruiting.js" defer></script>
+    <script src="/insights.js" defer></script>
+    <script src="/history-import.js" defer></script>
   </head>
   <body>
     <a class="skip" href="#main">Skip to workspace</a>
@@ -238,6 +241,37 @@
             <p id="cycle-funnel-status" class="help">No recorded cycle yet.</p>
             <dl id="cycle-funnel" class="cycle-funnel"></dl>
           </section>
+          <section class="section" aria-labelledby="application-outcomes-title">
+            <h2 id="application-outcomes-title">Application outcomes</h2>
+            <p class="help">Across your complete history, including retained attempts. Prepared drafts have not been submitted. Uncertain attempts stay held until you verify them.</p>
+            <dl id="application-outcomes" class="cycle-funnel"></dl>
+            <h3>Recruiting progress</h3>
+            <p class="help">Latest reviewed recruiting feedback per application. These email milestones are separate from submission confirmation.</p>
+            <dl id="recruiting-stages" class="cycle-funnel"></dl>
+            <button type="button" id="open-recruiting-feedback" class="secondary">Review recruiting feedback</button>
+          </section>
+          <details id="recruiting-insights-panel" class="section">
+            <summary>Recruiting Insights</summary>
+            <p class="help">Compare saved, reviewed recruiting outcomes. Click any metric to inspect its application evidence. Missing feedback is unknown, not rejected.</p>
+            <form id="insights-filters" class="form-grid">
+              <label>Applications from<select name="lookback"><option value="90">Last 90 days</option><option value="30">Last 30 days</option><option value="180">Last 180 days</option><option value="365">Last year</option><option value="0">All history</option></select></label>
+              <label>Response window<select name="window"><option value="7">First 7 days</option><option value="14" selected>First 14 days</option><option value="30">First 30 days</option></select></label>
+              <label>Compare by<select name="group_by"><option value="source">Application source</option><option value="role">Exact role title</option><option value="company">Company</option><option value="resume">Resume PDF</option></select></label>
+              <button type="submit" class="secondary">Refresh insights</button>
+            </form>
+            <p id="insights-status" class="help" role="status"></p>
+            <p id="insights-method" class="help"></p>
+            <div id="insights-metrics" class="insight-metrics"></div>
+            <details><summary>Review coverage and submission gaps</summary><div id="insights-coverage" class="insight-metrics"></div><p id="insights-quality" class="help"></p></details>
+            <h3>Compare groups</h3>
+            <p class="help">Shares describe reviewed interviews among confirmed submissions with a full observation window. Groups below 20 mature submissions carry a small-sample caution; this is not a significance test. Current-metadata groups are labeled separately. Resume groups identify exact PDF bytes.</p>
+            <div class="table-scroll"><table class="insights-table"><thead><tr><th>Group</th><th>Full window</th><th>Responses</th><th>Interviews</th><th>Offers</th><th>Recorded interview share</th></tr></thead><tbody id="insights-groups"></tbody></table></div>
+            <div class="actions"><button id="insights-group-previous" type="button" class="secondary">Previous groups</button><span id="insights-group-page" class="help"></span><button id="insights-group-next" type="button" class="secondary">Next groups</button></div>
+            <div class="section-head"><h3 id="insights-selection">Application evidence</h3><button id="insights-clear-group" type="button" class="secondary" hidden>All groups</button></div>
+            <div id="insights-applications" aria-live="polite"></div>
+            <div class="actions"><button id="insights-previous" type="button" class="secondary">Previous attempts</button><span id="insights-page" class="help"></span><button id="insights-next" type="button" class="secondary">Next attempts</button></div>
+            <section id="insights-evidence" class="section" hidden aria-label="Selected application evidence"></section>
+          </details>
           <details id="coverage-panel" class="section">
             <summary>Application platform coverage</summary>
             <p class="help">Discovery and automatic submission have different support. Counts cover your saved opportunities.</p>
@@ -933,8 +967,30 @@
           </div>
           <div class="section" id="history-panel">
             <h2>Education and employment</h2>
-            <p class="help">Confirm each school and role separately so applications can use the right entry. Enter dates you know as a month and year; blank fields remain unknown. Your resume and notes do not fill these records automatically.</p>
+            <p class="help">Confirm each school and role separately so applications and tailored resumes can use the right entry. Put each complete responsibility or accomplishment on its own line under its original employer. Enter dates you know as a month and year; blank fields remain unknown. Your resume and notes do not fill these records automatically.</p>
             <div id="history-list" aria-live="polite"></div>
+            <details id="history-import-panel" class="section">
+              <summary>Import history from your resume</summary>
+              <p class="help">Read the uploaded PDF locally, review an exact excerpt and correct the proposed fields before confirming. No model request is made. Missing dates remain blank; year-only dates do not establish a month.</p>
+              <button id="history-import-load" type="button" class="secondary">Load resume excerpts</button>
+              <p id="history-import-status" class="help" role="status"></p>
+              <div id="history-import-candidates" class="actions"></div>
+              <details><summary>Choose lines from the full resume</summary><pre id="history-import-source" class="resume-source" tabindex="0"></pre></details>
+              <form id="history-import-form" hidden>
+                <div class="form-grid">
+                  <label>Entry type<select name="kind"><option value="employment">Employment</option><option value="education">Education</option></select></label>
+                  <label>First source line<input name="start_line" type="number" min="1" required /></label>
+                  <label>Last source line<input name="end_line" type="number" min="1" required /></label>
+                  <button id="history-import-select" type="button" class="secondary">Propose fields from these lines</button>
+                </div>
+                <h3>Original excerpt</h3><pre id="history-import-excerpt" class="resume-source" tabindex="0"></pre>
+                <p class="help">These are proposals. Check employer, role, dates and every accomplishment against your own records. Put each complete accomplishment on its own line; you can correct PDF line wrapping here.</p>
+                <div id="history-import-fields" class="form-grid"></div>
+                <p id="history-import-duplicates" class="help"></p>
+                <label class="confirmation"><input name="confirmed" type="checkbox" required /> I reviewed this excerpt and confirm the entry and my corrections are accurate.</label>
+                <button id="history-import-confirm" type="submit">Confirm and import entry</button>
+              </form>
+            </details>
             <div class="actions history-actions">
               <button type="button" id="history-add-education" class="secondary">Add education</button>
               <button type="button" id="history-add-employment" class="secondary">Add employment</button>
@@ -1105,7 +1161,7 @@
           </div>
         </section>
         <section id="materials" class="view" hidden>
-          <section class="section" aria-labelledby="generated-materials-title"><div class="section-head"><h2 id="generated-materials-title">Application materials</h2><button id="reload-artifacts" class="secondary">Refresh materials</button></div><p class="help">Introductions and response PDFs are saved per job. Earlier versions stay available in your history.</p><div id="artifact-library"></div><div class="actions"><button id="artifact-previous" class="secondary">Previous materials</button><span id="artifact-page" class="help" role="status"></span><button id="artifact-next" class="secondary">Next materials</button></div></section>
+          <section class="section" aria-labelledby="generated-materials-title"><div class="section-head"><h2 id="generated-materials-title">Application materials</h2><button id="reload-artifacts" class="secondary">Refresh materials</button></div><p class="help">Tailored resumes, cover letters, introductions and response PDFs are saved per job. Earlier versions stay available in your history.</p><div id="artifact-library"></div><div class="actions"><button id="artifact-previous" class="secondary">Previous materials</button><span id="artifact-page" class="help" role="status"></span><button id="artifact-next" class="secondary">Next materials</button></div></section>
           <h2 id="reusable-sources-title">Reusable sources</h2>
           <p class="intro">
             Give the model your writing, cover-letter examples and supporting
@@ -1244,12 +1300,26 @@
             ><label class="confirmation"
               ><input name="gmail_reports" type="checkbox" /> Email me a report
               after each batch, including paused and failed batches.</label
+            ><label class="confirmation"
+              ><input name="gmail_feedback" type="checkbox" /> Find recruiting feedback in Gmail after scheduled batches and when I choose Sync. Store matching message previews privately for my review; never send email contents to a model.</label
             ><button type="submit">Save email preferences</button>
             <p class="help">
               Codes stay out of Claude prompts and logs. Unsupported
               verification steps remain held for manual handling.
             </p>
           </form>
+          <details id="recruiting-feedback-panel" class="section">
+            <summary>Recruiting feedback</summary>
+            <p class="help">Review application acknowledgements, assessments, interviews, rejections and offers. Each message needs your confirmation and a matching application attempt. Reviewing email never changes whether an application was submitted or permits an uncertain attempt to retry.</p>
+            <div class="actions">
+              <button id="feedback-sync" type="button">Sync recruiting mail</button>
+              <button id="feedback-reload" type="button" class="secondary">Refresh feedback</button>
+              <label>Review status<select id="feedback-filter"><option value="pending">Needs review</option><option value="confirmed">Confirmed feedback</option><option value="dismissed">Dismissed</option><option value="all">All feedback</option></select></label>
+            </div>
+            <p id="feedback-status" class="help" role="status"></p>
+            <div id="feedback-list" aria-live="polite"></div>
+            <div class="actions"><button id="feedback-previous" type="button" class="secondary">Previous feedback</button><span id="feedback-page" class="help" role="status"></span><button id="feedback-next" type="button" class="secondary">Next feedback</button></div>
+          </details>
           <div class="section">
             <h2>Batch report delivery</h2>
             <div id="report-delivery"></div>
@@ -1454,6 +1524,7 @@
             </div>
             <fieldset class="section">
               <legend>Context and writing</legend>
+              <label class="confirmation"><input name="tailored_resumes" type="checkbox" /> Build a resume for each posting from my confirmed education and employment. Select up to four complete experience lines per role by relevance, keeping their original wording and employer. Use the generated PDF in supported browser applications. No model requests are needed; my uploaded original stays available.</label>
               <label class="confirmation"><input name="remote_drafts" type="checkbox" /> Allow supported Workday steps to save validated answers and documents at the employer before final submission. Preparation may save remote drafts; it never submits. Unknown agreements still require approval.</label>
               <label class="confirmation"
                 ><input name="employer_accounts" type="checkbox" /> Create and
@@ -1758,7 +1829,7 @@ claude auth login</pre
           <div id="opportunity-note-editor"></div>
         </details>
         <section id="connected-job-context" class="section"></section>
-        <details id="job-writing-panel" class="section"><summary>Prepare application materials</summary><p class="help">Generate from approved sources using your selected model. Review the result before using it manually.</p><form id="artifact-form" class="form-grid"><label>Purpose<select name="kind"><option value="cover_letter">Grounded cover letter</option><option value="introduction">Company introduction</option><option value="supplemental_response">Supplemental response PDF</option></select></label><label class="wide">Employer prompt<textarea name="prompt" required maxlength="4000" rows="3"></textarea></label><button type="submit">Generate material</button></form><p id="artifact-status" role="status"></p><div id="job-artifacts"></div></details>
+        <details id="job-writing-panel" class="section"><summary>Prepare application materials</summary><p class="help">Tailored resumes select confirmed history without rewriting it or calling a model. Other writing uses approved sources and your selected model. Review each result before use.</p><form id="artifact-form" class="form-grid"><label>Purpose<select name="kind"><option value="resume">Tailored resume PDF</option><option value="cover_letter">Grounded cover letter</option><option value="introduction">Company introduction</option><option value="supplemental_response">Supplemental response PDF</option></select></label><label class="wide">Employer prompt<textarea name="prompt" required maxlength="4000" rows="3"></textarea></label><button type="submit">Generate material</button></form><p id="artifact-status" role="status"></p><div id="job-artifacts"></div></details>
         <details id="job-record-panel" class="section"><summary>Application record</summary><div id="job-record-evidence"></div></details>
         <h3>About the opportunity</h3>
         <p id="job-dialog-description" class="posting-description"></p>

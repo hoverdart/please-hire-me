@@ -68,6 +68,15 @@ CREATE TABLE IF NOT EXISTS report_outbox (id TEXT PRIMARY KEY, recipient TEXT NO
  attempts INTEGER NOT NULL, provider_id TEXT, sent TEXT, last_error TEXT);
 CREATE TABLE IF NOT EXISTS mail_consumptions (message_id TEXT PRIMARY KEY, challenge_id TEXT NOT NULL,
  consumed REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS recruiting_feedback (id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL,
+ message_id TEXT NOT NULL, received TEXT NOT NULL, sender TEXT NOT NULL, subject TEXT NOT NULL,
+ excerpt TEXT NOT NULL, category TEXT NOT NULL, candidates TEXT NOT NULL, match_reason TEXT NOT NULL,
+ sender_verified INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending', application_id TEXT,
+ revision INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL,
+ UNIQUE(owner_hash,message_id));
+CREATE INDEX IF NOT EXISTS recruiting_feedback_owner_state ON recruiting_feedback(owner_hash,state,received DESC);
+CREATE TABLE IF NOT EXISTS recruiting_sync (owner_hash TEXT PRIMARY KEY, watermark REAL NOT NULL,
+ query TEXT NOT NULL, pending TEXT NOT NULL, next_page TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS materials (id TEXT PRIMARY KEY, hash TEXT NOT NULL, filename TEXT NOT NULL,
  original_name TEXT NOT NULL, media_type TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,
  confirmed INTEGER NOT NULL, role TEXT NOT NULL, revision INTEGER NOT NULL, created TEXT NOT NULL,
@@ -676,7 +685,8 @@ class Store:
             self.db.execute("DELETE FROM applications WHERE job_id=? AND state='prepared'",(job["id"],))
             self.db.execute("INSERT INTO applications(id,job_id,company_key,state,package,hash,created,updated) VALUES(?,?,?,'prepared',?,?,?,?)",
                 (aid,job["id"],self.company(job["company"]),json.dumps(package),digest(package),now(),now()))
-            self.event("prepared",aid,{"package_hash":digest(package)})
+            from .application_journey import capture_context
+            self.event("prepared",aid,{"package_hash":digest(package),'job_context':capture_context(self,job)})
         return aid
 
     def begin_submit(self, aid):
@@ -699,7 +709,8 @@ class Store:
             self._check_budget(job,s)
             self.db.execute("UPDATE applications SET state='submitting',attempted=?,updated=? WHERE id=?",(now(),now(),aid))
             self.db.execute("UPDATE jobs SET status='submitting',reason='',updated=? WHERE id=?",(now(),app['job_id']))
-            self.event("submit_intent",aid,{"hash":app["hash"]})
+            from .application_journey import capture_context
+            self.event("submit_intent",aid,{"hash":app["hash"],'job_context':capture_context(self,job)})
         return package
 
     def begin_verification(self,aid):

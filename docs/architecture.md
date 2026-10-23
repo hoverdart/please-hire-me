@@ -1,5 +1,15 @@
 # Worker architecture and verification boundaries
 
+Recruiting Insights uses a consistent read transaction over the full application ledger, bulk journal posting snapshots, package-bound resume references and owner-bound reviewed feedback. Response denominators require confirmed submissions with a complete observation window; reviewed milestones are filtered by message arrival within that window. Current-metadata fallbacks are separated from captured history. No analytics result grants submission or strategy-change authority.
+
+Resume-history import parses the selected hash-verified PDF locally. Confirmation rechecks both the selected PDF and exact excerpt, validates structured fields, and atomically journals source evidence with the applicant-confirmed entry. An import identity prevents duplicate confirmation and blocks overwriting or reviving an edited/withdrawn entry. Existing history remains the execution authority; proposals never become confirmed facts without applicant review.
+
+The per-attempt application view joins the existing ledger, package-bound document metadata, preparation/submission-intent posting snapshots and owner-bound reviewed recruiting feedback in one consistent SQLite read transaction. Posting snapshots are additive journal fields; they do not rewrite application packages or historical outcomes. Older records use an explicitly labeled current-metadata fallback. The view does not grant execution authority, sync mail or infer rejection from silence.
+
+Optional posting-specific resumes are assembled from exact applicant-confirmed history and facts. Immutable artifact revisions bind the generated PDF to its posting and source fingerprint; validation runs again before upload. Generated content never becomes confirmed experience. The separate native Workday workflow retains its existing document path.
+
+Optional Gmail recruiting feedback uses owner-bound, bounded inbox reads and deterministic text classification. Suggestions require explicit category and application-attempt review. Reviewed stages enrich the dashboard and job context; they never change submission authority or authorize retries. See the [comparison and implementation notes](autoapply-comparison.md).
+
 ```text
 Full public snapshots → durable jobs → deterministic eligibility and skill score
                                           ↓

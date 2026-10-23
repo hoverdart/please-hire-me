@@ -1220,7 +1220,7 @@ def validate_package(store, job, package):
     for doc in package.get("documents",[]):
         if doc.get('artifact_id'):
             from .application_artifacts import validate
-            if doc.get('kind') != 'supplemental_response' or not validate(store,job,doc).startswith(b'%PDF-'):
+            if doc.get('kind') not in {'supplemental_response','resume'} or not validate(store,job,doc).startswith(b'%PDF-'):
                 raise Blocked('artifact_changed')
             continue
         if doc.get("generated"):

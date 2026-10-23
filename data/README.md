@@ -1,5 +1,7 @@
 # Discovery seeds and public research
 
+These files give job discovery somewhere to start. If you want to understand where listings come from or help improve the sources, start here. To change which roles and locations fit your own search, use **Preferences**; see [Make it yours](../README.md#make-it-yours).
+
 | File | Use |
 | --- | --- |
 | `boards.md` | ATS slug seeds from a historical public board snapshot; counts and availability can be stale |

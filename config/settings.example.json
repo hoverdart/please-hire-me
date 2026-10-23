@@ -66,5 +66,7 @@
   "employer_accounts": false,
   "model_effort": "medium",
   "model_escalation": false,
-  "remote_drafts": false
+  "remote_drafts": false,
+  "tailored_resumes": false,
+  "gmail_feedback": false
 }

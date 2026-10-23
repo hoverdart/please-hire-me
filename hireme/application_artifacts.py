@@ -85,6 +85,10 @@ def validate_links(answer, store=None):
 
 
 def generate(store, job, kind, prompt, provider=None, requirement_key=None):
+    if kind == 'resume':
+        from .tailored_resumes import generate as generate_resume
+        document = generate_resume(store, job)
+        return public_artifact(store.db.execute('SELECT * FROM application_artifacts WHERE id=?', (document['artifact_id'],)).fetchone())
     if kind == 'cover_letter':
         from .letters import generate_cover_letter
         if provider is None:
@@ -150,6 +154,9 @@ def validate(store, job, artifact):
     if not row or row['job_id'] != job['id'] or row['hash'] != artifact.get('hash') or row['filename'] != artifact.get('filename'):
         raise Blocked('artifact_changed')
     provenance = json.loads(row['provenance'])
+    if row['kind'] == 'resume':
+        from .tailored_resumes import validate as validate_resume
+        return validate_resume(store, job, artifact)
     if row['kind'] == 'cover_letter':
         from .letters import validate_generated_document
         validate_generated_document(store,job,{'job_id':job['id'],'kind':'cover_letter','hash':row['hash'],'filename':row['filename']})
@@ -189,7 +196,8 @@ def library(store, job_id=None, offset=0):
 def download(store, artifact_id, expected_hash):
     from .document_downloads import _verified_pdf
     row = store.db.execute('SELECT * FROM application_artifacts WHERE id=?', (artifact_id,)).fetchone()
-    if not row or row['hash'] != expected_hash or row['kind'] not in {'supplemental_response','cover_letter'}:
+    if not row or row['hash'] != expected_hash or row['kind'] not in {'supplemental_response','cover_letter','resume'}:
         raise ValueError('Choose an existing response PDF with its content reference')
     # Historical downloads validate the recorded bytes, not today's source revisions.
-    return _verified_pdf(store, row['filename'], expected_hash), 'cover-letter.pdf' if row['kind']=='cover_letter' else 'application-response.pdf'
+    names = {'resume':'tailored-resume.pdf','cover_letter':'cover-letter.pdf','supplemental_response':'application-response.pdf'}
+    return _verified_pdf(store, row['filename'], expected_hash), names[row['kind']]

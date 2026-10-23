@@ -2,6 +2,40 @@
 
 Start with the [installation instructions](../README.md#get-started). All commands below run from the repository directory. For a background dashboard on Raspberry Pi OS, use the [Pi guide](pi.md).
 
+## Follow an application through the search
+
+Open **Answers & evidence** on a recorded attempt in Jobs or Needs you. Its application record joins the captured posting identity and source, exact document hashes and known resume revision, submission status, reviewed recruiting stage and next action. **Application timeline** distinguishes preparation, final intent, the saved outcome and recruiting messages. The private JSON export records this view; original recorded PDF downloads and answers remain below it.
+
+Reopen the evidence after reviewing email to refresh its recruiting context. Opening the record reads saved local data and does not sync mail. Recruiting stages never replace the original submission outcome: an uncertain attempt still needs verification even when a later interview message is reviewed. Older attempts without a posting snapshot explicitly identify their current-metadata fallback. See the [feedback-loop roadmap](feedback-loop.md) for the next stages.
+
+## Set it up for your search
+
+Start in **Preferences** with the jobs you actually want: roles, seniority, locations, compensation requirements and companies to skip. The defaults focus on internships and new-grad technical roles, including Summer 2027 and school-location settings. Review them before your first batch.
+
+In **Your facts**, confirm your own information. In **Writing & context**, add the projects, experience and writing samples you'd want an application to draw from, then review how each source may be used. You can revise or withdraw those sources later; the sections below explain what happens to existing drafts and records.
+
+Choose your model, schedule and limits to fit how you want to use the app. Finish setup paused, prepare a few drafts, and review the answers and documents before enabling submissions. The [models and request limits](#models-and-request-limits) section explains the defaults and billing choices.
+
+## Recruiting Insights
+
+Open **Recruiting Insights** in Today or find it through Find a tool. Choose the application period, a 7/14/30-day response window, and grouping by company, exact role title, application source or resume PDF. Click a metric or group count to reach its matching attempts, then **View application evidence** for the exact package, recorded PDF, receipt and reviewed messages. Refresh or reopen the panel after reviewing mail.
+
+Response milestones and mail-review coverage use only confirmed submissions old enough for the full selected window. A 14-day comparison counts reviewed messages arriving in each attempt's first 14 days. Recent submissions, uncertain outcomes, failed submissions and unplaceable timestamps are separately inspectable. Acknowledgements count as reviewed mail but not as assessments, interviews, offers or recruiting rejections. Milestones may overlap; an offer does not establish that an interview was observed.
+
+The comparison evidence identifies messages inside the selected window; the complete application history below it may contain later responses. All counts include retained attempts and are independent of dashboard page limits. Counts describe distinct attempts rather than distinct requisitions. Resume groups identify exact PDF bytes, including older original uploads; identical bytes share a group even if their artifact revisions differ. Known revisions appear in the per-attempt record. Historical snapshots are used when available; current-metadata fallback groups are explicitly labeled and kept separate.
+
+Shares are descriptive, not forecasts or causal estimates. Every group shows its denominator. Fewer than 20 mature submissions triggers a display caution, not a significance test. Unsynced, unreviewed or absent mail remains missing evidence, so a low recorded response share cannot establish that the strategy failed. Opening Insights reads local saved data without syncing Gmail, calling a model or changing application policy.
+
+## Import education and employment from a resume
+
+In Your facts, open **Import history from your resume** and load the selected PDF. Common English headings, separated employer/role headers and explicit month/year dates produce proposals. Choose a proposed excerpt or select line numbers from the full local text, then **Propose fields from these lines**. Ambiguous layouts require manual selection and correction; no model request or OCR is involved.
+
+Check the original excerpt and every field. Missing dates remain blank; year-only ranges do not establish a month, and current status is proposed only for an explicit current/present range. Put each complete accomplishment on its own line, correcting PDF wrapping as needed. Review and confirm the checkbox before saving. Changing a field clears confirmation; changing the source range requires proposing and reviewing that range again.
+
+Imports bind to the selected PDF hash and exact excerpt. A changed or damaged source prevents confirmation. The original PDF and existing history remain intact. Identical confirmed entries are reused; repeated confirmation cannot duplicate an import. A previously imported entry that was edited or withdrawn must be managed through the existing history editor, rather than being overwritten or revived by reimport. Similar entries are flagged for review, but the app does not automatically merge separate roles.
+
+The private journal retains the original excerpt, PDF reference and the applicant-confirmed values, including corrections. Confirmed history remains applicant-authorized when a newer PDF is uploaded; edit or withdraw entries explicitly when needed. Changes and withdrawal invalidate source-bound future materials without rewriting terminal application history.
+
 ## Documents and confirmed facts
 
 Upload a resume PDF with selectable text through **Your facts**. Review extracted values before confirming them; missing work authorization, sponsorship and other personal declarations require your answers. A transcript is optional. Use **Stop using transcript** to withdraw it from future uploads while retaining past application evidence.
@@ -13,6 +47,10 @@ Use **Basic context** for your current work, education, experience and preferenc
 Clearing a saved optional fact removes it from future confirmed use. **Review saved answers** lets you find, revise or withdraw responses you previously approved. Source changes invalidate affected unattempted drafts; past attempted answers and evidence remain available.
 
 ## Writing and materials
+
+For per-posting resumes, first confirm **Education and employment** in **Your facts**. Add complete responsibilities or accomplishments on separate lines under their original role, with only dates and details you can confirm. Enable **Tailored resumes** in Preferences. The worker chooses up to four complete lines per role by relevance, keeps their wording and employer context, and renders a PDF with your confirmed education, skills and contact details. It makes no model calls for this step. Missing descriptions, unsupported PDF characters or content exceeding two pages need attention before that resume can be used.
+
+Open a job's **Prepare application materials → Tailored resume PDF** to generate and download a version for review. When enabled, supported browser application runs use the generated resume. Your original upload remains selected in Your facts. Each revision stays in Materials; source changes invalidate its use in new submissions without deleting the historical download. Workday and platform-native controllers retain their separately validated document paths.
 
 In **Writing & context**, upload DOCX, PDF, PPTX, TXT or Markdown sources. Review their excerpts and approve each for personal factual evidence, background reference or style only. Style examples never establish your qualifications. Search and page through the complete source library; save or discard excerpt edits before changing pages.
 
@@ -150,6 +188,12 @@ Employer passwords use a separate encrypted transfer. Pause both instances, rest
 These commands prompt interactively. Transfer validates applicant/account identity, preserves verification states, and leaves submissions paused. It does not transfer Gmail/API credentials or browser sessions.
 
 ## Gmail and employer accounts
+
+To track recruiting replies, enable **Find recruiting feedback in Gmail** under Connections → Email automation. Open **Recruiting feedback** and choose **Sync recruiting mail**, or run `.venv/bin/python -m hireme gmail sync-feedback`. Each sync handles at most ten messages within a bounded work period and retains its remaining page for the next sync. The initial search covers the last 30 days; later searches overlap to catch delayed arrivals. Matching uses the confirmed applicant recipient and prior application history, prioritizing exact posting URLs, then company/role text. Unmatched mail is ignored. This English-language classifier can miss or misclassify messages.
+
+Review the private preview and original Gmail message, correct its suggested category, choose the exact attempt and select **Confirm feedback**. Ambiguous company matches require your selection. Dismiss unrelated messages. Confirmed milestones appear in Today and the job's application context. Feedback never marks an uncertain submission confirmed or releases it for retry; verify submission separately with the employer. Sender DKIM checks help inspection but do not prove the sender is authorized to recruit for that employer.
+
+When feedback is enabled, live-mode batches also check a bounded mail page after finishing, including batches that stop paused. Preparation mode does not sync mail. This setting operates separately from sending batch reports. Message previews and reviews are included in private history backups; OAuth credentials are excluded. Inbox text is never sent to a model, and syncing does not send messages, follow links or fetch attachments.
 
 Gmail is optional. Browser sign-in does not authorize background access. Create a Google Cloud project, enable Gmail API, configure OAuth consent and download a **Desktop app OAuth client JSON**. Upload it under Email automation, then run on the worker machine:
 

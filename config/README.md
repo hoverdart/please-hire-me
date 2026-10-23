@@ -1,7 +1,9 @@
 # Configuration
 
-Templates document the private fact and settings format. Runtime configuration is in the shared ledger, with JSON review exports under `~/.local/share/please-hire-me/config/`. Use the dashboard to confirm facts and save answers/preferences; do not edit exported snapshots expecting the worker to reread them.
+These examples show the kinds of facts, answers and preferences you can set up for your own search. If you're exploring the code, they're a place to learn the formats. For everyday setup, use **Your facts** and **Preferences** in the dashboard; the [user guide](../docs/guide.md#set-it-up-for-your-search) walks through the choices.
 
-No personal default is an assertion about a new user. Missing values stay unknown.
+Your actual configuration lives in the private ledger, with JSON review exports under `~/.local/share/please-hire-me/config/`. Those exports are snapshots; edit facts, saved answers and preferences through the dashboard.
 
-See the [worker contract](../docs/worker-contract.md) for policy. These examples mirror current public fields and defaults; they are not loaded as applicant facts.
+The examples aren't loaded as applicant facts. Supply your own information during setup; missing values stay unknown.
+
+See the [worker contract](../docs/worker-contract.md) for how the worker decides which saved information it may use.

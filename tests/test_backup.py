@@ -240,3 +240,36 @@ def test_backup_cannot_publish_a_manifest_the_restore_would_reject(store,tmp_pat
         create_backup(store,tmp_path/'manifest-too-large.zip')
     assert not (tmp_path/'manifest-too-large.zip').exists()
     assert not list((store.root/'tmp').iterdir())
+
+
+def test_backup_and_restore_hash_document_references_without_loading_files_into_ram(store,tmp_path,monkeypatch):
+    source=import_material(store,b'Synthetic writing context.','sample.txt','context')
+    review_material(store,source['id'],source['text'],'personal',True)
+    original=Path.read_bytes
+    def bounded(path):
+        if path.parent.name in {'documents','materials'}:
+            raise AssertionError('Document reference checks must stream file contents')
+        return original(path)
+    monkeypatch.setattr(Path,'read_bytes',bounded)
+    archive=tmp_path/'bounded-documents.zip'
+    create_backup(store,archive)
+    restore_backup(archive,tmp_path/'bounded-restored')
+    assert (tmp_path/'bounded-restored'/'ledger.sqlite3').is_file()
+
+
+def test_backup_is_not_published_if_its_contents_cannot_be_synced(store,tmp_path,monkeypatch):
+    import os
+    original=os.fsync;attempted=[]
+    def fail_archive(descriptor):
+        inode=os.fstat(descriptor).st_ino
+        if any(path.stat().st_ino==inode for path in tmp_path.glob('.backup-*')):
+            attempted.append(inode)
+            raise OSError('Synthetic disk synchronization failure')
+        return original(descriptor)
+    monkeypatch.setattr('hireme.backup.os.fsync',fail_archive)
+    archive=tmp_path/'unsynced.zip'
+    with pytest.raises(OSError,match='synchronization'):
+        create_backup(store,archive)
+    assert attempted
+    assert not archive.exists() and not list(tmp_path.glob('.backup-*'))
+    assert not list((store.root/'tmp').iterdir())

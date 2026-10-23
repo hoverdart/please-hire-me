@@ -1,7 +1,24 @@
 name: Local invariants
 on: [push, pull_request]
+permissions:
+  contents: read
+concurrency:
+  group: local-invariants-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pip-audit==2.10.1
+      # The suite verifies that the development lock includes every runtime pin.
+      - run: python -m pip_audit -r requirements/development.lock --disable-pip --no-deps
   test:
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -22,10 +39,11 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -r requirements/development.lock
       - run: python -m pip install --no-deps -e .
+      - run: python -m pip check
       - run: python -m playwright install --with-deps chromium
       - run: python -m pytest -q
-      - run: node --check hireme/static/app.js
-      - run: node --check hireme/static/workspace.js
+      - run: python -m compileall -q hireme scripts tests
+      - run: for file in hireme/static/*.js; do node --check "$file" || exit; done
       - run: for file in run.sh setup.sh scripts/*.sh; do bash -n "$file"; done
       - run: python -m pip install build
       - run: python -m build
@@ -33,8 +51,8 @@ jobs:
         run: |
           version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
           git archive --format=tar.gz --prefix="please-hire-me-$version/" -o "dist/please-hire-me-$version-source.tar.gz" HEAD
-      - run: python scripts/check_install_artifact.py dist/*.whl
       - run: python scripts/check_release_artifacts.py dist/*
+      - run: python scripts/check_install_artifact.py dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: verified-distributions-${{ matrix.os }}-python-${{ matrix.python }}

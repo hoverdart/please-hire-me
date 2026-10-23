@@ -1198,6 +1198,9 @@ class Browser:
                 if f['type']=='file':
                     kind='transcript' if re.search(r'transcript',f['label'],re.I) else 'resume' if re.search(r'resume|cv',f['label'],re.I) else 'cover_letter' if re.search(r'cover.?letter',f['label'],re.I) else None
                     doc=self.store.db.execute('SELECT * FROM documents WHERE kind=?',(kind,)).fetchone()
+                    if kind=='resume' and self.store.settings()['tailored_resumes']:
+                        from .tailored_resumes import generate as generate_resume
+                        doc=generate_resume(self.store,job)
                     if kind=='cover_letter' and f['required']:
                         try:
                             from .letters import generate_cover_letter

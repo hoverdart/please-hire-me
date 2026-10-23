@@ -7,6 +7,6 @@ include scripts/delta_sweep.py scripts/list_sweep.py scripts/portal_sweep.py scr
 recursive-include docs *.md *.png
 recursive-include hireme/resources *.md *.txt
 recursive-include hireme/static *.html *.css *.js
-recursive-include requirements *.lock
+recursive-include requirements *.lock *.md
 recursive-include tests *.py *.html *.graphql *.json
 include setup.sh run.sh

@@ -82,7 +82,7 @@ def export_csv(store):
         a.id IN (SELECT id FROM archived_applications) AS historical FROM jobs j
         LEFT JOIN application_records a ON a.job_id=j.id ORDER BY j.first_seen DESC,j.id,a.created'''):
         try: location = json.loads(job['payload']).get('location', '')
-        except (ValueError, TypeError): location = ''
+        except (ValueError, TypeError, AttributeError): location = ''
         display=dict(job)
         if job['historical']:
             display.update(status=job['application_state'],reason='Historical application; review its record in Application desk.')

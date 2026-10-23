@@ -1,5 +1,9 @@
 # Contributing
 
+This started with my own frustration with repetitive job applications. If you've run into the same thing, contributions that make it more useful to other applicants are welcome.
+
+You can help by clarifying a setup step, improving discovery, or fixing a form that gets stuck. For form bugs, share the public posting link and what happened, with personal answers and contact details removed. For code changes, the [architecture](docs/architecture.md) explains where things live and the [worker contract](docs/worker-contract.md) explains the behavior to preserve.
+
 The worker must never invent facts, retry uncertain submissions, exceed company/application budgets or bypass login/CAPTCHA. Keep these properties executable and tested. All side-effectful browser and mail checks use synthetic local fixtures; contributor checks must not submit to real employers.
 
 ## Set up a development environment
@@ -17,8 +21,10 @@ On Linux, install missing Chromium system libraries with `playwright install-dep
 
 ```bash
 .venv/bin/python -m pytest -q
-for file in hireme/static/*.js; do node --check "$file"; done
-for file in run.sh setup.sh scripts/*.sh; do bash -n "$file"; done
+for file in hireme/static/*.js; do node --check "$file" || exit; done
+for file in run.sh setup.sh scripts/*.sh; do bash -n "$file" || exit; done
+.venv/bin/python -m compileall -q hireme scripts tests
+.venv/bin/python -m pip check
 git diff --check
 ```
 
@@ -36,12 +42,15 @@ For packaging changes, build and inspect fresh distributions:
 
 ```bash
 .venv/bin/python -m pip install build
-.venv/bin/python -m build
-.venv/bin/python scripts/check_release_artifacts.py dist/*
-.venv/bin/python scripts/check_install_artifact.py dist/*.whl
+release_dist=$(mktemp -d)
+.venv/bin/python -m build --outdir "$release_dist"
+.venv/bin/python scripts/check_release_artifacts.py "$release_dist"/*
+.venv/bin/python scripts/check_install_artifact.py "$release_dist"/*.whl
 ```
 
-The installed-wheel check uses a temporary isolated environment outside the checkout. It installs declared dependencies and verifies resource loading and conservative onboarding without applicant credentials or employer connections. Build outputs, caches and local review files are ignored; they do not belong in source commits.
+Build into a fresh directory so stale distributions cannot be mistaken for current output. The archive check requires at least one input and rejects private file classes, duplicate/unsafe paths, links and special files in source archives and wheels. The installed-wheel check verifies every supplied wheel in a separate environment outside the checkout, including CLI startup, dashboard assets, conservative onboarding and history restoration. It uses disposable applicant storage without credentials or employer connections. Build outputs, caches and local review files are ignored; they do not belong in source commits.
+
+CI also audits the development lock, which the suite checks includes every runtime pin. To repeat that audit, install `pip-audit==2.10.1` in a separate tooling environment and run `python -m pip_audit -r requirements/development.lock --disable-pip --no-deps`. An audit needs network access and reflects the advisories available at that time; it does not prove the absence of vulnerabilities. Update both locks together and keep declared dependency ranges compatible.
 
 ## Keep state and authority bounded
 

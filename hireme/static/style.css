@@ -2095,6 +2095,21 @@ input[type=checkbox], input[type=radio] { accent-color: var(--action); }
 .artifact-row textarea { width: 100%; resize: vertical; }
 .artifact-row h3 { margin: 0 0 6px; }
 .artifact-row .actions { margin-top: 10px; }
+.feedback-row { overflow-wrap: anywhere; }
+.feedback-row .form-grid { margin-top: 16px; }
+.feedback-row select { max-width: 100%; }
+.application-journey { overflow-wrap: anywhere; padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--rule); }
+.application-journey li p { margin: 6px 0; }
+.insight-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.insight-metrics button { font-variant-numeric: tabular-nums; white-space: normal; text-align: left; }
+.insight-metrics button[aria-pressed="true"], .insights-table button[aria-pressed="true"] { background: var(--action); border-color: var(--action); color: white; }
+.insights-table td, #insights-applications, #insights-evidence { overflow-wrap: anywhere; }
+.insights-table td button { max-width: 100%; white-space: normal; }
+.insight-attempt { padding: 18px 0; border-top: 1px solid var(--rule); }
+.insight-attempt h4 { margin: 0 0 8px; }
+.resume-source { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; background: var(--paper); border: 1px solid var(--rule); }
+#history-import-form { margin-top: 18px; }
+#history-import-form > .confirmation { margin: 18px 0; }
 #artifact-form { display: grid; gap: 12px; }
 #artifact-form label { display: grid; gap: 5px; }
 #artifact-form button { justify-self: start; }

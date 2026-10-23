@@ -114,10 +114,12 @@
     const parent=document.getElementById('today-attention');
     const jobs=snapshot.jobs.filter(j=>j.requires_attention).sort((a,b)=>Number(['unknown','awaiting_verification'].includes(b.status))-Number(['unknown','awaiting_verification'].includes(a.status))).slice(0,5);
     const human=snapshot.human_verification?.phase==='challenge'?snapshot.human_verification:null;
-    const key=JSON.stringify([jobs,snapshot.summary?.question_count,human]);
+    const pendingMail=snapshot.recruiting_feedback?.pending||0;
+    const key=JSON.stringify([jobs,snapshot.summary?.question_count,human,pendingMail]);
     if(key!==attentionSignature){attentionSignature=key;parent.replaceChildren();
       if(human){const button=el('button',undefined,'attention-row secondary');button.append(el('strong',`${human.company} · Complete verification`),el('span','Use the application browser already open on the worker desktop.','help'));button.onclick=()=>{const notice=document.getElementById('human-verification-notice');notice.focus({preventScroll:true});notice.scrollIntoView({block:'start',behavior:'auto'});};parent.append(button);}
       if(snapshot.summary?.question_count){const button=el('button',`${snapshot.summary.question_count} unanswered application questions`,'attention-row secondary');button.onclick=()=>show('questions');parent.append(button);}
+      if(pendingMail){const button=el('button',`${pendingMail} recruiting messages to review`,'attention-row secondary');button.onclick=()=>window.recruitingFeedback?.open();parent.append(button);}
       for(const job of jobs){const button=el('button',undefined,'attention-row secondary');button.append(el('strong',`${job.company} · ${job.title}`),el('span',job.next_step||job.reason_label||'Review the application record.','help'));button.onclick=()=>openOpportunity(job);parent.append(button);}
       if(!parent.children.length)parent.append(el('p','No action needed in your loaded queue. Your desk will flag missing information or uncertain outcomes here.','help'));
     }
@@ -130,10 +132,10 @@
     const text=el('textarea');text.readOnly=true;text.rows=5;text.value=artifact.content;text.setAttribute('aria-label','Generated '+artifact.kind.replaceAll('_',' '));card.append(text);
     const actions=el('div',undefined,'actions');const copy=el('button','Copy text','secondary');copy.type='button';
     copy.onclick=async()=>{try{await navigator.clipboard.writeText(artifact.content);note('Text copied.');}catch{text.focus();text.select();note('Text selected. Use your browser’s copy command.');}};actions.append(copy);
-    if(['supplemental_response','cover_letter'].includes(artifact.kind)){const download=el('button',artifact.kind==='cover_letter'?'Download cover letter':'Download response PDF','secondary');download.type='button';download.onclick=async()=>{
+    if(['supplemental_response','cover_letter','resume'].includes(artifact.kind)){const names={resume:['Download tailored resume','tailored-resume.pdf'],cover_letter:['Download cover letter','cover-letter.pdf'],supplemental_response:['Download response PDF','application-response.pdf']};const download=el('button',names[artifact.kind][0],'secondary');download.type='button';download.onclick=async()=>{
       download.disabled=true;
       try{const response=await fetch(`/api/artifact-document/${artifact.id}/${artifact.hash}`,{headers:{'X-Hireme-Token':token}});if(!response.ok){const error=await response.json();throw new Error(error.error);}
-        const url=URL.createObjectURL(await response.blob());const link=el('a');link.href=url;link.download=artifact.kind==='cover_letter'?'cover-letter.pdf':'application-response.pdf';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        const url=URL.createObjectURL(await response.blob());const link=el('a');link.href=url;link.download=names[artifact.kind][1];link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
       }catch(error){note(error.message,true);}finally{download.disabled=false;}
     };actions.append(download);}
     card.append(actions);return card;
@@ -165,8 +167,11 @@
     document.getElementById('job-artifacts').replaceChildren(el('p','Loading this job’s materials…','help'));
     try{const result=await api('/api/artifacts?job_id='+encodeURIComponent(job.id));if(request!==jobRequest)return;const parent=document.getElementById('job-artifacts');parent.replaceChildren();result.artifacts.forEach(a=>parent.append(artifactCard(a)));if(!result.total)parent.append(el('p','No materials generated for this job yet.','help'));}
     catch(error){if(request===jobRequest)feedback(document.getElementById('job-artifacts'),error.message,true);}
+    try{const result=await api('/api/job-feedback/'+encodeURIComponent(job.id));if(request!==jobRequest)return;
+      if(result.messages.length){context.append(el('h3','Reviewed recruiting feedback'));for(const item of result.messages)context.append(el('p',`${item.category.replaceAll('_',' ')} · ${date(item.received)} · ${item.subject}`,'help'));}
+    }catch{if(request===jobRequest)context.append(el('p','Recruiting feedback could not load. Review it in Connections.','help'));}
   }
-  function writingPurpose(){const cover=artifactForm.elements.kind.value==='cover_letter';artifactForm.elements.prompt.closest('label').hidden=cover;artifactForm.elements.prompt.required=!cover;}
+  function writingPurpose(){const automatic=['cover_letter','resume'].includes(artifactForm.elements.kind.value);artifactForm.elements.prompt.closest('label').hidden=automatic;artifactForm.elements.prompt.required=!automatic;}
   artifactForm.elements.kind.addEventListener('change',writingPurpose);
   artifactForm.oninput=()=>{if(selectedJob)drafts.set(selectedJob.id,{kind:artifactForm.elements.kind.value,prompt:artifactForm.elements.prompt.value});};
   artifactForm.onsubmit=async event=>{
@@ -174,7 +179,7 @@
     const id=selectedJob.id;const data={job_id:id,kind:artifactForm.elements.kind.value,prompt:artifactForm.elements.prompt.value};
     artifactForm.dataset.saving='true';for(const c of artifactForm.elements)c.disabled=true;
     feedback(document.getElementById('artifact-status'),'Generating and checking source support…');
-    try{const result=await api('/api/artifacts/generate',data);if(selectedJob?.id===id){document.getElementById('job-artifacts').prepend(artifactCard(result));if(drafts.get(id)?.kind===data.kind&&drafts.get(id)?.prompt===data.prompt)drafts.delete(id);feedback(document.getElementById('artifact-status'),'Material saved. Review the response before using it.');}await refresh();}
+    try{const result=await api('/api/artifacts/generate',data);if(selectedJob?.id===id){const parent=document.getElementById('job-artifacts');if(parent.children.length===1&&parent.firstElementChild.tagName==='P')parent.replaceChildren();parent.prepend(artifactCard(result));if(drafts.get(id)?.kind===data.kind&&drafts.get(id)?.prompt===data.prompt)drafts.delete(id);feedback(document.getElementById('artifact-status'),'Material saved. Review it before use.');}await refresh();}
     catch(error){if(selectedJob?.id===id)feedback(document.getElementById('artifact-status'),error.message,true);}
     finally{artifactForm.dataset.saving='false';render(state);}
   };

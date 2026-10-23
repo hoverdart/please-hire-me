@@ -502,16 +502,16 @@ def test_outcome_evidence_loads_only_on_request_retries_and_preserves_reading_fo
             expect(page.locator('#uncertain form')).to_have_count(1)
             assert not requests
             page.route('**/api/application/' + aid, lambda route: route.fulfill(status=503, json={'error': 'Synthetic evidence failure'}))
-            summary = page.locator('#uncertain details > summary')
+            summary = page.locator('#uncertain details[data-outcome-evidence] > summary')
             summary.click()
             expect(page.locator('#uncertain')).to_contain_text('Synthetic evidence failure')
             page.unroute('**/api/application/' + aid)
             page.get_by_role('button', name='Retry evidence', exact=True).click()
             expect(page.locator('#uncertain .answer-log')).to_contain_text('test@candidate.invalid')
-            expect(page.locator('#uncertain details')).to_contain_text('<Synthetic recorded portal note>')
+            expect(page.locator('#uncertain details[data-outcome-evidence]')).to_contain_text('<Synthetic recorded portal note>')
             assert len(requests) == 2
             summary.focus(); page.evaluate('refresh()')
-            expect(summary).to_be_focused(); expect(page.locator('#uncertain details')).to_have_attribute('open', '')
+            expect(summary).to_be_focused(); expect(page.locator('#uncertain details[data-outcome-evidence]')).to_have_attribute('open', '')
             assert len(requests) == 2
             store.db.execute('UPDATE applications SET updated=? WHERE id=?', ('2026-10-04T00:00:00+00:00', aid))
             page.evaluate('refresh()')

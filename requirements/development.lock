@@ -16,7 +16,7 @@ iniconfig==2.3.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 oauthlib==4.0.0
-opentelemetry-api==1.45.0
+opentelemetry-api==1.45.1
 packaging==26.3
 pillow==13.0.0
 playwright==1.63.0
@@ -30,7 +30,7 @@ pyee==13.0.1
 Pygments==2.21.0
 pymupdf==1.28.2
 pyparsing==3.3.3
-pypdf==6.19.0
+pypdf==6.21.2
 pytest==9.1.1
 referencing==0.37.0
 reportlab==4.5.1

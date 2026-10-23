@@ -4,6 +4,13 @@ from pathlib import Path
 from .field_context import ats
 from .util import now
 
+def application_outcomes(store):
+    counts=dict(store.db.execute('SELECT state,COUNT(*) FROM application_records WHERE attempted IS NOT NULL GROUP BY state'))
+    return {'final_intents':sum(counts.values()),'confirmed':counts.get('confirmed',0),
+        'uncertain':sum(counts.get(state,0) for state in ('unknown','submitting','awaiting_verification')),
+        'not_submitted':counts.get('not_submitted',0),'rejected':counts.get('rejected',0),
+        'prepared':store.db.execute("SELECT COUNT(*) FROM application_records WHERE state='prepared'").fetchone()[0]}
+
 def cycle_funnel(store):
     run=store.db.execute('SELECT * FROM runs ORDER BY started DESC LIMIT 1').fetchone()
     if not run:return None

@@ -1,6 +1,10 @@
 # Documentation
 
-Start with the [README](../README.md) for installation and onboarding.
+I built this to spend less time repeating the same application steps. These guides explain how to set it up for your own search, use it day to day, and work on the code.
+
+The [main README](../README.md) has the story, installation instructions and a sample workspace you can try without personal data. To tailor your own setup, start with [Make it yours](../README.md#make-it-yours) and the [user guide](guide.md#set-it-up-for-your-search). For code changes, head to [Contributing](../CONTRIBUTING.md).
+
+## Guides
 
 | Guide | Purpose |
 | --- | --- |
@@ -8,6 +12,8 @@ Start with the [README](../README.md) for installation and onboarding.
 | [Raspberry Pi](pi.md) | Setup, background services, restarts and upgrades |
 | [Platform connections](connected-workspace.md) | Optional Handshake/Work at a Startup connections and capability gates |
 | [Release status](public-release.md) | Candidate scope, verification boundaries and remaining release gates |
+| [AutoApply comparison](autoapply-comparison.md) | Ideas adopted, strengths retained and the next improvements |
+| [Job-search feedback loop](feedback-loop.md) | Unified application records and the reliability, measurement and networking roadmap |
 | [Architecture](architecture.md) | Component authority, persistence, concurrency, browser boundaries and recovery |
 | [Worker contract](worker-contract.md) | Executable policy and submission invariants |
 | [Configuration examples](../config/README.md) | Public reference formats for private facts and settings |

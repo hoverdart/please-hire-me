@@ -16,9 +16,11 @@ DEFAULTS = {
     "max_model_requests_per_day": 100,
     "max_output_tokens": 2000,
     "tailored_writing": False,
+    "tailored_resumes": False,
     "contextual_preferences": False,
     "gmail_reports": False,
     "gmail_verification": False,
+    "gmail_feedback": False,
     "employer_accounts": False,
     "gmail_code_wait_seconds": 60,
     "cover_letters": False,
@@ -84,7 +86,7 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
         raise ValueError("Worker or submission limit too high")
     if s["target_per_cycle"] > s["max_per_cycle"] or s["target_per_day"] > s["max_per_day"]:
         raise ValueError("Targets exceed ceilings")
-    for key in ("live_enabled", "onboarding_complete", "headless", "tailored_writing", "contextual_preferences", "cover_letters", "gmail_reports", "gmail_verification", "employer_accounts", "model_escalation", "remote_drafts"):
+    for key in ("live_enabled", "onboarding_complete", "headless", "tailored_writing", "tailored_resumes", "contextual_preferences", "cover_letters", "gmail_reports", "gmail_verification", "gmail_feedback", "employer_accounts", "model_escalation", "remote_drafts"):
         if type(s[key]) is not bool:
             raise ValueError(f"Invalid {key}")
     if s["gmail_code_wait_seconds"]>120:raise ValueError("Gmail verification wait must be at most 120 seconds")

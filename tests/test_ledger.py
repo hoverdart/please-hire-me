@@ -77,6 +77,18 @@ def test_export_cli_keeps_existing_files(store, tmp_path, capsys):
     assert 'not overwritten' in capsys.readouterr().err
 
 
+@pytest.mark.parametrize('payload', ['null', '[]', '42', '"legacy"', '{invalid'])
+def test_export_preserves_application_history_with_unreadable_posting_metadata(store,job,payload):
+    application(store,job,'2026-01-01T00:00:00+00:00',state='unknown')
+    store.db.execute('UPDATE jobs SET payload=? WHERE id=?',(payload,job['id']))
+    data=export_csv(store)
+    rows=list(csv.DictReader(io.StringIO(data.decode('utf-8-sig'))))
+    assert len(rows)==1 and rows[0]['Company']==job['company']
+    assert rows[0]['Location']=='' and rows[0]['Attempted']=='2026-01-01T00:00:00+00:00'
+    assert b'Private candidate answer' not in data
+    assert store.db.execute('SELECT state FROM applications').fetchone()[0]=='unknown'
+
+
 def test_search_finds_unicode_and_literal_wildcards_beyond_display_cap(store):
     from hireme.ledger import search_jobs
     for index in range(510):

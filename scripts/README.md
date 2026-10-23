@@ -1,5 +1,7 @@
 # Scripts
 
+If you're exploring how the app finds jobs, runs batches or checks a release, this is the map of its helper scripts. For normal setup and everyday use, start with the [main README](../README.md) and [user guide](../docs/guide.md). To work on a script, see [Contributing](../CONTRIBUTING.md) for the local checks.
+
 Run current commands from the repository root with `.venv/bin/python -m hireme`; use `--help` for supported flags.
 
 | Scripts | Purpose |
@@ -10,7 +12,7 @@ Run current commands from the repository root with `.venv/bin/python -m hireme`;
 | `ashby_form_fields.sh` | Validate slugs and inspect public form fields through structured GraphQL |
 | `tracker_companies.py` | Extract explicit company wikilinks from a supplied tracker |
 | `fetch_hn_hiring.sh` | Read-only public HN research |
-| `check_release_artifacts.py` | Reject private-file classes, unsafe paths and source-archive links in distributions |
-| `check_install_artifact.py` | Install a wheel outside the checkout and check dependencies, bundled resources and conservative onboarding defaults |
+| `check_release_artifacts.py` | Reject private file classes, duplicate/unsafe paths, links and special files in source archives and wheels |
+| `check_install_artifact.py` | Install each supplied wheel outside the checkout and verify dependencies, CLI startup, bundled assets, conservative onboarding and history restoration |
 
 Discovery stores snapshots in the private ledger. Wrappers retain their existing paths for compatibility and do not advance legacy timestamp files. Release checks are used by CI; see [Contributing](../CONTRIBUTING.md).

@@ -708,6 +708,27 @@ const toolDestinations = [
     target: "#run-history-panel",
   },
   {
+    label: "Review recruiting feedback",
+    description: "Link Gmail assessments, interviews, rejections and offers to application attempts.",
+    aliases: "recruiter email mail inbox response hiring offer interview assessment rejection",
+    view: "connections",
+    target: "#recruiting-feedback-panel",
+  },
+  {
+    label: "Recruiting Insights",
+    description: "Compare reviewed responses by role, company, source and resume PDF.",
+    aliases: "analytics funnel interviews offers response rate outcomes",
+    view: "today",
+    target: "#recruiting-insights-panel",
+  },
+  {
+    label: "Import history from your resume",
+    description: "Review exact resume excerpts before confirming education and employment.",
+    aliases: "experience education resume import employment history",
+    view: "profile",
+    target: "#history-import-panel",
+  },
+  {
     label: "Review discovery source health",
     description: "See which job sources were available or need another check.",
     aliases: "network failed boards sources unavailable search errors",
@@ -1188,7 +1209,7 @@ function evidenceKey(app) {
   return `${app.id}:${app.updated}:${app.hash}:${app.state}:${app.screenshot || ""}`;
 }
 async function loadEvidence(app, parent) {
-  if (parent.dataset.loading === "true" || parent.dataset.loaded === "true")
+  if (parent.dataset.loading === "true")
     return;
   parent.dataset.loading = "true";
   parent.dataset.applicationId = app.id;
@@ -1214,6 +1235,29 @@ async function loadEvidence(app, parent) {
     if (!parent.isConnected || parent.dataset.applicationId !== app.id) return;
     renderEvidence(record, parent);
     parent.dataset.loaded = "true";
+    if (parent.closest("#jobs")) {
+      const open = el("button", "Open application record", "secondary");open.type = "button";
+      open.onclick = () => {
+        const job = (ledgerState?.jobs || state.jobs).find(item => item.id === app.job_id);
+        if (!job) return;
+        openOpportunity(job);const panel = $("#job-record-panel"), dialog = $("#job-dialog");panel.open = true;
+        panel.querySelector("summary").focus({preventScroll:true});
+        if (dialog.matches(":modal")) {
+          const header = dialog.querySelector(".dialog-head");
+          dialog.scrollTop += panel.getBoundingClientRect().top - header.getBoundingClientRect().bottom - 12;
+        } else panel.scrollIntoView({block:"start",behavior:"auto"});
+      };
+      parent.prepend(open);return;
+    }
+    const journey = el("section", undefined, "application-journey");
+    journey.append(el("p", "Loading the application record…", "help"));
+    parent.prepend(journey);
+    try {
+      const result = await api("/api/application-journey/" + encodeURIComponent(app.id));
+      if (journey.isConnected) renderJourney(result, journey);
+    } catch {
+      if (journey.isConnected) journey.replaceChildren(el("p", "The application record could not load. Close and reopen this evidence to try again; saved answers remain below.", "help"));
+    }
   } catch (error) {
     evidenceCache.delete(key);
     if (!parent.isConnected || parent.dataset.applicationId !== app.id) return;
@@ -1230,6 +1274,44 @@ async function loadEvidence(app, parent) {
   } finally {
     if(parent.dataset.applicationId === app.id) { delete parent.dataset.loading; parent.removeAttribute("aria-busy"); }
   }
+}
+
+function renderJourney(record, parent) {
+  parent.replaceChildren(el("h3", "Attempt summary"));
+  const posting = record.posting, submission = record.submission;
+  parent.append(el("p", `${posting.company || "Company unavailable"} · ${posting.title || "Role unavailable"}`));
+  parent.append(el("p", `Posting: ${posting.url || "Not recorded"}`, "help"));
+  parent.append(el("p", `Source: ${posting.source || "Not recorded"} · ${record.posting_context_source === "submit_intent" ? "Captured at submission intent" : record.posting_context_source === "prepared" ? "Captured during preparation" : "Current metadata; original posting identity was not captured"}`, "help"));
+  parent.append(el("p", `Submission: ${submission.state.replaceAll("_", " ")} · ${submission.attempted ? "Attempted " + date(submission.attempted) : "No final submission attempt recorded"}`, "help"));
+  parent.append(el("p", `Recruiting stage: ${record.recruiting_stage || "No reviewed response"}. Recruiting feedback is separate from submission confirmation.`, "help"));
+  parent.append(el("strong", record.next_action.label), el("p", record.next_action.detail, "help"));
+  parent.append(el("p", `Application ID: ${record.application_id}`, "help"));
+  if (record.package_integrity !== "verified") parent.append(el("p", "The saved package could not be verified against its recorded hash. Inspect the original evidence before relying on this record.", "help"));
+  for (const document of record.documents) parent.append(el("p", `${String(document.kind || "Document").replaceAll("_", " ")}${document.revision ? " · revision " + document.revision : " · content reference"} · ${document.hash || "Unavailable"}`, "help"));
+  const actions = el("div", undefined, "actions");
+  if (record.next_action.kind === "review_feedback") {
+    const review = el("button", "Review recruiting feedback", "secondary");review.type = "button";
+    review.onclick = () => {if ($("#job-dialog").open) $("#job-dialog").close();window.recruitingFeedback?.open();};actions.append(review);
+  } else if (record.next_action.kind === "verify_submission") {
+    const verify = el("button", "Review unresolved submissions", "secondary");verify.type = "button";
+    verify.onclick = () => {if ($("#job-dialog").open) $("#job-dialog").close();show("questions");$("#uncertain").focus();};actions.append(verify);
+  }
+  const download = el("button", "Download application record", "secondary");download.type = "button";
+  download.onclick = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(record, null, 2)], {type:"application/json"}));
+    const link = el("a");link.href = url;link.download = "application-record.json";link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  actions.append(download);parent.append(actions);
+  const timeline = el("details"), entries = el("ol");timeline.append(el("summary", "Application timeline"));
+  for (const event of record.timeline) {
+    const item = el("li");item.append(el("p", `${date(event.at)} · ${event.label}`));
+    if (event.subject) item.append(el("p", event.subject, "help"));
+    if (event.reviewed_at) item.append(el("p", "Reviewed " + date(event.reviewed_at), "help"));
+    entries.append(item);
+  }
+  timeline.append(entries);parent.append(timeline);
+  if (record.more_feedback_available) parent.append(el("p", "This record shows a bounded selection of messages. Review the full feedback history in Connections.", "help"));
 }
 
 async function downloadPdf(button, feedback, path, filename) {
@@ -3335,6 +3417,9 @@ function render() {
   renderTemplates();
   renderMaterials();
   renderMail();
+  window.recruitingFeedback?.render(state);
+  window.recruitingInsights?.render(state);
+  window.historyImport?.render(state);
   renderDocumentStatus();
   if (!editing("#facts-form")) renderFacts();
   renderHistory();
@@ -5453,6 +5538,14 @@ $("#recover-worker").onclick = async (event) => {
 };
 
 function renderCycleFunnel() {
+  const stages=$("#recruiting-stages");stages.replaceChildren();
+  for(const [key,label] of [["assessment","Assessments"],["interview","Interviews"],["rejection","Rejections"],["offer","Offers"]]){
+    const item=el("div");item.append(el("dt",label),el("dd",String(state.recruiting_feedback?.stages?.[key]??0)));stages.append(item);
+  }
+  const outcomes=$("#application-outcomes");outcomes.replaceChildren();
+  for(const [key,label] of [["final_intents","Final submission attempts"],["confirmed","Confirmed"],["uncertain","Uncertain"],["not_submitted","Not submitted"],["rejected","Rejected at submission"],["prepared","Prepared drafts"]]){
+    const item=el("div");item.append(el("dt",label),el("dd",String(state.application_outcomes?.[key]??0)));outcomes.append(item);
+  }
   const parent=$("#cycle-funnel"),run=state.cycle_funnel;parent.replaceChildren();
   $("#cycle-funnel-status").textContent=run ? `${run.mode === "prepare" ? "Preparation" : "Live"} · ${run.status} · ${run.run_id.slice(0,8)}${run.reconciled ? ` · ${run.reconciled} outcome${run.reconciled === 1 ? "" : "s"} updated after review` : ""}` : "No recorded cycle yet.";
   if (!run) return;

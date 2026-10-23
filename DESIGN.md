@@ -173,6 +173,8 @@ Jobs uses a list/detail grid (1.15fr / 0.85fr), a (20px) gap and a detail minimu
 
 At (900px) and below, navigation becomes a horizontal scrollable strip, content padding becomes (20px), Today stacks, and job details open as a viewport-filling modal without corner rounding. At (600px) and below, padding is (14px), totals become joined rows, forms become one column, table rows become labeled records, and worker controls share a compact row. The account-transfer grid independently stacks at (700px).
 
+Complete-history outcome groups and reviewed progress groups use labeled definition lists with tabular counts. Each group keeps its own heading and explanation; the compact count grid wraps to the available width rather than introducing another card per metric. A supporting review action follows the reviewed group.
+
 Reusable sources has top separation (32px) from generated materials. Generated text belongs to read-only revision rows; upload and source approval belong to the subsequent group. Long records wrap, and command blocks scroll horizontally with keyboard focus.
 
 ## Elevation & Depth
@@ -218,7 +220,13 @@ The strip stays visible across views, with written state, a small dot and Find o
 
 ### Job Detail and Evidence
 
-Opening a job shows its route, held requirements, materials, notes and evidence beside the desktop queue or in the mobile dialog. Internal groups use separators and native disclosures. Generated rows preserve read-only content, revision metadata and explicit copy/download actions. Uncertain outcomes stay labeled and require verification; a local artifact must not imply accepted submission.
+Opening a job shows its route, held requirements, materials, notes and evidence beside the desktop queue or in the mobile dialog. Internal groups use separators and native disclosures. Generated rows preserve read-only content, revision metadata and explicit copy/download actions, including a named tailored-resume download. Earlier revisions remain individually inspectable; generating another revision does not turn the displayed record into an editable source. Uncertain outcomes stay labeled and require verification; a local artifact must not imply accepted submission.
+
+### Record Review
+
+Review records use the existing separator rows and labeled native controls. Category and exact-record selection precede confirmation; the source message remains reachable through a written link. Beneath a potentially clipped native select, a wrapping summary repeats the selected company, role, attempt timestamp, recorded outcome and full identifier. The summary spans the form width, updates with the selection and uses a polite live region. Two-column review forms become a single column on small screens, while long identifiers can break within the row. Confirmation and dismissal retain the primary/secondary action hierarchy.
+
+**The Visible Identity Rule.** A compact record picker must expose its complete selected identity in adjacent wrapping text before confirmation; a truncated option label is insufficient evidence for the decision.
 
 Motion is limited to control transitions (150ms, default CSS ease); no decorative animation is required. Reduced-motion preference disables transitions, animations and smooth scrolling.
 
