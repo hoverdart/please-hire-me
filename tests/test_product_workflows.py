@@ -70,7 +70,9 @@ def test_tailored_resume_and_recruiting_review_workflow(store,job,package,tmp_pa
             page.locator('#job-writing-panel > summary').click()
             form=page.locator('#artifact-form');form.locator('[name=kind]').select_option('resume')
             expect(form.locator('[name=prompt]')).to_be_hidden()
-            form.get_by_role('button',name='Generate material').click()
+            with page.expect_response(lambda response:response.url==base+'/api/artifacts/generate' and response.request.method=='POST') as generation:
+                form.get_by_role('button',name='Generate material').click()
+            assert generation.value.status==200
             download_button=page.get_by_role('button',name='Download tailored resume').first
             expect(download_button).to_be_visible()
             expect(page.locator('#job-artifacts')).to_contain_text('Acme')
