@@ -80,6 +80,18 @@ def test_feedback_never_links_mail_received_before_the_attempt_or_unrelated_mess
     assert feedback.listing(store)['total']==0
 
 
+@pytest.mark.parametrize('sender',['test@candidate.invalid','Test Person <TEST@candidate.invalid>',
+    'Application desk <test@candidate.invalid>'])
+def test_self_sent_reports_and_replies_do_not_become_recruiting_feedback(store,job,attempted,sender):
+    mail=message(job,subject='Application batch: 0 confirmed',
+        body=f'Your application needs review. Interview availability is unanswered. {job["url"]}')
+    mail['payload']['headers'][0]['value']=sender
+    original=store.application_record(attempted);changes=store.db.total_changes
+    assert not feedback.ingest(store,mail)
+    assert feedback.listing(store)['total']==0 and store.db.total_changes==changes
+    assert store.application_record(attempted)==original
+
+
 class Response:
     def __init__(self,value):self.value=value
     def execute(self):return self.value
@@ -105,6 +117,7 @@ def test_sync_is_opt_in_paged_and_does_not_send_mail_or_fetch_attachments(store,
     assert second=={'processed':1,'added':1,'more_available':False}
     assert service.lists[1]['pageToken']=='next-page'
     assert all(options['maxResults']==feedback.MAX_MESSAGES for options in service.lists)
+    assert all('-from:me' in options['q'] for options in service.lists)
     assert feedback.listing(store)['total']==2
     assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
     store.update_settings({'gmail_feedback':False})

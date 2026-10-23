@@ -67,6 +67,8 @@ def ingest(store, message):
     owner = owner_email(store)
     owner_hash = digest(owner)
     headers = _headers(message)
+    sender = parseaddr(headers.get('from', ''))[1].casefold()[:320]
+    if sender == owner: return False  # Self-sent batch reports and replies are not employer feedback.
     recipients = {address.casefold() for _, address in getaddresses([headers[key] for key in ('to', 'cc', 'delivered-to') if headers.get(key)])}
     if owner not in recipients: return False
     message_id = message.get('id')
@@ -79,7 +81,6 @@ def ingest(store, message):
     body = _body(message.get('payload', {}))[:100000]
     candidates, reason = _candidates(store, subject + '\n' + body, received)
     if not candidates: return False
-    sender = parseaddr(headers.get('from', ''))[1].casefold()[:320]
     domain = sender.rsplit('@', 1)[-1]
     authentication = headers.get('authentication-results', '')
     verified = bool(domain and authentication.lstrip().startswith('mx.google.com;') and re.search(
@@ -115,7 +116,7 @@ def _sync(store, client_factory=None):
         next_page = state['next_page'] if state else ''
         query = state['query'] if state else ''
         if not pending:
-            if not next_page: query = f'after:{int(max(time.time()-30*86400,watermark-86400))} ' + QUERY_TERMS
+            if not next_page: query = f'after:{int(max(time.time()-30*86400,watermark-86400))} -from:me ' + QUERY_TERMS
             options = {'userId':'me','q':query,'maxResults':MAX_MESSAGES}
             if next_page: options['pageToken'] = next_page
             page = messages.list(**options).execute()
