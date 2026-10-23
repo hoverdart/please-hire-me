@@ -92,6 +92,18 @@ def test_self_sent_reports_and_replies_do_not_become_recruiting_feedback(store,j
     assert store.application_record(attempted)==original
 
 
+@pytest.mark.parametrize('subject,body',[
+    ('Security code for your application to Acme','Copy and paste this code into the security code field on your application: Test1234'),
+    ('Your application to Acme','Your verification code is Test1234.'),
+    ('Verify your email for Acme','Open https://example.invalid/verify?token=synthetic to continue.'),
+])
+def test_authentication_messages_are_excluded_before_matching_or_storage(store,job,attempted,monkeypatch,subject,body):
+    monkeypatch.setattr(feedback,'_candidates',lambda *args:pytest.fail('Authentication mail reached recruiting matching'))
+    changes=store.db.total_changes
+    assert not feedback.ingest(store,message(job,subject=subject,body=body))
+    assert feedback.listing(store)['total']==0 and store.db.total_changes==changes
+
+
 class Response:
     def __init__(self,value):self.value=value
     def execute(self):return self.value

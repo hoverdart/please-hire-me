@@ -13,6 +13,9 @@ from .util import Blocked, application_identity, digest, now
 CATEGORIES = ('acknowledgement', 'assessment', 'interview', 'rejection', 'offer', 'unclassified')
 QUERY_TERMS = '{subject:application subject:interview subject:assessment subject:offer subject:candidacy subject:opportunity}'
 MAX_MESSAGES = 10
+AUTHENTICATION_MAIL = re.compile(
+    r'\b(?:verification|security|confirmation|one[- ]time|login|sign[- ]in|authentication)\s+(?:code|passcode)\b'
+    r'|\b(?:verify|confirm)\s+(?:your\s+)?(?:email(?: address)?|account|identity)\b',re.I)
 
 
 def classify(subject, body):
@@ -79,6 +82,7 @@ def ingest(store, message):
     received = datetime.fromtimestamp(received_epoch, timezone.utc).isoformat(timespec='seconds')
     subject = ' '.join(headers.get('subject', '').split())[:300]
     body = _body(message.get('payload', {}))[:100000]
+    if AUTHENTICATION_MAIL.search(subject+'\n'+body):return False
     candidates, reason = _candidates(store, subject + '\n' + body, received)
     if not candidates: return False
     domain = sender.rsplit('@', 1)[-1]
