@@ -14,12 +14,14 @@ STOPS = {'projects','skills','technical skills','publications','awards','leaders
 MONTHS = {name:index for index,names in enumerate((
     ('jan','january'),('feb','february'),('mar','march'),('apr','april'),('may',),('jun','june'),
     ('jul','july'),('aug','august'),('sep','sept','september'),('oct','october'),('nov','november'),('dec','december')),1) for name in names}
-DATE = r'(?:[A-Za-z]{3,9}\.?\s+20\d{2}|20\d{2}-(?:0[1-9]|1[0-2]))'
+DATE = r'(?:[A-Za-z]{3,9}\.?\s+20\d{2}|20\d{2}-(?:0[1-9]|1[0-2])|(?<![\d/])(?:0?[1-9]|1[0-2])/20\d{2})'
 RANGE = re.compile(r'('+DATE+r')\s*(?:[-–—]|\bto\b)\s*('+DATE+r'|present|current)\b',re.I)
 
 
 def _month(value):
     if re.fullmatch(r'20\d{2}-(?:0[1-9]|1[0-2])',value):return value
+    numeric=re.fullmatch(r'(0?[1-9]|1[0-2])/(20\d{2})',value)
+    if numeric:return f'{numeric[2]}-{int(numeric[1]):02}'
     match=re.fullmatch(r'([A-Za-z]+)\.?\s+(20\d{2})',value)
     if match and match[1].casefold() in MONTHS:return f'{match[2]}-{MONTHS[match[1].casefold()]:02}'
     return None
@@ -28,10 +30,12 @@ def _month(value):
 def _values(lines,kind):
     values={};clean=[line.strip() for line in lines if line.strip()]
     if not clean:return values
-    if kind=='employment' and sum('|' in line and not re.match(r'^[•*-]\s',line) for line in clean)>1:
+    if kind=='employment' and (sum(('|' in line or line.count('•')>=2) and not re.match(r'^[•*-]\s',line) for line in clean)>1 or
+            sum(bool(RANGE.search(line)) and not re.match(r'^[•*-]\s',line) for line in clean)>1):
         return {}  # Never associate two apparent employer headers with one accomplishment list.
     header=[]
     for line in clean[:3]:
+        if re.match(r'^[•*-]\s',line):break
         match=RANGE.search(line)
         if match:
             start,end=_month(match[1]),_month(match[2])
@@ -45,14 +49,26 @@ def _values(lines,kind):
         if text and not re.match(r'^[•*-]\s',line):header.append(text)
     parts=[part.strip() for part in re.split(r'\s*[|•]\s*',header[0]) if part.strip()] if header else []
     if kind=='employment':
-        if len(parts)>=2:values.update(organization=parts[0],title=parts[1])
+        if len(parts)==2 and len(header)>=2 and '•' in clean[0] and RANGE.search(clean[0]):
+            values.update(organization=parts[0],location=parts[1],title=header[1])
+        elif len(parts)>=2:values.update(organization=parts[0],title=parts[1])
         elif len(header)>=2:values.update(organization=header[0],title=header[1])
-        body=[line for line in clean if re.match(r'^[•*-]\s',line)]
+        body=[]
+        for line in clean:
+            if line.casefold().rstrip(':') in SECTIONS.keys() | STOPS:break
+            if re.match(r'^[•*-]\s',line):body.append(line)
+            elif body:body[-1]+=' '+line
         if body and len('\n'.join(body))<=8000:values['description']='\n'.join(body)
     else:
-        if parts:values['institution']=parts[0]
-        if len(parts)>=2:values['degree']=parts[1]
-        if len(parts)>=3:values['field_of_study']=parts[2]
+        degree_first=parts and re.match(r'^(?:[ABM]\.?(?:[AS]|Sc|Eng)\.?(?:\b|$)|Ph\.?D\.?(?:\b|$)|Bachelor\b|Master\b|Doctor\b)',parts[0],re.I)
+        if degree_first:
+            values['degree']=parts[0]
+            if len(parts)>=2:values['field_of_study']=parts[1]
+            if len(header)>=2:values['institution']=re.split(r'\s*[|•]\s*',header[1])[0]
+        else:
+            if parts:values['institution']=parts[0]
+            if len(parts)>=2:values['degree']=parts[1]
+            if len(parts)>=3:values['field_of_study']=parts[2]
         gpa=re.search(r'\bGPA:\s*([0-9.]+(?:\s*/\s*[0-9.]+)?)','\n'.join(clean),re.I)
         if gpa:values['gpa']=gpa[1]
     return values

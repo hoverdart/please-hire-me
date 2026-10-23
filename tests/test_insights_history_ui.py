@@ -70,9 +70,14 @@ def test_insight_drilldown_and_reviewed_history_import(store,job,package,cohort,
         expect(page.locator('#history-list')).to_contain_text('Previous Employer')
         # A repeated click cannot duplicate history or overwrite the applicant's confirmed entry.
         form.get_by_label('I reviewed this excerpt',exact=False).check()
-        form.get_by_role('button',name='Confirm and import entry').click()
+        delayed_refresh=[]
+        page.route('**/api/state*',lambda route:delayed_refresh.append(route))
+        with page.expect_request('**/api/state*'):
+            form.get_by_role('button',name='Confirm and import entry').click()
+        # Server-confirmed saving must be announced before unrelated refresh work completes.
         expect(page.locator('#history-import-status')).to_contain_text('already exists')
         assert len(store.history_entries())==1
+        page.unroute('**/api/state*')
         page.locator('#history-import-panel').screenshot(path=str(destination/('history-import-'+str(width)+'.png')))
         page.locator('#history-import-excerpt').screenshot(path=str(destination/('history-excerpt-'+str(width)+'.png')))
         page.screenshot(path=str(destination/('history-workspace-'+str(width)+'.png')))

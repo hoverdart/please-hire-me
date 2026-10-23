@@ -133,6 +133,41 @@ def test_year_only_roles_are_separate_and_cross_employer_descriptions_are_not_pr
     assert history_import._values(lines[1:],'employment')=={}
 
 
+def test_numeric_month_headers_keep_the_role_location_and_wrapped_accomplishments():
+    lines=['WORK EXPERIENCE','Example Labs • Berkeley, CA • 09/2026 - Present','Software Intern',
+           '• Built a Python service with','complete scheduling and recovery support.',
+           'Earlier Employer • Remote • 4/2025 - 08/2025','Research Intern',
+           '• Evaluated image processing.']
+    proposals=history_import.candidates(lines)
+    assert len(proposals)==2
+    assert proposals[0]['values']=={'organization':'Example Labs','location':'Berkeley, CA',
+        'title':'Software Intern','start':'2026-09','current':True,
+        'description':'• Built a Python service with complete scheduling and recovery support.'}
+    assert proposals[1]['values']['title']=='Research Intern'
+    assert proposals[1]['values']['start']=='2025-04' and proposals[1]['values']['end']=='2025-08'
+    assert history_import._values(lines[1:],'employment')=={}
+
+
+def test_wrapped_bullet_is_not_mistaken_for_a_second_header_or_lost():
+    values=history_import._values(['Example Labs • Software Intern • May 2025 - August 2025',
+        '• Built a service with','verified recovery and monitoring.'],'employment')
+    assert values['title']=='Software Intern'
+    assert values['description']=='• Built a service with verified recovery and monitoring.'
+
+
+@pytest.mark.parametrize('month',['00','13','113'])
+def test_invalid_numeric_month_does_not_become_a_valid_substring(month):
+    assert not history_import.RANGE.search(f'{month}/2025 - 03/2026')
+
+
+def test_degree_before_institution_does_not_turn_a_major_into_a_degree():
+    proposal=history_import.candidates(['EDUCATION','B.S. | Computer Science',
+        'Example University • GPA: 3.8/4.0 • 05/2028','Relevant Coursework: Algorithms'])[0]
+    assert proposal['values']=={'degree':'B.S.','field_of_study':'Computer Science',
+        'institution':'Example University','gpa':'3.8/4.0'}
+    assert 'current' not in proposal['values'] and 'expected_end' not in proposal['values']
+
+
 def test_resume_change_during_confirmation_is_checked_again_before_saving(store,source,monkeypatch):
     original=history_import._selection
     def replace(*args):

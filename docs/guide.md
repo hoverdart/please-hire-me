@@ -28,7 +28,7 @@ Shares are descriptive, not forecasts or causal estimates. Every group shows its
 
 ## Import education and employment from a resume
 
-In Your facts, open **Import history from your resume** and load the selected PDF. Common English headings, separated employer/role headers and explicit month/year dates produce proposals. Choose a proposed excerpt or select line numbers from the full local text, then **Propose fields from these lines**. Ambiguous layouts require manual selection and correction; no model request or OCR is involved.
+In Your facts, open **Import history from your resume** and load the selected PDF. Common English headings, separated employer/role headers and explicit month/year dates (including `MM/YYYY`) produce proposals. Wrapped accomplishment lines are joined within their selected role. Choose a proposed excerpt or select line numbers from the full local text, then **Propose fields from these lines**. Ambiguous layouts require manual selection and correction; no model request or OCR is involved.
 
 Check the original excerpt and every field. Missing dates remain blank; year-only ranges do not establish a month, and current status is proposed only for an explicit current/present range. Put each complete accomplishment on its own line, correcting PDF wrapping as needed. Review and confirm the checkbox before saving. Changing a field clears confirmation; changing the source range requires proposing and reviewing that range again.
 

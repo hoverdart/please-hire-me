@@ -4,7 +4,7 @@ Use one frozen commit for the final verification pass. Keep personal evidence in
 
 ## Freeze and validate
 
-Finish adapter changes and meaningful regression fixtures, inspect the complete diff, and commit once. Run the full local suite once on that content, then require all four CI jobs and their wheel/source installation and privacy checks to pass at the exact commit. Rerun only checks invalidated by a change or unresolved failure. Stage changed browser cases on a disposable applicant root using the target machine's Chromium; never use employers as development fixtures.
+Finish adapter changes and meaningful regression fixtures, inspect the complete diff, and commit once. Run the full local suite once on that content, then require all four platform CI test jobs, their wheel/source installation and privacy checks, and the dependency audit to pass at the exact commit. Rerun only checks invalidated by a change or unresolved failure. Stage changed browser cases on a disposable applicant root using the target machine's Chromium; never use employers as development fixtures.
 
 `hireme release-check` reads a consistent private snapshot without initializing, migrating, repairing or changing applicant files. It copies the ledger and any WAL to a temporary directory beside the applicant root, checks that the source did not change during copying, and removes that directory afterward. Allow persistent disk space for another ledger plus WAL; it does not stage a large ledger on the Pi's RAM disk. Keep the workspace idle while taking the snapshot. An active writer or insufficient disk space fails the check without automatic retries.
 

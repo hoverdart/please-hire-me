@@ -88,7 +88,8 @@
     busy=true;controls();announce('Saving the applicant-confirmed entry…');
     try{
       const result=await api('/api/history-import/confirm',data);form.elements.confirmed.checked=false;
-      await refresh();announce(result.existing?'This confirmed entry already exists. Its source and revision were preserved.':'Entry imported and confirmed. Edit or withdraw it in Education and employment.');
+      announce(result.existing?'This confirmed entry already exists. Its source and revision were preserved.':'Entry imported and confirmed. Edit or withdraw it in Education and employment.');
+      await refresh();
     }catch(error){announce(error.message,true);}finally{busy=false;controls();}
   };
   get('history-import-load').onclick=load;
