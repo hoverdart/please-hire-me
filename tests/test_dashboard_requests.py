@@ -29,12 +29,13 @@ def dashboard(tmp_path):
         process.terminate(); process.join(5)
 
 
-def request(port, headers, body=b'', token='fixture-capability',path='/api/facts'):
+def request(port, headers, body=b'', token='fixture-capability',path='/api/facts',response_timeout=5):
     with socket.create_connection(('127.0.0.1', port), timeout=5) as connection:
         lines = [f'POST {path} HTTP/1.1', f'Host: 127.0.0.1:{port}',
                  f'X-Hireme-Token: {token}', *headers, 'Connection: close', '', '']
         connection.sendall('\r\n'.join(lines).encode('latin-1') + body)
         connection.shutdown(socket.SHUT_WR)
+        connection.settimeout(response_timeout)
         chunks = []
         while chunk := connection.recv(65536):
             chunks.append(chunk)
@@ -105,7 +106,9 @@ def test_duplicate_authority_headers_are_rejected(dashboard,header):
 def test_complete_json_write_still_saves_confirmed_facts(dashboard):
     root, port = dashboard
     body = b'{"facts":{"full_name":"Synthetic applicant"}}'
-    status, _ = request(port, [f'Content-Length: {len(body)}'], body)
+    # First-run schema creation must complete durable SD-card writes. Keep the
+    # short rejection/stalled-body budgets separate from this valid bootstrap.
+    status, _ = request(port, [f'Content-Length: {len(body)}'], body,response_timeout=30)
     assert status == 200
     from hireme.store import Store
     with_store = Store(root)
