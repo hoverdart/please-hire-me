@@ -9,6 +9,23 @@ from hireme import recruiting_feedback as feedback
 from hireme.util import Blocked, digest
 
 
+@pytest.mark.parametrize('body,expected',[
+    ('We received your application. If you are not selected for this position, keep an eye on our jobs page.','acknowledgement'),
+    ('If your application is not selected, we will let you know.','unclassified'),
+    ('We received your application. We may invite you to an interview after reviewing it.','acknowledgement'),
+    ('We received your application. If we invite you to an interview, please reply promptly.','acknowledgement'),
+    ('We received your application. This is not an offer of employment.','acknowledgement'),
+    ('We received your application. Applying does not guarantee an employment offer.','acknowledgement'),
+    ('We received your application. An offer of employment is not being made at this stage.','acknowledgement'),
+    ('The role has now been filled and we will not be proceeding further with this search.','rejection'),
+    ('We will not be moving forward. If another team invites you to an interview, reply to them.','rejection'),
+    ('We are pleased to extend an employment offer. You may review the attached details.','offer'),
+    ('Please complete the coding assessment by Monday.','assessment'),
+])
+def test_classification_distinguishes_actual_decisions_from_conditional_and_negated_stages(body,expected):
+    assert feedback.classify('Application update',body)==expected
+
+
 @pytest.fixture
 def attempted(store,job,package):
     application=store.prepare(job,package);store.begin_submit(application);store.finish(application,'unknown')

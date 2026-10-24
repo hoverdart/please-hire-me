@@ -9,7 +9,7 @@ from html import escape
 
 from .util import Blocked, digest, now, private_dir, safe_document, write_private_blob
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 CONTACT_KEYS = ('full_name', 'email', 'phone', 'location', 'linkedin', 'github', 'website')
 STOP_WORDS = {'and', 'the', 'with', 'for', 'our', 'you', 'your', 'will', 'from', 'that', 'this', 'have', 'work', 'role'}
 
@@ -42,10 +42,10 @@ def _sources(store, job):
 def _date_range(values):
     start = values.get('start', '')
     end = values.get('end', '')
-    if values.get('current') is True:
-        end = 'Present'
-    elif values.get('expected_end'):
+    if values.get('expected_end'):
         end = 'Expected ' + values['expected_end']
+    elif values.get('current') is True:
+        end = 'Present'
     return ' - '.join(value for value in (start, end) if value)
 
 
@@ -89,7 +89,7 @@ def render(content):
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+    from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer
     from pypdf import PdfReader
     if 'HiremeResume' not in pdfmetrics.getRegisteredFontNames():
         directory = Path(reportlab_file).parent / 'fonts'
@@ -104,16 +104,18 @@ def render(content):
     if any(ord(char) not in supported for text in plain for char in text if not char.isspace()):
         raise Blocked('resume_font_unsupported', 'A confirmed value contains characters unsupported by this resume font. Use your original resume.')
     body = ParagraphStyle('resume-body', fontName='HiremeResume', fontSize=10, leading=14, spaceAfter=5)
-    heading = ParagraphStyle('resume-heading', parent=body, fontName='HiremeResumeBold', fontSize=11, spaceBefore=10)
+    heading = ParagraphStyle('resume-heading', parent=body, fontName='HiremeResumeBold', fontSize=11, spaceBefore=10, keepWithNext=True)
     title = ParagraphStyle('resume-name', parent=heading, fontSize=17, leading=22)
     story = [Paragraph(escape(content['name']), title)]
-    story.extend(Paragraph(escape(line), body) for line in content['contact'])
+    if content['contact']:
+        story.append(Paragraph(' | '.join(escape(line) for line in content['contact']), body))
     for name, entries in content['sections']:
         story.append(Paragraph(escape(name), heading))
         for entry in entries:
-            if entry['heading']: story.append(Paragraph(escape(entry['heading']), heading))
-            story.extend(Paragraph(escape(line), body) for line in entry['lines'])
-            story.append(Spacer(1, 5))
+            block=[Paragraph(escape(entry['heading']), heading)] if entry['heading'] else []
+            block.extend(Paragraph(escape(line), body) for line in entry['lines'])
+            block.append(Spacer(1, 5))
+            story.append(KeepTogether(block))
     stream = io.BytesIO()
     SimpleDocTemplate(stream, pagesize=(612, 792), leftMargin=48, rightMargin=48, topMargin=42,
         bottomMargin=42, author=content['name'], title='Resume').build(story)

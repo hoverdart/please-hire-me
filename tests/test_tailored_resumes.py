@@ -47,8 +47,8 @@ def test_generated_resume_is_used_in_a_valid_package_and_reuses_unchanged_source
     assert store.db.execute("SELECT COUNT(*) FROM application_artifacts WHERE kind='resume'").fetchone()[0]==1
 
 
-@pytest.mark.parametrize('change',['withdraw','edit','fact','posting','disabled','tamper'])
-def test_resume_loses_submission_authority_when_inputs_change_but_historical_download_survives(store,job,experience,change):
+@pytest.mark.parametrize('change',['withdraw','edit','fact','posting','disabled','tamper','format'])
+def test_resume_loses_submission_authority_when_inputs_change_but_historical_download_survives(store,job,experience,change,monkeypatch):
     document=tailored_resumes.generate(store,job)
     original=tailored_resumes.validate(store,job,document)
     if change=='withdraw':store.withdraw_history_entry(experience['id'])
@@ -57,6 +57,7 @@ def test_resume_loses_submission_authority_when_inputs_change_but_historical_dow
     elif change=='posting':job={**job,'description':'A changed official posting'}
     elif change=='disabled':store.update_settings({'tailored_resumes':False})
     elif change=='tamper':(store.root/'documents'/document['filename']).write_bytes(b'%PDF-tampered')
+    elif change=='format':monkeypatch.setattr(tailored_resumes,'FORMAT_VERSION',tailored_resumes.FORMAT_VERSION+1)
     with pytest.raises(Blocked):tailored_resumes.validate(store,job,document)
     if change=='tamper':
         with pytest.raises(ValueError):download(store,document['artifact_id'],document['hash'])
@@ -78,6 +79,46 @@ def test_resume_never_infers_current_employment_or_missing_dates(store,job,exper
     document=tailored_resumes.generate(store,job)
     text=store.db.execute('SELECT content FROM application_artifacts WHERE id=?',(document['artifact_id'],)).fetchone()[0]
     assert 'Present' not in text and 'Undated Employer' in text
+
+
+def test_current_education_keeps_confirmed_expected_graduation_in_pdf(store,job,experience):
+    store.put_history_entry('education',{'institution':'Example University','degree':'B.S.',
+        'field_of_study':'Computer Science','start':'2025-08','expected_end':'2028-05','current':True},
+        source='Applicant confirmed education',confirmed=True)
+    document=tailored_resumes.generate(store,job)
+    data=tailored_resumes.validate(store,job,document)
+    text=' '.join(page.extract_text() for page in PdfReader(io.BytesIO(data)).pages)
+    assert '2025-08 - Expected 2028-05' in text
+
+
+def test_resume_keeps_job_heading_dates_and_experience_on_the_same_page():
+    heading='Software Intern | Second Employer'
+    dates='2025-06 - 2025-08'
+    description='Built verified scheduling tools for the team.'
+    content={'name':'Example Applicant','contact':[],'sections':[('Experience',[
+        {'heading':'Earlier Role | First Employer','lines':[f'Verified work item {i}.' for i in range(29)]},
+        {'heading':heading,'lines':['Remote',dates,description,'Maintained the existing service.']}
+    ])]}
+    data,_=tailored_resumes.render(content)
+    pages=[page.extract_text() for page in PdfReader(io.BytesIO(data)).pages]
+    assert len(pages)==2
+    assert any(all(value in page for value in (heading,dates,description)) for page in pages)
+
+
+def test_resume_compacts_contacts_without_losing_verified_content():
+    contacts=['candidate@example.invalid','555-0100','Example City, CA',
+        'https://www.example.invalid/profile','https://github.com/example',
+        'https://www.example.invalid/portfolio','https://www.example.invalid/projects']
+    content={'name':'Example Applicant','contact':contacts,'sections':[
+        ('Education',[{'heading':'Example University','lines':['B.S.','Computer Science','2025-08 - Expected 2028-05','GPA: 3.8']}]),
+        ('Experience',[{'heading':f'Software Intern | Employer {i}',
+            'lines':['Remote','2025-06 - 2025-08','Built verified data services.','Maintained existing tooling.']} for i in range(4)])]}
+    data,_=tailored_resumes.render(content)
+    pages=PdfReader(io.BytesIO(data)).pages
+    assert len(pages)==1
+    text=' '.join(pages[0].extract_text().split())
+    assert all(value in text for value in contacts)
+    assert all(f'Software Intern | Employer {i}' in text for i in range(4))
 
 
 def test_resume_generation_rechecks_pause_and_sources_after_rendering(store,job,experience,monkeypatch):

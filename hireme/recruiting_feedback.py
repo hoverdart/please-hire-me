@@ -21,13 +21,30 @@ AUTHENTICATION_MAIL = re.compile(
 def classify(subject, body):
     text = subject + '\n' + body
     patterns = (
-        ('rejection', r'not (?:be )?(?:moving|proceeding) (?:forward|with)|not (?:been )?selected|unable to (?:offer|move forward)|pursu(?:e|ing) other candidates|regret to inform|decided not to'),
+        ('rejection', r'not (?:be )?(?:moving|proceeding) (?:forward|with|further)|not (?:been )?selected|unable to (?:offer|move forward)|pursu(?:e|ing) other candidates|regret to inform|decided not to'),
         ('offer', r'(?:pleased|delighted|excited) to (?:offer|extend)|offer of employment|employment offer|your offer letter'),
         ('interview', r'invite you to (?:an? |the )?interview|schedule (?:an? |your |the )?interview|interview invitation|next interview|interview availability'),
         ('assessment', r'(?:complete|take|invited to|invitation to) (?:an? |the |our )?(?:coding |technical |online )?(?:assessment|challenge|test)|assessment invitation'),
         ('acknowledgement', r'(?:received|reviewing) your application|your application (?:has been|was) (?:received|submitted)|thank you for applying'),
     )
-    matches = [category for category, pattern in patterns if re.search(pattern, text, re.I)]
+    def stated(category, pattern):
+        for clause in re.split(r'[.!?;\n]+', text):
+            # Conditional boilerplate is not a recruiting decision. Keep it as
+            # an unreviewed suggestion rather than inventing a later stage.
+            if re.search(r'\b(?:if|unless|whether)\b|\bshould you\b', clause, re.I):
+                continue
+            for match in re.finditer(pattern, clause, re.I):
+                before, after = clause[:match.start()], clause[match.end():]
+                if re.search(r'\b(?:may|might|could|would)\b', before, re.I):
+                    continue
+                if category != 'rejection' and (
+                    re.search(r'\b(?:not|never|no)\b', before, re.I)
+                    or re.match(r'\s+(?:is|was|will be)\s+not\b', after, re.I)
+                ):
+                    continue
+                return True
+        return False
+    matches = [category for category, pattern in patterns if stated(category, pattern)]
     # A receipt quoted in a later invitation should not erase the newer stage.
     meaningful = [category for category in matches if category != 'acknowledgement']
     return meaningful[0] if len(meaningful) == 1 else 'unclassified' if meaningful else matches[0] if matches else 'unclassified'
