@@ -252,6 +252,31 @@ def test_rotated_action_cannot_borrow_changed_or_unacknowledged_form(store,job,p
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
+@pytest.mark.parametrize('state',['prepared','unknown','awaiting_verification','confirmed'])
+def test_submission_protocol_upgrade_rechecks_only_unattempted_drafts(store,job,package,monkeypatch,state):
+    from hireme.job_holds import hold,ready
+    monkeypatch.setattr('hireme.ashby_submission.VERSION',1,raising=False)
+    aid=store.prepare(job,package)
+    hold(store,job,'ashby_submission_unsupported')
+    if state!='prepared':
+        store.begin_submit(aid)
+        store.finish(aid,state,'Synthetic retained outcome')
+    before=dict(store.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone())
+    assert not ready(store,job)
+    monkeypatch.setattr('hireme.ashby_submission.VERSION',2)
+    assert ready(store,job)==(state=='prepared')
+    assert dict(store.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone())==before
+
+
+def test_submission_protocol_upgrade_does_not_release_unrelated_mapping_hold(store,job,package,monkeypatch):
+    from hireme.job_holds import hold,ready
+    monkeypatch.setattr('hireme.ashby_submission.VERSION',1,raising=False)
+    store.prepare(job,package)
+    hold(store,job,'ashby_draft_unsupported')
+    monkeypatch.setattr('hireme.ashby_submission.VERSION',2)
+    assert not ready(store,job)
+
+
 @pytest.mark.parametrize('change',['value','missing_value','definition','unacknowledged','action_title','duplicate_control'])
 def test_native_submission_grant_requires_current_field_acknowledgements_and_submit_action(store,job,package,change):
     from hireme.ashby_submission import AshbySubmission

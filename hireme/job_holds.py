@@ -104,6 +104,9 @@ def dependency(store, job, kind, reason=None):
             data['citizenship_policy']=CITIZENSHIP_VERSION
         return digest(data)
     data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION}
+    if reason=='ashby_submission_unsupported':
+        from .ashby_submission import VERSION
+        data['ashby_submission']=VERSION
     if workday is not None:data['workday']=workday
     if reason in {'captcha','captcha_blocked'}:data['captcha_detection']=CAPTCHA_DETECTION_VERSION
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})
