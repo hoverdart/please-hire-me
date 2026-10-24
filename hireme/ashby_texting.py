@@ -146,7 +146,7 @@ class AshbyTexting:
                     and form.get('id') == self.render and form.get('sourceFormDefinitionId') == self.definition
                     and not form.get('errorMessages') and not form.get('formErrors')
                     and saved_consent(form) == self.value and self.current()):
-                self.draft._remember_form(form)
+                self.draft._remember_form(form,acknowledged=True)
                 self.saved = True
                 self.failed = not self.current()
         except (ValueError, TypeError, AttributeError):

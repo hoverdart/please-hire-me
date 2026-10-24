@@ -99,7 +99,7 @@ class AshbyDraft:
             self.locations={};self.schools={}
         self.navigation_url='https://jobs.ashbyhq.com/'+match[1]+'/'+match[2]
 
-    def _remember_form(self, form):
+    def _remember_form(self, form, *, acknowledged=False):
         if not isinstance(form,dict):return
         render=form.get('id');definition=form.get('sourceFormDefinitionId')
         if not isinstance(render,str) or not re.fullmatch(r'[0-9a-f-]{36}',render,re.I):return
@@ -120,6 +120,16 @@ class AshbyDraft:
         self.forms[render]['texting_value']=saved_consent(form) if not form.get('errorMessages') and not form.get('formErrors') else None
         from .ashby_attachments import file_values
         self.forms[render]['file_values']=file_values(form)
+        if acknowledged and self.identity:
+            # Ashby can rotate its opaque Submit action after saving a field.
+            # Only a verified save acknowledgement may refresh the submission
+            # context, and only for that exact known form and definition. The
+            # submission grant still validates the action and all saved values.
+            context=self.submission_contexts.get(self.identity[0],{})
+            for known in [context.get('application'),*context.get('surveys',[])]:
+                if (isinstance(known,dict) and known.get('id')==render
+                        and known.get('sourceFormDefinitionId')==definition):
+                    known['formControls']=json.loads(json.dumps(form.get('formControls')))
 
     def observe_posting(self, request, response):
         if not self.identity or response.status!=200:return
@@ -367,7 +377,7 @@ class AshbyDraft:
                 self.failed=True;return
             # A verified save can reveal employer-authored conditional fields.
             # Those still need new approved answers before they receive grants.
-            self._remember_form(form)
+            self._remember_form(form,acknowledged=True)
             self.saved.add(field)
             self.store.event('ashby_draft_saved',self.job['id'],{'path':field[1]})
         except (ValueError,TypeError,AttributeError):self.failed=True

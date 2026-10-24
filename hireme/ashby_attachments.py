@@ -226,7 +226,7 @@ class _Attachments:
                 if (not value or value['filename'] != document['filename']
                         or digest(entries[0]['field']) != document['metadata']):
                     return
-                self.draft._remember_form(form)
+                self.draft._remember_form(form,acknowledged=True)
                 document['acknowledged'] = value
                 self.browser.ashby_attached_files.add(document['hash'])
         except (ValueError, TypeError, AttributeError, KeyError):

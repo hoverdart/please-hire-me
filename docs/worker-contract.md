@@ -21,6 +21,8 @@ Every model request reserves a durable per-batch and local-day slot before dispa
 
 Ashby preparation suppresses text-field and SMS autosaves. Live runs permit only the reviewed `ApiSetFormValue` operation with exact source-approved values, bound to the current posting, official form/render identifiers and field paths. Every field save must receive a matching server acknowledgement before the final submission intent. Changed sources, a pause, unrecognized mutations or unacknowledged saves stop the attempt. Final field verification and durable submission intent remain mandatory.
 
+Ashby may rotate the opaque Submit action identifier after an acknowledged field, SMS-preference or document save. The final grant uses the latest acknowledged control for the same render and definition. An older grant cannot use the new control; changed action wording, extra controls, unacknowledged metadata and different forms remain blocked.
+
 Structured Ashby location values require an exact approved label and an unambiguous provider ID from the official location lookup for that widget's location types, or an exact saved official form value. A renamed tenant can be followed only on the official host after verifying the same posting UUID. This changes the current form destination without rewriting the stored job or company; matching prior attempts remain held across tenant names.
 
 Greenhouse and Ashby uploads require a successful response for the approved PDF; Ashby also requires confirmation that its file handle was attached to the form. A visible filename alone is insufficient. Required Ashby question headings apply to radio, checkbox, autocomplete and Yes/No controls.

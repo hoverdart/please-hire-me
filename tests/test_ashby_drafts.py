@@ -204,6 +204,54 @@ def test_native_submission_grant_stops_when_approval_or_attempt_changes(store,jo
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_submission_write'").fetchone()
 
 
+@pytest.mark.parametrize('surveys',[False,True])
+def test_submission_uses_rotated_action_from_acknowledged_draft_save(store,job,package,surveys):
+    from hireme.ashby_submission import AshbySubmission
+    d,old_grant,r,data=submission_fixture(store,job,package,surveys)
+    approved=d.grants[(RENDER,'_systemfield_email')]['value']
+    save,payload=request(approved)
+    assert d.allow(save,payload,'rotated-action')
+    acknowledgement=form({'_systemfield_email':approved})
+    action='66666666-6666-4666-8666-666666666666'
+    acknowledgement['formControls']=[{'identifier':action,'title':'Submit','__typename':'FormControl'}]
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':acknowledgement}}),'rotated-action')
+    assert d.complete
+    grant=AshbySubmission(d,old_grant.aid)
+    store.begin_submit(grant.aid)
+    assert not old_grant.allow(r,data)
+    assert not grant.allow(r,data)
+    key='applicationFormActionIdentifier' if surveys else 'actionIdentifier'
+    data['variables'][key]=action
+    assert grant.allow(r,data)
+
+
+@pytest.mark.parametrize('change',['definition','render','value','action_title','missing_control','duplicate_control','extra_action_metadata','unacknowledged'])
+def test_rotated_action_cannot_borrow_changed_or_unacknowledged_form(store,job,package,change):
+    from hireme.ashby_submission import AshbySubmission
+    d,old_grant,_,_=submission_fixture(store,job,package)
+    approved=d.grants[(RENDER,'_systemfield_email')]['value']
+    save,payload=request(approved)
+    assert d.allow(save,payload,'changed-action')
+    acknowledgement=form({'_systemfield_email':approved})
+    control={'identifier':'66666666-6666-4666-8666-666666666666','title':'Submit','__typename':'FormControl'}
+    acknowledgement['formControls']=[control]
+    if change=='definition':acknowledgement['sourceFormDefinitionId']=REQ
+    elif change=='render':acknowledgement['id']=REQ
+    elif change=='value':acknowledgement['sections'][0]['fieldEntries'][1]['fieldValue']['value']='different@candidate.invalid'
+    elif change=='action_title':control['title']='Accept contract'
+    elif change=='missing_control':acknowledgement.pop('formControls')
+    elif change=='duplicate_control':acknowledgement['formControls'].append(dict(control))
+    elif change=='extra_action_metadata':control['href']='https://example.invalid/other-action'
+    if change=='unacknowledged':
+        d.pending.clear()
+        d._remember_form(acknowledgement)
+    else:
+        d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':acknowledgement}}),'changed-action')
+    with pytest.raises(Blocked,match='ashby_submission_unsupported'):
+        AshbySubmission(d,old_grant.aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('change',['value','missing_value','definition','unacknowledged','action_title','duplicate_control'])
 def test_native_submission_grant_requires_current_field_acknowledgements_and_submit_action(store,job,package,change):
     from hireme.ashby_submission import AshbySubmission
