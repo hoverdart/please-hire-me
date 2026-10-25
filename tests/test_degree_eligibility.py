@@ -65,6 +65,55 @@ def test_ordinary_software_internship_does_not_require_a_degree_fact(store, job)
     assert eligible(job, store.settings(), store.facts())[0] > 0
 
 
+@pytest.mark.parametrize('requirement',[
+    'Must currently be at least a second-year Ph.D. student in Computer Science.',
+    'Must be currently a second year doctoral student in Computer Science.',
+    '<h2>What we need to see:</h2><ul><li>Must currently be at least a second-year Ph.D. student.</li></ul>',
+    'M.S. or Ph.D. student (or evidence of equivalent level of expertise) in Computer Science.',
+    'Requirements:\n3 year PhD student and above.',
+    'Qualifications:\nCurrently a Ph.D. candidate in Computer Science.',
+])
+def test_direct_student_standing_requirements_exclude_undergraduate_before_browsing(store,job,requirement):
+    store.put_facts({'degree':'BS'})
+    restricted={**job,'description':requirement}
+    store.upsert_job(restricted)
+    class ForbiddenBrowser:
+        def __init__(self,*args):raise AssertionError('An incompatible degree reached application browsing')
+    result=cycle(store,Path('.'),discover=False,browser_factory=ForbiddenBrowser,job_ids=[job['id']])
+    assert result['attempts']==0 and result['reasons']=={'degree_mismatch':1}
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+@pytest.mark.parametrize('requirement',[
+    'Must currently be at least a second-year Ph.D. student in Computer Science.',
+    'Requirements:\n3 year PhD student and above.',
+])
+def test_confirmed_doctoral_degree_does_not_invent_current_year_of_study(store,job,requirement):
+    store.put_facts({'degree':'PhD'})
+    with pytest.raises(Blocked,match='degree_requirement_review'):
+        eligible({**job,'description':requirement},store.settings(),store.facts())
+
+
+@pytest.mark.parametrize('description',[
+    'PhD students mentor interns on our team. Build Python software.',
+    'PhD students in our team mentor interns. Build Python software.',
+    'Our team includes second-year PhD students. Build Python software.',
+    'You must collaborate with second-year PhD students. Build Python software.',
+    'PhD student preferred. Build Python software.',
+    'PhD student (preferred). Build Python software.',
+    'Requirements:\nBS, MS or PhD students in Computer Science.',
+])
+def test_student_wording_does_not_turn_team_prose_preferences_or_bachelor_alternatives_into_a_gate(store,job,description):
+    store.put_facts({'degree':'BS'})
+    assert eligible({**job,'description':description},store.settings(),store.facts())[0]>0
+
+
+def test_graduate_alternative_does_not_invent_a_confirmed_masters_students_year(store,job):
+    store.put_facts({'degree':'MS'})
+    with pytest.raises(Blocked,match='degree_requirement_review'):
+        eligible({**job,'description':'Requirements:\nSecond-year MS or PhD student in Computer Science.'},store.settings(),store.facts())
+
+
 @pytest.mark.parametrize('title,description', [
     ('Systems Software Intern, Aerial PHY- Summer 2027',
      'Pursuing PhD or MS in Electrical and Computer Engineering, Electrical Engineering, Computer Science or related.'),
@@ -132,6 +181,7 @@ def test_bachelor_alternatives_preferences_and_team_prose_do_not_create_graduate
 @pytest.mark.parametrize('changes',[
     {'title':PHD_TITLE},
     {'description':'Pursuing PhD or MS in Electrical and Computer Engineering, Electrical Engineering, Computer Science or related.'},
+    {'description':'Must currently be at least a second-year Ph.D. student in Computer Science.'},
 ])
 def test_degree_gate_runs_before_browser_or_model_and_before_final_intent(store, job, package, changes):
     store.put_facts({'degree': 'BS'})

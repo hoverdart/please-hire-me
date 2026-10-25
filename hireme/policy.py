@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 5
+ELIGIBILITY_VERSION = 6
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -30,13 +30,31 @@ DOCTORAL_FACTS = {'phd','doctorate','doctoral','doctoraldegree','doctoratedegree
 MASTER_FACTS = {'ms','ma','msc','master','masters','mastersdegree','masterofscience','masterofarts'}
 LOWER_DEGREE_FACTS = {'bs','ba','bsc','bachelor','bachelors','bachelorsdegree','bachelorofscience','bachelorofarts',
                       'undergraduate','associate','associates','associatesdegree','highschool','highschooldiploma'}
+STUDY_YEAR = r'(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|final|\d+(?:st|nd|rd|th)?)\s*[-‐‑‒–—]?\s*year'
+
+
+def _student_requirement(degree):
+    qualifier=r'(?:(?:current(?:ly)?|at\s+least|an?)\s+)*'
+    year=rf'(?:{STUDY_YEAR}\s+)?'
+    student=rf'{degree}(?:\s*(?:or|/)\s*{degree})*\s+(?:students?|candidates?)\b'
+    direct=(rf'(?:^|[\n;])\s*(?:[-*•]\s*)?'
+            rf'(?:(?:requirements|qualifications|what we need to see)\s*:\s*)?'
+            rf'{qualifier}{year}{student}(?=\s*(?:[(),.;:]|$)|\s+(?:in\b|and\s+above\b|or\s+higher\b))')
+    mandatory=rf'\bmust\s+(?:currently\s+)?be\s+{qualifier}{year}{student}'
+    return rf'(?:{direct}|{mandatory})'
+
+
+def _study_year_requirement(degree, text):
+    return bool(re.search(rf'{STUDY_YEAR}\s+{degree}(?:\s*(?:or|/)\s*{degree})*\s+(?:students?|candidates?)\b',text,re.I))
 
 
 def _doctoral_requirement(title, description):
     """Recognize an exclusive doctoral level, not preferences or team prose."""
+    description=re.sub(r'<[^>]+>','\n',description)
     def exclusive(fragment):
         if (re.search(rf'\b(?:no|without requiring)\s+{DOCTORAL}',fragment,re.I)
-                or re.search(rf'{DOCTORAL}\s*(?:degree\s*)?(?:is\s+)?(?:not\s+(?:required|necessary)|preferred|optional|is a plus)',fragment,re.I)):
+                or re.search(rf'{DOCTORAL}\s*(?:(?:degree|students?|candidates?)\s*)?(?:is\s+)?\(?\s*(?:not\s+(?:required|necessary)|preferred|optional|is a plus)',fragment,re.I)
+                or re.search(rf'{DOCTORAL}\s+students?\s+(?:in|on)\s+(?:our|the)\s+(?:team|group|lab)\b',fragment,re.I)):
             return False
         alternatives=rf'(?:{LOWER_DEGREE}.{{0,25}}(?:\bor\b|/).{{0,25}}{DOCTORAL}|{DOCTORAL}.{{0,25}}(?:\bor\b|/).{{0,25}}{LOWER_DEGREE})'
         return not re.search(alternatives,fragment,re.I)
@@ -44,7 +62,7 @@ def _doctoral_requirement(title, description):
         return True
     study=r'(?:enrolled|pursuing|working\s+(?:toward|towards|on)|studying|hold|have|possess)'
     prerequisite=rf'(?:(?:\bmust\s+|\brequired to\s+)(?:(?:be|currently)\s+){{0,2}}{study}\b|\blimited to\b|\bopen only to\b|\bonly\s+(?:accepting|considering)\b)'
-    mandatory=rf'{prerequisite}[^\n;.!?]{{0,100}}{DOCTORAL}|\bonly\s+(?:current\s+)?{DOCTORAL}|{DOCTORAL}\s*(?:degree\s*)?(?:is\s+)?(?:required|mandatory)\b'
+    mandatory=rf'{prerequisite}[^\n;.!?]{{0,100}}{DOCTORAL}|\bonly\s+(?:current\s+)?{DOCTORAL}|{DOCTORAL}\s*(?:degree\s*)?(?:is\s+)?(?:required|mandatory)\b|{_student_requirement(DOCTORAL)}'
     return any(exclusive(description[max(0,match.start()-30):match.end()+100])
                for match in re.finditer(mandatory,description,re.I))
 
@@ -54,7 +72,10 @@ def _check_doctoral_degree(title, description, facts):
     # A school, graduation date or completed degree does not establish current
     # doctoral study. Only the explicitly confirmed degree in progress can.
     value=re.sub(r'[^a-z]','',facts.get('degree',{}).get('value','').casefold())
-    if value in DOCTORAL_FACTS:return
+    if value in DOCTORAL_FACTS:
+        if _study_year_requirement(DOCTORAL,title+'\n'+description):
+            raise Blocked('degree_requirement_review','The posting specifies a year of doctoral study; current degree alone does not establish that standing')
+        return
     if value in LOWER_DEGREE_FACTS|MASTER_FACTS:
         raise Blocked('degree_mismatch','This internship requires doctoral study; your confirmed degree in progress does not match')
     raise Blocked('degree_requirement_review','This internship requires doctoral study; confirm your current degree before applying')
@@ -68,7 +89,8 @@ def _graduate_requirement(title, description):
     graduate=rf'(?:{DOCTORAL}|{MASTER_WORD}|{master_context})'
     def exclusive(fragment):
         if (re.search(rf'\b(?:no|without requiring)\s+{graduate}',fragment,re.I)
-                or re.search(rf'{graduate}\s*(?:(?:degree|program)\s*)?(?:in\s+[^\n;.!?]{{0,80}}?)?(?:is\s+)?(?:not\s+(?:required|necessary)|preferred|optional|(?:is\s+)?a plus)',fragment,re.I)):
+                or re.search(rf'{graduate}\s*(?:(?:degree|program|students?|candidates?)\s*)?(?:in\s+[^\n;.!?]{{0,80}}?)?(?:is\s+)?\(?\s*(?:not\s+(?:required|necessary)|preferred|optional|(?:is\s+)?a plus)',fragment,re.I)
+                or re.search(rf'{graduate}\s+students?\s+(?:in|on)\s+(?:our|the)\s+(?:team|group|lab)\b',fragment,re.I)):
             return False
         alternatives=rf'(?:{UNDERGRADUATE}[^\n;!?]{{0,80}}(?:\bor\b|/)[^\n;!?]{{0,40}}{graduate}|{graduate}[^\n;!?]{{0,80}}(?:\bor\b|/)[^\n;!?]{{0,40}}{UNDERGRADUATE})'
         return not re.search(alternatives,fragment,re.I)
@@ -84,7 +106,7 @@ def _graduate_requirement(title, description):
     study=r'(?:enrolled(?:\s+in)?|pursuing|working\s+(?:toward|towards|on)|studying|hold|have|possess)'
     prerequisite=rf'(?:(?:\bmust\s+|\brequired to\s+)(?:(?:be|currently)\s+){{0,2}}{study}\b|\blimited to\b|\bopen only to\b|\bonly\s+(?:accepting|considering)\b)'
     direct=rf'(?:^|[\n;:])\s*(?:[-*•]\s*)?(?:currently\s+)?(?:pursuing|enrolled\s+in|working\s+(?:toward|towards|on)|studying)\b'
-    mandatory=rf'(?:{prerequisite}|{direct})[^\n;.!?]{{0,100}}?{graduate}|\bonly\s+(?:current\s+)?{graduate}|{graduate}\s*(?:(?:degree|program)\s*)?(?:is\s+)?(?:required|mandatory)\b'
+    mandatory=rf'(?:{prerequisite}|{direct})[^\n;.!?]{{0,100}}?{graduate}|\bonly\s+(?:current\s+)?{graduate}|{graduate}\s*(?:(?:degree|program)\s*)?(?:is\s+)?(?:required|mandatory)\b|{_student_requirement(graduate)}'
     return any(exclusive(description[max(0,match.start()-30):match.end()+120])
                for match in re.finditer(mandatory,description,re.I))
 
@@ -92,7 +114,10 @@ def _graduate_requirement(title, description):
 def _check_graduate_degree(title, description, facts):
     if not _graduate_requirement(title,description):return
     value=re.sub(r'[^a-z]','',facts.get('degree',{}).get('value','').casefold())
-    if value in DOCTORAL_FACTS|MASTER_FACTS:return
+    if value in DOCTORAL_FACTS|MASTER_FACTS:
+        if _study_year_requirement(rf'(?:{DOCTORAL}|{MASTER_WORD}|{MASTER_ABBREVIATION})',title+'\n'+description):
+            raise Blocked('degree_requirement_review','The posting specifies a year of graduate study; current degree alone does not establish that standing')
+        return
     if value in LOWER_DEGREE_FACTS:
         raise Blocked('degree_mismatch','This internship requires master’s or doctoral study; your confirmed degree in progress does not match')
     raise Blocked('degree_requirement_review','This internship requires master’s or doctoral study; confirm your current degree before applying')
