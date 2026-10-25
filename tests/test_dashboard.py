@@ -34,6 +34,20 @@ def pause_first_request(page,pattern,pending):
     page.route(pattern,handle)
 
 
+def assert_layout_fits_viewport(page):
+    """Measure rendered layout, retaining useful diagnostics for persistent overflow."""
+    from playwright.sync_api import TimeoutError as RenderingTimeout
+    try:
+        page.wait_for_function('() => document.documentElement.scrollWidth <= innerWidth',timeout=2000)
+    except RenderingTimeout:
+        pass  # The assertion below reports which rendered elements overflow.
+    layout=page.evaluate('''() => ({width:innerWidth, scroll:document.documentElement.scrollWidth,
+        overflowing:[...document.querySelectorAll('body *')].filter(e=>e.getClientRects().length &&
+            e.getBoundingClientRect().right>innerWidth).slice(0,20).map(e=>({tag:e.tagName,id:e.id,
+            right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width}))})''')
+    assert layout['scroll']<=layout['width'],layout
+
+
 def launch(root,repo,port):
     from hireme import scheduler
     scheduler.status=lambda *args, **kwargs: {'installed':False}
@@ -412,6 +426,8 @@ def test_question_review_shows_employer_wording_and_safe_policy_links_before_ans
             page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=questions]').click()
             question = page.locator('#question-list article')
             expect(question).to_have_count(1)
+            expect(question).to_be_visible()
+            expect(page.locator('#question-list')).not_to_have_attribute('aria-busy','true')
             explanation = question.locator('p').filter(has_text='I confirm the application details')
             expect(explanation).to_have_text(wording)
             assert explanation.evaluate('(e)=>Boolean(e.compareDocumentPosition(e.parentElement.querySelector("form")) & Node.DOCUMENT_POSITION_FOLLOWING)')
@@ -420,7 +436,8 @@ def test_question_review_shows_employer_wording_and_safe_policy_links_before_ans
             expect(question.get_by_text('Unsafe policy')).to_have_count(0)
             expect(question.locator('select').first).to_have_value('')
             expect(question.locator('select').first).to_have_attribute('aria-describedby', explanation.get_attribute('id'))
-            assert page.evaluate('window.badContext === undefined && document.documentElement.scrollWidth <= innerWidth')
+            assert page.evaluate('window.badContext === undefined')
+            assert_layout_fits_viewport(page)
             assert not errors
             page.screenshot(path=str(tmp_path / f'question-wording-{width}.png'), full_page=True)
             browser.close()
