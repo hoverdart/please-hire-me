@@ -17,6 +17,8 @@ A paused cycle is healthy when it is expected. Unknown outcomes, pending verific
 
 The worker refuses to start new application work below 512 MiB free. Backups and restoration reserve that headroom too. `release-check` additionally flags low storage below 10% of the volume, or 1 GiB, whichever is larger. These checks cannot reserve space against unrelated programs writing at the same time.
 
+Pi health also checks that the kernel exposes the v2 memory controller. Service `MemoryMax` settings are ineffective without it. Follow the [Pi guide](pi.md) to enable the controller and verify the active kernel limit before relying on memory isolation.
+
 Health is a small query-only read of the current SQLite/WAL state. It is separate from the full snapshot, integrity and history checks in `release-check`.
 
 ## Encrypted backups and monitoring on a Mac

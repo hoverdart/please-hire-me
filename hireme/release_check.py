@@ -333,6 +333,10 @@ def check_release(root, repo, *, expected_revision=None, require_paused=False, r
             'paused': not settings['live_enabled'], 'onboarding_complete': settings['onboarding_complete'],
             'company_exclusions': len(settings['skip_companies']), 'remote_drafts': settings['remote_drafts'],
         }
+        if settings['deployment']=='pi':
+            from .pi import memory_controller_available
+            report['memory_controller_available']=memory_controller_available()
+            if not report['memory_controller_available']:failures.append('memory_controller_unavailable')
         if require_paused and settings['live_enabled']:
             failures.append('submissions_not_paused')
         if not settings['onboarding_complete']:

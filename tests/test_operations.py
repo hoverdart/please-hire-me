@@ -47,6 +47,18 @@ def test_health_detects_stalled_worker_and_stale_backups(store,monkeypatch):
     assert 'worker_stalled' in result['failures'] and 'off_device_backup_overdue' in result['warnings']
 
 
+def test_pi_health_cannot_claim_ready_when_kernel_ignores_memory_limits(store,monkeypatch):
+    from hireme.health import check_health
+    health_ready(store,monkeypatch)
+    store.update_settings({'deployment':'pi'})
+    monkeypatch.setattr('hireme.pi.memory_controller_available',lambda:False)
+    result=check_health(store.root,services=False,verify_login=False)
+    assert not result['ready'] and result['status']=='critical'
+    assert result['failures']==['memory_controller_unavailable']
+    monkeypatch.setattr('hireme.pi.memory_controller_available',lambda:True)
+    assert check_health(store.root,services=False,verify_login=False)['ready']
+
+
 def test_malformed_backup_status_is_a_health_failure(store,monkeypatch):
     from hireme.health import check_health
     health_ready(store,monkeypatch)

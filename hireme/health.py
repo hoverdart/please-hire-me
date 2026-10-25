@@ -43,6 +43,10 @@ def check_health(root, *, services=True, verify_login=True, clock=None):
         db.execute('PRAGMA query_only=ON');db.execute('BEGIN')
         settings=validate_settings(json.loads(db.execute('SELECT value FROM config WHERE id=1').fetchone()[0]))
         result['paused']=not settings['live_enabled']
+        if settings['deployment']=='pi':
+            from .pi import memory_controller_available
+            result['memory_controller_available']=memory_controller_available()
+            if not result['memory_controller_available']:failures.append('memory_controller_unavailable')
         run=db.execute('SELECT started,finished,status,submitted FROM runs ORDER BY started DESC LIMIT 1').fetchone()
         result['latest_run']=dict(run) if run else None
         if run:

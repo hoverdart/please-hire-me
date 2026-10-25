@@ -14,6 +14,14 @@ WORKER = 'please-hire-me-worker'
 DASHBOARD = 'please-hire-me-dashboard'
 
 
+def memory_controller_available():
+    """Inspect cgroup v2; /proc/cgroups reports the obsolete v1 interface."""
+    try:
+        return 'memory' in Path('/sys/fs/cgroup/cgroup.controllers').read_text().split()
+    except OSError:
+        return False
+
+
 def _quote(value):
     value = str(value)
     if '\n' in value or '\r' in value or '\x00' in value:
@@ -78,7 +86,8 @@ def preflight(store):
               'chromium':bool(shutil.which('chromium') or shutil.which('chromium-browser')),
               'claude':bool(shutil.which('claude')),'systemd':bool(shutil.which('systemctl')),
               'data_directory':str(store.root),'paused':not store.settings()['live_enabled'],
-              'missing_setup':store.missing_setup()}
+              'missing_setup':store.missing_setup(),
+              'memory_controller_available':memory_controller_available()}
     mem = Path('/proc/meminfo')
     if mem.is_file():
         for line in mem.read_text().splitlines():
