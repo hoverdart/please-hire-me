@@ -65,7 +65,7 @@
     article.append(form);return article;
   }
   async function load(preserveMessage=false){
-    if(busy)return;busy=true;controls();list.setAttribute('aria-busy','true');
+    if(busy||!snapshot)return;busy=true;controls();list.setAttribute('aria-busy','true');
     if(!preserveMessage)announce('Loading recruiting feedback…');
     try{
       const response=await api(`/api/recruiting-feedback?state=${encodeURIComponent(filter.value)}&offset=${offset}`);
@@ -87,5 +87,10 @@
   panel.ontoggle=()=>{if(panel.open)load();};
   function open(){show('connections');panel.open=true;panel.querySelector('summary').focus();panel.scrollIntoView({block:'start',behavior:'auto'});}
   document.getElementById('open-recruiting-feedback').onclick=open;
-  window.recruitingFeedback={open,render(value){snapshot=value;controls();}};
+  function render(value){
+    const first=!snapshot;snapshot=value;controls();
+    if(first&&panel.open)load();
+  }
+  window.recruitingFeedback={open,render};
+  if(state)render(state);
 })();

@@ -19,6 +19,43 @@ def launch_workflow_fixture(root,repo,port,job):
     launch(root,repo,port)
 
 
+@pytest.mark.parametrize('open_before_release',[False,True])
+@pytest.mark.parametrize('late_script',[False,True])
+def test_feedback_initialization_does_not_depend_on_snapshot_script_order(store,job,package,open_before_release,late_script):
+    from playwright.sync_api import sync_playwright,expect
+    from tests.test_dashboard import pause_first_request
+    application=store.prepare(job,package);store.begin_submit(application);store.finish(application,'unknown')
+    store.update_settings({'live_enabled':False,'gmail_feedback':True})
+    atomic_json(store.root/'integrations/gmail-token.json',{'token':'synthetic-fixture'})
+    atomic_json(store.root/'integrations/gmail-account.json',{'email':'test@candidate.invalid'})
+    recruiting_feedback.ingest(store,message(job,identity='startup-mail'))
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1',0));port=listener.getsockname()[1]
+    process=multiprocessing.Process(target=launch_workflow_fixture,args=(str(store.root),str(Path.cwd()),port,job));process.start()
+    base=f'http://127.0.0.1:{port}'
+    try:
+        wait_for_dashboard(process,base)
+        with sync_playwright() as p:
+            browser=p.chromium.launch();page=browser.new_page();pending=[];errors=[]
+            page.on('pageerror',lambda error:errors.append(str(error)))
+            pause_first_request(page,'**/recruiting.js' if late_script else '**/api/state**',pending)
+            page.goto(base+'/#token=fixture-capability',wait_until='commit')
+            if late_script:expect(page.locator('#ledger-count')).to_have_text('1')
+            else:page.wait_for_load_state('domcontentloaded')
+            assert len(pending)==1
+            page.locator('[data-view=connections]').first.click()
+            if open_before_release:page.locator('#recruiting-feedback-panel > summary').click()
+            pending[0].continue_()
+            # Releasing either startup dependency must work without another poll.
+            expect(page.locator('#feedback-sync')).to_be_enabled()
+            if not open_before_release:page.locator('#recruiting-feedback-panel > summary').click()
+            expect(page.locator('#feedback-list')).to_contain_text('Interview invitation')
+            assert not errors and store.application_record(application)['state']=='unknown'
+            assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
+            browser.close()
+    finally:process.terminate();process.join(5)
+
+
 @pytest.mark.parametrize('width',[320,1440])
 def test_tailored_resume_and_recruiting_review_workflow(store,job,package,tmp_path,width):
     from playwright.sync_api import sync_playwright,expect
