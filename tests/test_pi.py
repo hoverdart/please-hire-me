@@ -1,6 +1,7 @@
 from pathlib import Path
 from hireme.pi import service_units,install,configure
 from hireme.server import dashboard_startup_message
+import pytest
 
 
 def test_pi_units_are_owner_local_quoted_and_include_no_credentials(store,tmp_path):
@@ -31,3 +32,29 @@ def test_dashboard_service_startup_message_does_not_log_capability():
     assert 'fixture-secret-token' not in message
     assert '127.0.0.1:8766/' in message and '.venv/bin/python -m hireme open-dashboard' in message
     assert dashboard_startup_message(url)==f'Dashboard: {url}'
+
+
+@pytest.mark.parametrize('controllers,available', [('cpuset cpu io pids',False),('cpuset cpu io memory pids',True)])
+def test_pi_preflight_detects_memory_controller_from_v2_instead_of_proc_cgroups(store,monkeypatch,controllers,available):
+    from hireme import pi
+    original=Path.read_text
+    def read(path,*args,**kwargs):
+        if str(path)=='/sys/fs/cgroup/cgroup.controllers':return controllers
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(Path,'read_text',read)
+    assert pi.preflight(store)['memory_controller_available'] is available
+
+
+def test_unreadable_cgroup_controller_is_not_reported_as_enforced(monkeypatch):
+    from hireme.pi import memory_controller_available
+    def denied(*args,**kwargs):raise PermissionError('synthetic controller unavailable')
+    monkeypatch.setattr(Path,'read_text',denied)
+    assert not memory_controller_available()
+
+
+def test_unknown_firmware_flags_are_not_reported_as_healthy(monkeypatch):
+    from hireme import pi
+    from types import SimpleNamespace
+    monkeypatch.setattr(pi.shutil,'which',lambda _:'/synthetic/vcgencmd')
+    monkeypatch.setattr(pi.subprocess,'run',lambda *a,**kw:SimpleNamespace(returncode=0,stdout='throttled=0x100000'))
+    assert pi.power_status()=={'available':False}

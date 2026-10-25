@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,31 @@ from .util import private_dir
 
 WORKER = 'please-hire-me-worker'
 DASHBOARD = 'please-hire-me-dashboard'
+
+
+def memory_controller_available():
+    """Inspect cgroup v2; /proc/cgroups reports the obsolete v1 interface."""
+    try:
+        return 'memory' in Path('/sys/fs/cgroup/cgroup.controllers').read_text().split()
+    except OSError:
+        return False
+
+
+def power_status():
+    """Return only bounded firmware flags, with current and historical state separate."""
+    binary=shutil.which('vcgencmd')
+    if not binary:return {'available':False}
+    try:
+        result=subprocess.run([binary,'get_throttled'],capture_output=True,text=True,timeout=5)
+        match=re.fullmatch(r'throttled=0x([0-9a-fA-F]{1,8})\s*',result.stdout)
+        if result.returncode or not match:return {'available':False}
+        flags=int(match[1],16)
+        if flags&~0xf000f:return {'available':False}
+        return {'available':True,'flags':hex(flags),'current_fault':bool(flags&0xf),
+                'undervoltage_recorded':bool(flags&0x10000),
+                'throttling_recorded':bool(flags&0xe0000)}
+    except (OSError,subprocess.SubprocessError):
+        return {'available':False}
 
 
 def _quote(value):
@@ -78,7 +104,8 @@ def preflight(store):
               'chromium':bool(shutil.which('chromium') or shutil.which('chromium-browser')),
               'claude':bool(shutil.which('claude')),'systemd':bool(shutil.which('systemctl')),
               'data_directory':str(store.root),'paused':not store.settings()['live_enabled'],
-              'missing_setup':store.missing_setup()}
+              'missing_setup':store.missing_setup(),
+              'memory_controller_available':memory_controller_available(),'power':power_status()}
     mem = Path('/proc/meminfo')
     if mem.is_file():
         for line in mem.read_text().splitlines():

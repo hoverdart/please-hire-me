@@ -31,6 +31,19 @@ Installation enables a user-owned dashboard service and worker timer. It retires
 loginctl enable-linger "$USER"
 ```
 
+The services configure memory limits, but Raspberry Pi OS can boot with the memory controller disabled. Check `memory_controller_available` in `hireme pi preflight`. If false, preserve `/boot/firmware/cmdline.txt`, append `cgroup_enable=memory` to its existing single line, and reboot while application work is paused. The [Raspberry Pi kernel maintainers](https://github.com/raspberrypi/linux/issues/6980) explain this opt-in; `cgroup_memory=1` is unnecessary on current kernels. Verify that `/sys/fs/cgroup/cgroup.controllers` contains `memory` afterward. `/proc/cgroups` describes the older v1 interface and cannot establish v2 availability.
+
+Verify the active dashboard's actual kernel limit as well:
+
+```bash
+group=$(systemctl --user show please-hire-me-dashboard.service -p ControlGroup --value)
+cat "/sys/fs/cgroup${group}/memory.max"
+```
+
+The default dashboard limit is `805306368` bytes. A configured `MemoryMax` property alone does not prove enforcement. The Pi health monitor reports `memory_controller_unavailable` when the controller is absent.
+
+Preflight and health also read `vcgencmd get_throttled`. A historical warning is distinct from a current fault; the [firmware flag reference](https://www.raspberrypi.com/documentation/computers/os.html#vcgencmd) lists both. Verify the power supply and cable if undervoltage is recorded. The [recommended Pi 4 supply](https://www.raspberrypi.com/documentation/computers/getting-started.html#power-supply) provides 5 V at 3 A at the plug. After remediation, observe the normal workload for recurrence instead of treating a reboot's cleared flags as proof.
+
 The dashboard is loopback-only. Access it through the Pi desktop in Connect. Disconnecting Connect leaves background services running.
 
 **Start scheduled applications** installs or updates the worker timer without starting another dashboard on the same port. Wait for an active search or batch to finish first. On a Pi, the first batch and subsequent scheduled batches use the same worker service. Do not also leave `hireme daemon` running alongside the timer.

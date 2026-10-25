@@ -64,6 +64,16 @@ def test_schema_mismatch_fails_without_repair(store, local_checks):
     assert store.db.execute('SELECT fingerprint FROM schema_metadata').fetchone()[0] == 'older-schema'
 
 
+def test_pi_release_gate_requires_an_available_kernel_memory_controller(store,local_checks,monkeypatch):
+    store.update_settings({'deployment':'pi'})
+    monkeypatch.setattr('hireme.pi.memory_controller_available',lambda:False)
+    report=release_check.check_release(store.root,Path('.'))
+    assert not report['ready'] and report['failure_codes']==['memory_controller_unavailable']
+    assert report['memory_controller_available'] is False
+    monkeypatch.setattr('hireme.pi.memory_controller_available',lambda:True)
+    assert release_check.check_release(store.root,Path('.'))['ready']
+
+
 def test_paused_revision_and_scheduler_are_explicit_gates(store, local_checks):
     report = release_check.check_release(
         store.root, Path('.'), expected_revision='b' * 40, require_paused=True, require_scheduler=True,
