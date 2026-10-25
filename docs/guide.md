@@ -123,6 +123,10 @@ Model connection shows durable worker request counts and available token metadat
 
 Defaults are six hours between batches, a target of seven confirmed applications per batch and 28 daily, with maximums of ten per batch and 40 daily. Additional defaults are ten attempts per batch, 40 model requests per batch, 100 model requests per local calendar day and a 180-minute batch time budget. Preferences stores the values for your instance; existing installations may have different limits.
 
+By default, there is no per-company application cap or cooldown. In Preferences, **Applications per company** set to **0** means no company count limit; **Company cooldown, days** set to **0** means no waiting period or same-company daily restriction. Positive values enable those optional limits. Existing saved limits remain in place until you change them. Duplicate applications, uncertain outcomes, pending verification and company exclusions remain held even when company limits are disabled. Daily, batch and model-request limits are separate.
+
+Older releases require positive company-limit values and cannot read unlimited preferences. Keep this release or newer when restoring an instance configured with zero; a downgrade must remain paused until its configuration compatibility is verified.
+
 Targets are not promises of throughput. Rate limits stop work without automatic model retries. Set vendor spending limits separately for paid APIs. `hireme model-probe` makes one synthetic inference request and consumes request allowance.
 
 ## Pause, schedule and recover

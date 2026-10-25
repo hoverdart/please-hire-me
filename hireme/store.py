@@ -665,17 +665,18 @@ class Store:
         spam_ids={row[0] for row in self.db.execute("SELECT id FROM application_records WHERE state='not_submitted' AND LOWER(confirmation) LIKE '%possible spam%'")}
         if any(row['id'] in spam_ids and ck in row['company_keys'] for row in self.application_history(s,('not_submitted',))):
             raise Blocked('company_submission_rejected','An earlier submission was rejected as possible spam; complete manually or explicitly review the earlier attempt')
-        if len(active)>=s["max_per_company"]:
+        if s["max_per_company"] and len(active)>=s["max_per_company"]:
             raise Blocked("company_limit")
         local_day=datetime.now(ZoneInfo(s["timezone"])).date()
         daily=[r for r in all_active if datetime.fromisoformat(r["attempted"] or r["created"]).astimezone(ZoneInfo(s["timezone"])).date()==local_day]
         if len(daily)>=s["max_per_day"]:
             raise Blocked("daily_limit")
-        if any(ck in r['company_keys'] for r in daily):
+        if s["company_cooldown_days"] and any(ck in r['company_keys'] for r in daily):
             raise Blocked("company_same_day")
-        cutoff=datetime.now(timezone.utc)-timedelta(days=s["company_cooldown_days"])
-        if any(datetime.fromisoformat(r["attempted"] or r["created"])>cutoff for r in active):
-            raise Blocked("company_cooldown")
+        if s["company_cooldown_days"]:
+            cutoff=datetime.now(timezone.utc)-timedelta(days=s["company_cooldown_days"])
+            if any(datetime.fromisoformat(r["attempted"] or r["created"])>cutoff for r in active):
+                raise Blocked("company_cooldown")
 
     def prepare(self, job, package):
         from .answers import validate_package

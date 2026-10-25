@@ -1399,6 +1399,44 @@ def launch_schedule_fixture(root, repo, port):
     serve(Path(root), Path(repo), port, token='fixture-capability')
 
 
+def test_preferences_save_unlimited_company_limits_without_resuming(store):
+    from playwright.sync_api import sync_playwright, expect
+    store.update_settings({'live_enabled': False, 'max_per_company': 2, 'company_cooldown_days': 90})
+    sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+    process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port));process.start()
+    base=f'http://127.0.0.1:{port}'
+    try:
+        wait_for_dashboard(process,base)
+        with sync_playwright() as playwright:
+            browser=playwright.chromium.launch();page=browser.new_page(viewport={'width':1440,'height':1000})
+            page.goto(base+'/#token=fixture-capability')
+            page.wait_for_function('() => state !== null && refreshing === null')
+            page.locator('[data-view=settings]').click()
+            count=page.locator('#settings-form [name=max_per_company]')
+            cooldown=page.locator('#settings-form [name=company_cooldown_days]')
+            expect(count).to_have_value('2');expect(cooldown).to_have_value('90')
+            count.fill('0');cooldown.fill('0')
+            assert count.evaluate('(input) => input.checkValidity()')
+            assert cooldown.evaluate('(input) => input.checkValidity()')
+            page.locator('#settings-form button[type=submit]').click()
+            expect(page.locator('#notice')).to_contain_text('Search preferences saved')
+            assert store.settings()['max_per_company']==store.settings()['company_cooldown_days']==0
+            assert not store.settings()['live_enabled']
+            count.scroll_into_view_if_needed()
+            page.screenshot(path='/tmp/hireme-unlimited-companies-desktop.png')
+            page.set_viewport_size({'width':390,'height':844});page.reload()
+            page.wait_for_function('() => state !== null && refreshing === null')
+            page.locator('[data-view=settings]').click()
+            expect(count).to_have_value('0');expect(cooldown).to_have_value('0')
+            assert_layout_fits_viewport(page)
+            count.scroll_into_view_if_needed()
+            page.screenshot(path='/tmp/hireme-unlimited-companies-mobile.png')
+            assert not store.db.execute('SELECT 1 FROM runs').fetchone()
+            browser.close()
+    finally:
+        process.terminate();process.join(5)
+
+
 def test_dashboard_applies_saved_schedule_without_resuming_and_protects_drafts(store):
     from playwright.sync_api import sync_playwright, expect
     store.update_settings({'live_enabled': False, 'schedule_hours': 6})

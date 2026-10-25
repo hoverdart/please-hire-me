@@ -29,7 +29,8 @@ def test_alias_edit_preserves_company_limits_and_local_day_rules(store, job, pac
     aid = store.prepare(job, package); store.begin_submit(aid); store.finish(aid, 'confirmed')
     stamp = (datetime.now(timezone.utc) - timedelta(days=age)).isoformat(timespec='seconds')
     store.db.execute('UPDATE applications SET attempted=?,created=? WHERE id=?', (stamp, stamp, aid))
-    store.update_settings({'company_aliases': {'Acme': 'Acme Technologies'}, 'max_per_company': limit})
+    store.update_settings({'company_aliases': {'Acme': 'Acme Technologies'},
+                           'max_per_company': limit, 'company_cooldown_days': 90})
     other, draft = next_role(store, job, package)
     with pytest.raises(Blocked, match=reason): store.prepare(other, draft)
 
@@ -54,3 +55,42 @@ def test_unrelated_company_is_not_held_by_other_company_alias_edit(store, job, p
     other, draft = next_role(store, job, package, company='Unrelated Labs')
     store.prepare(other, draft)
     assert len(store.application_history(states=('prepared',))) == 1
+
+
+def test_new_settings_have_no_company_count_or_waiting_limit():
+    from hireme.config import validate_settings
+    settings = validate_settings({})
+    assert settings['max_per_company'] == settings['company_cooldown_days'] == 0
+    # An upgrade must not silently discard another applicant's saved preferences.
+    saved = validate_settings({}, {'max_per_company': 2, 'company_cooldown_days': 90})
+    assert saved['max_per_company'] == 2 and saved['company_cooldown_days'] == 90
+
+
+@pytest.mark.parametrize('key', ['max_per_company', 'company_cooldown_days'])
+@pytest.mark.parametrize('value', [-1, True, False, 0.5, None, 86401])
+def test_optional_company_limits_reject_invalid_values(key, value):
+    from hireme.config import validate_settings
+    with pytest.raises(ValueError, match=key):
+        validate_settings({key: value})
+
+
+def test_unlimited_company_policy_allows_multiple_distinct_roles_on_the_same_day(store, job, package):
+    for index in range(5):
+        other = {**job, 'id': digest(['unlimited-role', index]), 'url': job['url'] + '-' + str(index)}
+        store.upsert_job(other)
+        draft = {**package, 'job_id': other['id'], 'url': other['url']}
+        aid = store.prepare(other, draft)
+        store.begin_submit(aid)
+        store.finish(aid, 'confirmed', 'Synthetic employer receipt')
+    assert store.db.execute("SELECT COUNT(*) FROM applications WHERE state='confirmed'").fetchone()[0] == 5
+
+
+def test_disabling_company_limits_preserves_the_overall_daily_limit(store, job, package):
+    store.update_settings({'max_per_company': 0, 'company_cooldown_days': 0,
+                           'max_per_day': 1, 'target_per_day': 1})
+    aid = store.prepare(job, package)
+    store.begin_submit(aid)
+    store.finish(aid, 'confirmed', 'Synthetic employer receipt')
+    other, draft = next_role(store, job, package, company=job['company'])
+    with pytest.raises(Blocked, match='daily_limit'):
+        store.prepare(other, draft)

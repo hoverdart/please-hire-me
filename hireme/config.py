@@ -31,8 +31,8 @@ DEFAULTS = {
     "max_per_cycle": 10,
     "target_per_day": 28,
     "max_per_day": 40,
-    "max_per_company": 2,
-    "company_cooldown_days": 90,
+    "max_per_company": 0,
+    "company_cooldown_days": 0,
     "live_enabled": False,
     "onboarding_complete": False,
     "browser_channel": "chromium",
@@ -77,8 +77,11 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
     for key,ceiling in [('max_attempts_per_cycle',50),('max_model_requests_per_cycle',200),('max_model_requests_per_day',500),('max_output_tokens',8000)]:
         if type(s[key]) is not int or not 1<=s[key]<=ceiling:raise ValueError('Invalid '+key)
     if s['max_model_requests_per_cycle']>s['max_model_requests_per_day']:raise ValueError('Cycle model limit exceeds daily limit')
+    for key in ("max_per_company", "company_cooldown_days"):
+        if type(s[key]) is not int or not 0 <= s[key] <= 86400:
+            raise ValueError(f"Invalid {key}")
     for key in ("schedule_hours", "target_per_cycle", "max_per_cycle", "target_per_day", "max_per_day",
-                "max_per_company", "company_cooldown_days", "discovery_workers", "model_timeout_seconds",
+                "discovery_workers", "model_timeout_seconds",
                 "cycle_timeout_seconds", "cover_letter_words", "gmail_code_wait_seconds"):
         if type(s[key]) is not int or not 1 <= s[key] <= 86400:
             raise ValueError(f"Invalid {key}")

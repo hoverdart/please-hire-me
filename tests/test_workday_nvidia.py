@@ -47,6 +47,7 @@ def test_native_history_missing_date_and_incomplete_count_are_never_empty_histor
 
 
 def test_native_and_local_company_histories_cannot_each_pass_the_same_combined_limit(store,job):
+    store.update_settings({'max_per_company':2})
     old={**job,'id':digest('older-same-company'),'url':job['url']+'-older'};store.upsert_job(old)
     store.db.execute("INSERT INTO applications(id,job_id,company_key,state,package,hash,created,attempted,updated) "
         "VALUES(?,?,?,'confirmed','{}','hash','2020-01-01','2020-01-01','2020-01-01')",
@@ -56,10 +57,34 @@ def test_native_and_local_company_histories_cannot_each_pass_the_same_combined_l
 
 
 def test_native_history_cooldown_uses_official_completed_date(store,job):
+    store.update_settings({'company_cooldown_days':90})
     from datetime import datetime,timezone
     today=datetime.now(timezone.utc).strftime('%B %d, %Y')
     with pytest.raises(Blocked,match='company_cooldown'):
         native_history_budget(store,job,[{'total':1,'data':[{'applicationId':'prior','dateApplied':today}]}])
+
+
+def test_unlimited_native_history_allows_new_roles_after_multiple_recent_applications(store,job,package):
+    from datetime import datetime,timezone
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'confirmed')
+    other={**job,'id':digest('new-role-with-unlimited-company-history'),'url':job['url']+'-new-role'}
+    store.upsert_job(other)
+    today=datetime.now(timezone.utc).strftime('%B %d, %Y')
+    history=[{'total':3,'data':[{'applicationId':'native-prior-'+str(i),'dateApplied':today} for i in range(3)]}]
+    native_history_budget(store,other,history)
+    assert store.application_record(aid)['state']=='confirmed'
+
+
+def test_optional_native_company_count_limit_is_still_enforced(store,job):
+    store.update_settings({'max_per_company':2,'company_cooldown_days':0})
+    history=[{'total':3,'data':[{'applicationId':'prior-'+str(i),'dateApplied':'January 1, 2020'} for i in range(3)]}]
+    with pytest.raises(Blocked,match='company_limit'):
+        native_history_budget(store,job,history)
+
+
+def test_unlimited_native_history_still_rejects_unreadable_completed_dates(store,job):
+    with pytest.raises(Blocked,match='workday_history_review_required'):
+        native_history_budget(store,job,[{'total':1,'data':[{'applicationId':'prior','dateApplied':'unknown'}]}])
 
 
 def test_native_browser_transport_uses_fresh_browser_csrf_and_requires_exact_write_grant(store):
