@@ -2681,7 +2681,10 @@ def test_discard_fact_edits_restores_confirmed_values_and_unconfirmed_proposals_
             posts=[];errors=[]
             page.on('request',lambda request:posts.append(request.url) if request.method=='POST' else None)
             page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(base+'/#token=fixture-capability');page.locator('[data-view=settings]').click()
+            page.goto(base+'/#token=fixture-capability')
+            # Discard starts with loaded saved values, after bootstrap rendering.
+            page.wait_for_function('() => state !== null && refreshing === null',timeout=30000)
+            page.locator('[data-view=settings]').click()
             preference=page.locator('#settings-form [name=locations]');preference.fill('Separate unsaved location')
             page.locator('[data-view=profile]').click();page.locator('#show-optional-facts').check()
             discard=page.locator('#discard-fact-edits');expect(discard).to_be_disabled()
