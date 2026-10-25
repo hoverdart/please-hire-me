@@ -819,7 +819,9 @@ def test_dashboard_detects_missing_resume_and_reimport_preserves_fact_drafts(sto
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':320,'height':844});errors=[]
             page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(base+'/#token=fixture-capability')
+            # The HTTP shell can load before the initial data read completes.
+            with page.expect_response(lambda response:response.url.split('?',1)[0]==base+'/api/state' and response.status==200,timeout=30000):
+                page.goto(base+'/#token=fixture-capability')
             expect(page.locator('#run')).to_be_enabled()
             page.locator('[data-view="profile"]').click()
             page.locator('#facts-form [name="full_name"]').fill('Unsaved synthetic name')
