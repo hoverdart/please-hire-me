@@ -169,7 +169,8 @@ def native_history_budget(store,job,history):
     if any(not row.get('dateApplied') and row.get('draft') is not True for row in unique.values()):
         raise Blocked('workday_history_review_required','A non-draft employer record has no verified application date')
     completed=[row for row in unique.values() if row.get('dateApplied')]
-    if len(completed)>=settings['max_per_company']:raise Blocked('company_limit')
+    if settings['max_per_company'] and len(completed)>=settings['max_per_company']:
+        raise Blocked('company_limit')
     ck=store.company(job['company'],settings)
     local=[row for row in store.application_history(settings,('submitting','unknown','confirmed','awaiting_verification'))
            if ck in row['company_keys']]
@@ -179,7 +180,7 @@ def native_history_budget(store,job,history):
         '(SELECT job_id FROM application_records WHERE state IN (\'submitting\',\'unknown\',\'confirmed\',\'awaiting_verification\')) '
         'AND tenant=?',(NVIDIA,))}
     extra=[row for row in completed if row['applicationId'] not in known]
-    if len(local)+len(manual)+len(extra)>=settings['max_per_company']:
+    if settings['max_per_company'] and len(local)+len(manual)+len(extra)>=settings['max_per_company']:
         raise Blocked('workday_history_review_required',
             'The combined local and employer history reaches the company budget; reconcile overlap before continuing')
     cutoff=datetime.now(timezone.utc)-timedelta(days=settings['company_cooldown_days'])
@@ -194,7 +195,8 @@ def native_history_budget(store,job,history):
             if when.tzinfo is None:raise Blocked('workday_history_review_required')
         # Native display dates have day precision. Their latest possible instant
         # is conservative at the cooldown edge rather than inventing a time.
-        if when+timedelta(days=1)>cutoff:raise Blocked('company_cooldown')
+        if settings['company_cooldown_days'] and when+timedelta(days=1)>cutoff:
+            raise Blocked('company_cooldown')
     store._check_budget(job,settings)
 
 
