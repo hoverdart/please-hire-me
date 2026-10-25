@@ -706,15 +706,15 @@ def test_conditional_question_after_removed_upload_preserves_verified_document(s
             return original(answers,documents,fields)
         b._verify=verify
         if acknowledged:
-            assert b.apply(job,live=False)=='prepared'
+            assert b.apply(job,live=True)=='confirmed'
             package=json.loads(store.db.execute('SELECT package FROM applications').fetchone()[0])
             assert len(package['documents'])==1 and package['documents'][0]['kind']=='resume'
             assert next(a['value'] for a in package['answers'] if a['field']['label']=='City')=='Berkeley'
             assert store.db.execute("SELECT count(*) FROM events WHERE kind='conditional_fields_revealed'").fetchone()[0]==1
         else:
-            with pytest.raises(Blocked,match='form_changed'):b.apply(job,live=False)
+            with pytest.raises(Blocked,match='form_changed'):b.apply(job,live=True)
             assert not store.db.execute('SELECT 1 FROM applications').fetchone()
-    assert not ats[1]
+    assert len(ats[1])==(1 if acknowledged else 0)
 
 
 def test_phone_country_flag_verification_ignores_other_dropdown_options(store,ats):
