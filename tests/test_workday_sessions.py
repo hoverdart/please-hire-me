@@ -22,6 +22,12 @@ def cookies():
             for name, site in sessions.COOKIE_SITES.items()]
 
 
+def native_cookies(csrf_site):
+    values = cookies()
+    next(cookie for cookie in values if cookie['name'] == 'CALYPSO_CSRF_TOKEN')['sameSite'] = csrf_site
+    return values
+
+
 class Context:
     def __init__(self, values=None):
         self.values = cookies() if values is None else values
@@ -34,11 +40,12 @@ class Context:
 
 
 @pytest.mark.parametrize('verified_owner', [True, False])
-def test_login_retains_only_the_verified_applicant_and_always_closes_browser(store, monkeypatch, verified_owner):
+@pytest.mark.parametrize('csrf_site', ['Lax', 'Strict'])
+def test_login_retains_only_the_verified_applicant_and_always_closes_browser(store, monkeypatch, verified_owner, csrf_site):
     from contextlib import nullcontext
     from hireme.cli import main
 
-    context = Context()
+    context = Context(native_cookies(csrf_site))
     context.closed = False
     page = SimpleNamespace(goto=lambda url: None)
     context.pages = [page]
@@ -70,9 +77,12 @@ def cached(store):
     return context, binding, path
 
 
-def test_private_session_restores_exact_attributes_without_refreshing_owner_evidence(store, monkeypatch):
+@pytest.mark.parametrize('csrf_site', ['Lax', 'Strict'])
+def test_private_session_restores_exact_attributes_without_refreshing_owner_evidence(store, monkeypatch, csrf_site):
     monkeypatch.setattr(sessions.time, 'time', lambda: 1000)
-    original, binding, path = cached(store)
+    original = Context(native_cookies(csrf_site))
+    binding = sessions.capture(store, original, profile(store))
+    path = store.root/'browser'/'workday-session-nvidia.json'
     before = path.read_bytes()
     changes = store.db.total_changes
     restored = Context([])
@@ -83,6 +93,18 @@ def test_private_session_restores_exact_attributes_without_refreshing_owner_evid
     assert path.stat().st_mode & 0o777 == 0o600
     assert json.loads(before)['profile_binding'] == binding.profile_binding
     assert not store.db.execute('SELECT 1 FROM adapter_verifications').fetchone()
+
+
+@pytest.mark.parametrize('name,site', [
+    ('CALYPSO_CSRF_TOKEN', 'None'), ('CALYPSO_CSRF_TOKEN', 'Unexpected'),
+    ('CALYPSO_SESSION', 'Strict'), ('CALYPSO_SESSION', 'None'),
+    ('PLAY_SESSION', 'Strict'), ('PLAY_SESSION', 'None'), ('wday_vps_cookie', 'Strict')])
+def test_strict_csrf_support_does_not_accept_other_attribute_changes(store, name, site):
+    values = native_cookies('Strict')
+    next(cookie for cookie in values if cookie['name'] == name)['sameSite'] = site
+    with pytest.raises(Blocked, match='workday_session_unverified'):
+        sessions.capture(store, Context(values), profile(store))
+    assert not (store.root/'browser'/'workday-session-nvidia.json').exists()
 
 
 def test_status_distinguishes_bound_profile_from_cached_owner_without_reading_employer_or_mutating(store, monkeypatch):
@@ -180,7 +202,8 @@ def test_session_cache_is_excluded_from_portable_backup_and_explicit_logout_remo
     assert not sessions.forget(store)
 
 
-def test_guarded_real_chromium_session_cookie_survives_only_verified_private_restore(store):
+@pytest.mark.parametrize('csrf_site', ['Lax', 'Strict'])
+def test_guarded_real_chromium_session_cookie_survives_only_verified_private_restore(store, csrf_site):
     from playwright.sync_api import sync_playwright
     origin = 'https://' + NVIDIA
     html = "<html lang='en-US'><script>window.workday={tenant:'nvidia',siteId:'NVIDIAExternalCareerSite',token:'synthetic-fresh-csrf'}</script></html>"
@@ -206,7 +229,7 @@ def test_guarded_real_chromium_session_cookie_survives_only_verified_private_res
         context = playwright.chromium.launch_persistent_context(str(store.root/'browser'), **options)
         try:
             context.route('**/*', guard)
-            context.add_cookies(cookies())
+            context.add_cookies(native_cookies(csrf_site))
             page = context.pages[0];page.goto(origin+'/en-US/NVIDIAExternalCareerSite')
             response = sessions.read_profile(page)
             sessions.capture(store, context, response)
@@ -217,6 +240,8 @@ def test_guarded_real_chromium_session_cookie_survives_only_verified_private_res
             context.route('**/*', guard)
             assert not context.cookies([origin]), 'A fresh Chromium context drops native session-only cookies'
             assert sessions.restore(store, context)
+            retained = next(cookie for cookie in context.cookies([origin]) if cookie['name'] == 'CALYPSO_CSRF_TOKEN')
+            assert retained['sameSite'] == csrf_site
             page = context.pages[0];page.goto(origin+'/en-US/NVIDIAExternalCareerSite')
             response = sessions.read_profile(page)
             assert response.json()['emailAddress'] == store.facts()['email']['value']

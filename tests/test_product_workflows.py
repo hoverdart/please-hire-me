@@ -2,6 +2,7 @@
 import multiprocessing
 import json
 import socket
+import time
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,10 @@ def test_feedback_initialization_does_not_depend_on_snapshot_script_order(store,
             page.goto(base+'/#token=fixture-capability',wait_until='commit')
             if late_script:expect(page.locator('#ledger-count')).to_have_text('1')
             else:page.wait_for_load_state('domcontentloaded')
+            # DOMContentLoaded does not wait for the async snapshot request or
+            # dispatch its Playwright route callback. Wait for our actual pause.
+            deadline=time.monotonic()+5
+            while not pending and time.monotonic()<deadline:page.wait_for_timeout(10)
             assert len(pending)==1
             page.locator('[data-view=connections]').first.click()
             if open_before_release:page.locator('#recruiting-feedback-panel > summary').click()

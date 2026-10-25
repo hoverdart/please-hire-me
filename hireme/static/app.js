@@ -2111,14 +2111,33 @@ function renderQuestionList() {
       q.append(box);
       continue;
     }
-    const input = options.length ? el("select") : el("textarea");
+    const multiple = options.length && x.field_context?.widget === "checkbox-group";
+    const input = multiple ? el("fieldset") : options.length ? el("select") : el("textarea");
+    const choices = [];
     input.required = true;
     input.setAttribute("aria-label", x.label);
     if (wording) input.setAttribute("aria-describedby", wording.id);
-    if (options.length) {
+    if (multiple) {
+      input.append(el("legend", "Select your answers"));
+      for (const value of options) {
+        const label = el("label", undefined, "confirmation"), checkbox = el("input");
+        checkbox.type = "checkbox";checkbox.value = value;choices.push(checkbox);
+        label.append(checkbox, ` ${value}`);input.append(label);
+      }
+    } else if (options.length) {
       input.append(new Option("Choose an answer", ""));
       options.forEach((v) => input.append(new Option(v, v)));
     } else input.rows = 3;
+    const answerValue = () => multiple ? choices.filter(choice => choice.checked).map(choice => choice.value).join("; ") : input.value;
+    const validateChoices = () => {if (multiple) choices[0].setCustomValidity(choices.some(choice => choice.checked) ? "" : "Choose at least one answer.");};
+    const setAnswer = value => {
+      if (multiple) {
+        const selected = options.includes(value) ? [value] : value.split("; ");
+        for (const choice of choices) choice.checked = selected.includes(choice.value);
+        validateChoices();
+      } else input.value = value;
+    };
+    if (multiple) {input.addEventListener("change", validateChoices);validateChoices();}
     const bind = el("select");
     bind.setAttribute("aria-label", "Optional confirmed fact");
     bind.append(new Option("Save as an exact answer to this question", ""));
@@ -2127,7 +2146,7 @@ function renderQuestionList() {
         bind.append(new Option(`Use ${state.fact_labels[k]}: ${v.value}`, k));
     }
     bind.onchange = () => {
-      if (bind.value) input.value = state.facts[bind.value].value;
+      if (bind.value) setAnswer(state.facts[bind.value].value);
     };
     const b = el("button", "Save once and reuse"),
       discard = el("button", "Discard draft", "secondary");
@@ -2136,11 +2155,11 @@ function renderQuestionList() {
     discard.dataset.questionDiscard = "true";
     discard.hidden = true;
     discard.onclick = () => {
-      input.value = "";
+      setAnswer("");
       bind.value = "";
       saved(f);
       updateQuestionControls();
-      input.focus();
+      (multiple ? choices[0] : input).focus();
     };
     const actions = el("div", undefined, "actions");
     actions.append(b, discard);
@@ -2157,7 +2176,7 @@ function renderQuestionList() {
       try {
         await api("/api/answer", {
           id: x.id,
-          value: input.value,
+          value: answerValue(),
           fact_key: bind.value || null,
         });
         saved(f);

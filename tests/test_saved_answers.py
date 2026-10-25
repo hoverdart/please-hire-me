@@ -7,6 +7,32 @@ from hireme.saved_answers import list_answers, revoke_answer
 from hireme.util import Blocked
 
 
+def test_reviewed_multiple_choices_are_reused_exactly_in_the_original_employer_context(store, job):
+    field = {'label':'Select all classroom tools', 'type':'checkbox-group',
+             'options':['Docker', 'Kubernetes', 'GitHub CI'], 'required':True}
+    qid = store.ask(job['id'], job['host'], field['label'], field['options'], field=field, context=job)
+    store.answer_question(qid, 'Docker; GitHub CI')
+    answer = resolve(store, job['host'], field, context=job)
+    assert answer['value'] == 'Docker; GitHub CI' and answer['provenance']['answer_id'] == qid
+    assert store.saved_answer(job['host'], field['label'], field['options'], field=field,
+                              context={**job, 'company':'Other employer'}) is None
+
+
+@pytest.mark.parametrize('widget,label,value', [
+    ('select','Select tools','Docker; Kubernetes'),
+    ('checkbox-group','Select tools','Docker; Unknown'),
+    ('checkbox-group','Select tools','Docker; Docker'),
+    ('checkbox-group','Choose one tool','Docker; Kubernetes'),
+    ('checkbox-group','Choose exactly two tools','Docker'),
+    ('checkbox-group','Choose up to two tools','Docker; Kubernetes; GitHub CI')])
+def test_reviewed_choices_reject_unlisted_duplicate_and_wrong_count_answers(store, job, widget, label, value):
+    field = {'label':label, 'type':widget, 'options':['Docker', 'Kubernetes', 'GitHub CI'], 'required':True}
+    qid = store.ask(job['id'], job['host'], label, field['options'], field=field, context=job)
+    with pytest.raises(ValueError):store.answer_question(qid, value)
+    assert not store.db.execute('SELECT 1 FROM answers WHERE id=?',(qid,)).fetchone()
+    assert store.db.execute('SELECT resolved FROM questions WHERE id=?',(qid,)).fetchone()[0] == 0
+
+
 def test_withdrawing_answer_invalidates_preparation_but_preserves_attempt_evidence(store, job, package):
     field = package['answers'][0]['field']
     qid = store.ask(job['id'], job['host'], field['label'], [])

@@ -427,6 +427,47 @@ def test_question_review_shows_employer_wording_and_safe_policy_links_before_ans
     finally: process.terminate(); process.join(5)
 
 
+@pytest.mark.parametrize('width', [320, 1440])
+def test_question_review_saves_multiple_checked_choices_without_losing_a_draft(store, job, tmp_path, width):
+    from playwright.sync_api import sync_playwright, expect
+    field={'label':'Select all tools used in a classroom or lab', 'type':'checkbox-group',
+           'required':True, 'options':['Docker','Kubernetes','GitHub CI','Jenkins']}
+    qid=store.ask(job['id'],job['host'],field['label'],field['options'],field=field,context=job)
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1',0));port=listener.getsockname()[1]
+    process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port));process.start()
+    base=f'http://127.0.0.1:{port}'
+    try:
+        wait_for_dashboard(process,base)
+        with sync_playwright() as p:
+            browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':1000});errors=[]
+            page.on('pageerror',lambda error:errors.append(str(error)))
+            page.goto(base+'/#token=fixture-capability');page.locator('[data-view=questions]').click()
+            form=page.locator('#question-list form')
+            expect(form.get_by_role('checkbox')).to_have_count(4)
+            assert not form.evaluate('(form)=>form.checkValidity()')
+            form.get_by_label('Docker',exact=True).check();form.get_by_label('Jenkins',exact=True).check()
+            page.locator('#question-list h3').click();page.evaluate('refresh()')
+            expect(form.get_by_label('Docker',exact=True)).to_be_checked()
+            expect(form.get_by_label('Jenkins',exact=True)).to_be_checked()
+            expect(page.locator('#question-search')).to_be_disabled()
+            form.get_by_role('button',name='Discard draft').click()
+            expect(form.locator('input[type=checkbox]:checked')).to_have_count(0)
+            form.get_by_label('Docker',exact=True).check();form.get_by_label('GitHub CI',exact=True).check()
+            rejected=page.request.post(base+'/api/answer',headers={'X-Hireme-Token':'fixture-capability'},
+                                       data={'id':qid,'value':'Docker; Unknown'})
+            assert rejected.status==400
+            expect(form.get_by_label('Docker',exact=True)).to_be_checked()
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            page.screenshot(path=str(tmp_path/f'question-multiple-{width}.png'),full_page=True)
+            form.get_by_role('button',name='Save once and reuse').click()
+            expect(page.locator('#question-page')).to_contain_text('0 unanswered questions')
+            assert store.saved_answer(job['host'],field['label'],field['options'],field=field,context=job)['value']=='Docker; GitHub CI'
+            assert not errors
+            browser.close()
+    finally:process.terminate();process.join(5)
+
+
 def test_unresolved_outcome_pages_preserve_old_context_and_require_explicit_verification(store, job):
     from playwright.sync_api import sync_playwright, expect
     from hireme.util import digest

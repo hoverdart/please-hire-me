@@ -24,6 +24,9 @@ MAX_AGE_SECONDS = 12 * 60 * 60
 # root path, Secure/HttpOnly, session expiry -1; no cookie values are fixtures.
 COOKIE_SITES = {'CALYPSO_CSRF_TOKEN': 'Lax', 'CALYPSO_SESSION': 'Lax',
                 'PLAY_SESSION': 'Lax', 'wday_vps_cookie': 'None'}
+# A fresh owner-verified NVIDIA sign-in on 2026-10-24 used Strict for CSRF.
+# Retain either observed native value unchanged; other cookies stay exact.
+CSRF_SITES = ('Lax', 'Strict')
 REQUIRED_COOKIES = {'CALYPSO_CSRF_TOKEN', 'CALYPSO_SESSION', 'PLAY_SESSION'}
 COOKIE_KEYS = {'name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite'}
 
@@ -55,7 +58,8 @@ def _cookies(values, current):
         if (not isinstance(name, str) or name not in COOKIE_SITES or name in names
                 or cookie['domain'] != NVIDIA or cookie['path'] != '/'
                 or cookie['httpOnly'] is not True or cookie['secure'] is not True
-                or cookie['sameSite'] != COOKIE_SITES[name]
+                or cookie['sameSite'] not in (CSRF_SITES if name == 'CALYPSO_CSRF_TOKEN'
+                                             else (COOKIE_SITES[name],))
                 or not isinstance(cookie['value'], str) or not 1 <= len(cookie['value']) <= 16384
                 or re.search(r'[\x00-\x20\x7f]', cookie['value'])
                 or type(expiry) not in (int, float) or not math.isfinite(expiry)
