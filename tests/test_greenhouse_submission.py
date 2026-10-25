@@ -85,6 +85,169 @@ def request(data, *, url='https://boards.greenhouse.io/acme/jobs/123', method='P
     return req, (url, method, hashlib.sha256(body).hexdigest())
 
 
+def embedded(browser, state):
+    route = state['loaders'].pop(ROUTE)
+    state['loaders']['routes/embed.job_app'] = route
+    state['loaders']['root']['embedded'] = True
+    route['submitPath'] = 'https://boards.greenhouse.io/embed/acme/jobs/123'
+    route['confirmationPath'] = '/embed/job_app/confirmation?for=acme&token=123'
+    route['jobPost']['public_url'] = 'https://careers.example.invalid/jobs/123?gh_jid=123'
+    state['url'] = browser.page.url = 'https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123'
+    return route
+
+
+def test_embedded_application_needs_one_matching_intent_ack_and_embedded_receipt(store):
+    browser, job, package, aid, state, data = setup_native(store)
+    route = embedded(browser, state)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    req, key = request(data, url=route['submitPath'])
+    assert not guard.grant(req, key)
+    store.begin_submit(aid)
+    assert not guard.grant(*request(data))  # Standard and embedded writes differ.
+    assert guard.grant(req, key)
+    assert not guard.receipt_matches(state['url'])
+    guard.observe(SimpleNamespace(status=200), key)
+    receipt = 'https://job-boards.greenhouse.io' + route['confirmationPath']
+    assert guard.receipt_matches(receipt)
+    assert not guard.receipt_matches(receipt.replace('token=123', 'token=456'))
+    assert not guard.grant(req, key)
+
+
+@pytest.mark.parametrize('change', ['query_job', 'duplicate_job', 'unknown_query', 'tenant', 'route_job',
+                                   'root', 'endpoint', 'confirmation', 'public_job', 'public_port'])
+def test_embedded_identity_changes_stop_before_final_intent(store, change):
+    browser, job, package, aid, state, _ = setup_native(store)
+    route = embedded(browser, state)
+    if change == 'query_job':
+        state['url'] = state['url'].replace('token=123', 'token=456')
+    elif change == 'duplicate_job':
+        state['url'] += '&token=456'
+    elif change == 'unknown_query':
+        state['url'] += '&destination=other'
+    elif change == 'tenant':
+        route['urlToken'] = 'other'
+    elif change == 'route_job':
+        route['jobPostId'] = '456'
+    elif change == 'root':
+        state['loaders']['root']['embedded'] = False
+    elif change == 'endpoint':
+        route['submitPath'] = 'https://unreviewed.example.invalid/embed/acme/jobs/123'
+    elif change == 'confirmation':
+        route['confirmationPath'] = '/embed/job_app/confirmation?for=acme&token=456'
+    elif change == 'public_job':
+        route['jobPost']['public_url'] = route['jobPost']['public_url'].replace('123', '456')
+    else:
+        route['jobPost']['public_url'] = 'https://careers.example.invalid:bad/jobs/123?gh_jid=123'
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def city_setup(store):
+    label = 'Test City, Region, United States'
+    store.put_facts({'location': label})
+    city = field(3, 'candidate-location', 'Location (City)', kind='combobox', options=[label])
+    question = {'required': True, 'label': 'Candidate Location',
+                'fields': [{'name': 'candidate_location', 'type': 'input_text'}]}
+    values = setup_native(store, extra_questions=[question], extra_fields=[city])
+    browser, _, _, _, state, _ = values
+    embedded(browser, state)
+    browser.page.evaluate = lambda expression, arg=None: state if arg is None else [str(value) for value in arg]
+    feature = {'geometry': {'type': 'Point', 'coordinates': [-70.25, 40.5]},
+               'properties': {'id': 'city-1', 'layer': 'locality', 'country': 'United States',
+                              'country_code': 'US', 'label': 'Test City, RG, USA', 'region': 'Region'}}
+    req = SimpleNamespace(method='GET', url='https://api-geocode-earth-proxy.greenhouse.io/v1/autocomplete?api_key=public&layers=locality%2Cborough&lang=en&text=Test')
+    response = SimpleNamespace(request=req, status=200, json=lambda: {'features': [feature]})
+    return values, response, feature
+
+
+@pytest.mark.parametrize('layers', ['locality', 'locality%2Cborough'])
+def test_city_coordinates_come_only_from_the_native_selected_city(store, layers):
+    (browser, job, package, aid, state, data), response, _ = city_setup(store)
+    response.request.url = response.request.url.replace('locality%2Cborough', layers)
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+    observe_upload(browser, response, None)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    data['job_application'].update(location='Test City, Region, United States', latitude='40.5', longitude='-70.25', country_short_name='US')
+    store.begin_submit(aid)
+    endpoint = state['loaders']['routes/embed.job_app']['submitPath']
+    data['job_application']['latitude'] = '41.5'
+    assert not guard.grant(*request(data, url=endpoint))
+    data['job_application']['latitude'] = '40.5'
+    assert guard.grant(*request(data, url=endpoint))
+
+
+@pytest.mark.parametrize('change', ['host', 'path', 'duplicate_query', 'address_layer', 'nan', 'range', 'country', 'ambiguous'])
+def test_unreviewed_or_ambiguous_city_data_cannot_authorize_coordinates(store, change):
+    (browser, job, package, aid, _, _), response, feature = city_setup(store)
+    if change == 'host':
+        response.request.url = response.request.url.replace('api-geocode-earth-proxy.greenhouse.io', 'other.example.invalid')
+    elif change == 'path':
+        response.request.url = response.request.url.replace('/v1/autocomplete', '/v1/reverse')
+    elif change == 'duplicate_query':
+        response.request.url += '&text=Other'
+    elif change == 'address_layer':
+        feature['properties']['layer'] = 'address'
+    elif change == 'nan':
+        feature['geometry']['coordinates'][1] = float('nan')
+    elif change == 'range':
+        feature['geometry']['coordinates'][1] = 91
+    elif change == 'country':
+        feature['properties']['country_code'] = 'unreviewed'
+    observe_upload(browser, response, None)
+    if change == 'ambiguous':
+        feature['geometry']['coordinates'][1] = 41.5
+        observe_upload(browser, response, None)
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def demographic_setup(store):
+    store.put_facts({'gender': "I don't wish to answer"})
+    choice = field(3, '77', 'Gender identity', kind='combobox', options=['Example', "I don't wish to answer"])
+    values = setup_native(store, extra_fields=[choice])
+    route = embedded(values[0], values[4])
+    route['jobPost']['demographic_questions'] = {'questions': [{'id': 77, 'name': 'Gender identity',
+        'required': True, 'answer_type': {'key': 'SINGLE_SELECT'}, 'answer_options': [
+            {'id': 101, 'name': 'Example', 'free_form': False},
+            {'id': 102, 'name': "I don't wish to answer", 'free_form': False, 'decline_to_answer': True}]}]}
+    return values, route['jobPost']['demographic_questions']['questions'][0]
+
+
+def test_explicit_demographic_opt_out_uses_the_exact_native_option_id(store):
+    (browser, job, package, aid, state, data), _ = demographic_setup(store)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    data['job_application']['demographic_answers'] = [{'question_id': 77, 'answer_options': [{'answer_option_id': '102'}]}]
+    store.begin_submit(aid)
+    endpoint = state['loaders']['routes/embed.job_app']['submitPath']
+    data['job_application']['demographic_answers'][0]['answer_options'][0]['answer_option_id'] = '101'
+    assert not guard.grant(*request(data, url=endpoint))
+    data['job_application']['demographic_answers'][0]['answer_options'][0]['answer_option_id'] = '102'
+    assert guard.grant(*request(data, url=endpoint))
+
+
+@pytest.mark.parametrize('change', ['question', 'label', 'choice', 'duplicate_choice', 'freeform', 'type'])
+def test_changed_demographic_wording_or_choices_stop_before_intent(store, change):
+    (browser, job, package, aid, _, _), question = demographic_setup(store)
+    if change == 'question':
+        question['id'] = 78
+    elif change == 'label':
+        question['name'] = 'Different disclosure'
+    elif change == 'choice':
+        question['answer_options'][1]['name'] = 'Publish my response'
+    elif change == 'duplicate_choice':
+        question['answer_options'][1]['id'] = 101
+    elif change == 'freeform':
+        question['answer_options'][1]['free_form'] = True
+    else:
+        question['answer_type']['key'] = 'UNREVIEWED'
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 def test_exact_native_final_ack_requires_one_intent_and_confirmation_route(store):
     browser, job, package, aid, _, data = setup_native(store)
     guard = GreenhouseSubmission(browser, job, package, aid)
@@ -182,10 +345,11 @@ def test_official_custom_choice_encoding_is_bound_to_the_approved_label(store):
 
 
 @pytest.mark.parametrize('actual', ['(555) 123-4567', '+1 555 123 4567'])
-def test_phone_freezes_only_the_native_display_with_exact_approved_digits(store, actual):
+def test_phone_uses_the_native_international_format_with_approved_digits_and_country(store, actual):
     phone = field(3, 'phone', 'Phone')
+    country = field(4, 'country', 'Country*', kind='combobox', options=['United States +1'])
     question = {'required': True, 'label': 'Phone', 'fields': [{'name': 'phone', 'type': 'input_text'}]}
-    browser, job, package, aid, _, data = setup_native(store, extra_fields=[phone], extra_questions=[question])
+    browser, job, package, aid, _, data = setup_native(store, extra_fields=[phone, country], extra_questions=[question])
     browser._control = lambda _: SimpleNamespace(input_value=lambda: actual)
     if actual.startswith('+1'):
         with pytest.raises(Blocked, match='unsupported_form'):
@@ -195,7 +359,31 @@ def test_phone_freezes_only_the_native_display_with_exact_approved_digits(store,
         guard = GreenhouseSubmission(browser, job, package, aid)
         store.begin_submit(aid)
         data['job_application']['phone'] = actual
+        assert not guard.grant(*request(data))
+        data['job_application']['phone'] = '+15551234567'
         assert guard.grant(*request(data))
+
+
+def test_national_phone_without_an_approved_calling_code_stops_before_intent(store):
+    phone = field(3, 'phone', 'Phone')
+    question = {'required': True, 'label': 'Phone', 'fields': [{'name': 'phone', 'type': 'input_text'}]}
+    browser, job, package, aid, _, _ = setup_native(store, extra_fields=[phone], extra_questions=[question])
+    browser._control = lambda _: SimpleNamespace(input_value=lambda: '(555) 123-4567')
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_confirmed_international_phone_does_not_infer_a_country_or_keep_display_punctuation(store):
+    store.put_facts({'phone': '+15551234567'})
+    phone = field(3, 'phone', 'Phone')
+    question = {'required': True, 'label': 'Phone', 'fields': [{'name': 'phone', 'type': 'input_text'}]}
+    browser, job, package, aid, _, data = setup_native(store, extra_fields=[phone], extra_questions=[question])
+    browser._control = lambda _: SimpleNamespace(input_value=lambda: '+1 555 123 4567')
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    store.begin_submit(aid)
+    data['job_application']['phone'] = '+15551234567'
+    assert guard.grant(*request(data))
 
 
 @pytest.mark.parametrize('change', ['posting', 'tenant', 'endpoint', 'fingerprint', 'unknown_field'])
@@ -323,10 +511,13 @@ def test_attachment_and_question_preflight_fail_before_an_intent(store, change):
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
-def test_education_uses_only_a_correlated_official_id_for_the_approved_school(store):
+@pytest.mark.parametrize('is_embedded', [False, True])
+def test_education_uses_only_a_correlated_official_id_for_the_approved_school(store, is_embedded):
     store.put_facts({'school': 'University of California, Berkeley'})
     school = field(3, 'school--0', 'School', kind='combobox', options=['University of California, Berkeley'], section='education')
-    browser, job, package, aid, _, data = setup_native(store, extra_fields=[school])
+    browser, job, package, aid, state, data = setup_native(store, extra_fields=[school])
+    if is_embedded:
+        embedded(browser, state)
     with pytest.raises(Blocked, match='unsupported_form'):
         GreenhouseSubmission(browser, job, package, aid)
     read = SimpleNamespace(url='https://boards.greenhouse.io/v1/boards/acme/education/schools?term=Berkeley&page=1', method='GET')
@@ -335,9 +526,10 @@ def test_education_uses_only_a_correlated_official_id_for_the_approved_school(st
     guard = GreenhouseSubmission(browser, job, package, aid)
     store.begin_submit(aid)
     data['job_application']['educations'][0]['school_name_id'] = '999'
-    assert not guard.grant(*request(data))
+    endpoint = state['loaders']['routes/embed.job_app' if is_embedded else ROUTE]['submitPath']
+    assert not guard.grant(*request(data, url=endpoint))
     data['job_application']['educations'][0]['school_name_id'] = '456'
-    assert guard.grant(*request(data))
+    assert guard.grant(*request(data, url=endpoint))
 
 
 def test_one_same_application_native_email_verification_grant_after_a_delay(store):

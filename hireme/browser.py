@@ -192,6 +192,7 @@ class Browser:
         self.submission_requests={}
         self.ashby_draft=None;self.ashby_submission=None
         self.native_submission=None;self.greenhouse_uploads={};self.greenhouse_upload_fields={};self.greenhouse_native_options={};self.greenhouse_upload_pending={}
+        self.greenhouse_native_locations={}
         self.write_boundary=None
         self.preparing=False
         self.visible=False;self.human_verification_seconds=0
@@ -1087,6 +1088,7 @@ class Browser:
         self.ashby_attachment_state=None;self.post_submit_denial_recorded=False
         self.ashby_submission=None;self.human_verification_seconds=0
         self.native_submission=None;self.greenhouse_uploads={};self.greenhouse_upload_fields={};self.greenhouse_native_options={};self.greenhouse_upload_pending={}
+        self.greenhouse_native_locations={}
         self.write_boundary=None
         self.lever_resume=None
         self.store.check_job_decision(job['id'])
