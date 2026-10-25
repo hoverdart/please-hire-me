@@ -51,12 +51,38 @@ def test_pi_health_cannot_claim_ready_when_kernel_ignores_memory_limits(store,mo
     from hireme.health import check_health
     health_ready(store,monkeypatch)
     store.update_settings({'deployment':'pi'})
+    monkeypatch.setattr('hireme.pi.power_status',lambda:{'available':True,'current_fault':False,
+        'undervoltage_recorded':False,'throttling_recorded':False})
     monkeypatch.setattr('hireme.pi.memory_controller_available',lambda:False)
     result=check_health(store.root,services=False,verify_login=False)
     assert not result['ready'] and result['status']=='critical'
     assert result['failures']==['memory_controller_unavailable']
     monkeypatch.setattr('hireme.pi.memory_controller_available',lambda:True)
     assert check_health(store.root,services=False,verify_login=False)['ready']
+
+
+@pytest.mark.parametrize('flags,code,level', [('0','',None),('50000','pi_undervoltage_recorded','warnings'),
+    ('50005','pi_resource_throttled','failures'),('80000','pi_throttling_recorded','warnings')])
+def test_pi_health_distinguishes_active_firmware_fault_from_recorded_history(store,monkeypatch,flags,code,level):
+    from hireme.health import check_health
+    health_ready(store,monkeypatch)
+    store.update_settings({'deployment':'pi'})
+    monkeypatch.setattr('hireme.pi.memory_controller_available',lambda:True)
+    monkeypatch.setattr('hireme.pi.shutil.which',lambda _:'/synthetic/vcgencmd')
+    monkeypatch.setattr('hireme.pi.subprocess.run',lambda *a,**kw:SimpleNamespace(returncode=0,stdout='throttled=0x'+flags+'\n'))
+    result=check_health(store.root,services=False,verify_login=False)
+    assert result['ready'] is (not bool(code))
+    if code:assert result[level]==[code]
+    assert result['power']['flags']=='0x'+flags
+
+
+def test_missing_pi_firmware_evidence_cannot_claim_healthy_power(store,monkeypatch):
+    from hireme.health import check_health
+    health_ready(store,monkeypatch);store.update_settings({'deployment':'pi'})
+    monkeypatch.setattr('hireme.pi.memory_controller_available',lambda:True)
+    monkeypatch.setattr('hireme.pi.shutil.which',lambda _:None)
+    result=check_health(store.root,services=False,verify_login=False)
+    assert not result['ready'] and result['warnings']==['pi_power_status_unavailable']
 
 
 def test_malformed_backup_status_is_a_health_failure(store,monkeypatch):

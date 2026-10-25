@@ -50,3 +50,11 @@ def test_unreadable_cgroup_controller_is_not_reported_as_enforced(monkeypatch):
     def denied(*args,**kwargs):raise PermissionError('synthetic controller unavailable')
     monkeypatch.setattr(Path,'read_text',denied)
     assert not memory_controller_available()
+
+
+def test_unknown_firmware_flags_are_not_reported_as_healthy(monkeypatch):
+    from hireme import pi
+    from types import SimpleNamespace
+    monkeypatch.setattr(pi.shutil,'which',lambda _:'/synthetic/vcgencmd')
+    monkeypatch.setattr(pi.subprocess,'run',lambda *a,**kw:SimpleNamespace(returncode=0,stdout='throttled=0x100000'))
+    assert pi.power_status()=={'available':False}

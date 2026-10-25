@@ -42,6 +42,8 @@ cat "/sys/fs/cgroup${group}/memory.max"
 
 The default dashboard limit is `805306368` bytes. A configured `MemoryMax` property alone does not prove enforcement. The Pi health monitor reports `memory_controller_unavailable` when the controller is absent.
 
+Preflight and health also read `vcgencmd get_throttled`. A historical warning is distinct from a current fault; the [firmware flag reference](https://www.raspberrypi.com/documentation/computers/os.html#vcgencmd) lists both. Verify the power supply and cable if undervoltage is recorded. The [recommended Pi 4 supply](https://www.raspberrypi.com/documentation/computers/getting-started.html#power-supply) provides 5 V at 3 A at the plug. After remediation, observe the normal workload for recurrence instead of treating a reboot's cleared flags as proof.
+
 The dashboard is loopback-only. Access it through the Pi desktop in Connect. Disconnecting Connect leaves background services running.
 
 **Start scheduled applications** installs or updates the worker timer without starting another dashboard on the same port. Wait for an active search or batch to finish first. On a Pi, the first batch and subsequent scheduled batches use the same worker service. Do not also leave `hireme daemon` running alongside the timer.

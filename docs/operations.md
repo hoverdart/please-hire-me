@@ -19,6 +19,8 @@ The worker refuses to start new application work below 512 MiB free. Backups and
 
 Pi health also checks that the kernel exposes the v2 memory controller. Service `MemoryMax` settings are ineffective without it. Follow the [Pi guide](pi.md) to enable the controller and verify the active kernel limit before relying on memory isolation.
 
+Pi firmware diagnostics distinguish an active power/thermal fault from a recorded event since boot. Current throttling makes health critical; historical undervoltage or throttling remains a warning. Check the supply, cable and cooling, then verify no recurrence under ordinary workload. A reboot clears the historical flags but does not prove the cause was fixed. Unavailable firmware diagnostics remain visible as a warning.
+
 Health is a small query-only read of the current SQLite/WAL state. It is separate from the full snapshot, integrity and history checks in `release-check`.
 
 ## Encrypted backups and monitoring on a Mac
