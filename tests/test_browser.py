@@ -238,6 +238,30 @@ def test_lever_location_typed_label_without_matching_selected_object_never_submi
     assert not ats[1] and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
+@pytest.mark.parametrize('parsed_location',[
+    {'name':'Berkeley, CA, USA','address':{'city':'Berkeley','country':{'code':'US'},'region':{'code':'CA'}}},
+    {'name':'Berkeley, CA, USA'},
+    {'name':'Berkeley, CA, USA','id':17},
+    {'name':'Berkeley, CA, USA','id':'parsed-city','street':'unapproved address'},
+])
+def test_lever_resume_parser_city_is_reselected_from_native_choices_before_submission(store,ats,parsed_location):
+    job=local_job(store,ats)
+    # The official parser can fill the same visible city with a structured
+    # address, before approved answers are filled. It is not a picker choice.
+    html=lever_location_html()+'''<script>
+      document.querySelector('input[type=file]').addEventListener('change',()=>{
+        document.querySelector('#location-input').value='Berkeley, CA, USA';
+        document.querySelector('#selected-location').value=JSON.stringify(__PARSED__);
+      });
+    </script>'''.replace('__PARSED__',json.dumps(parsed_location))
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html') if route.request.method=='GET' else route.continue_())
+        assert b.apply(job,live=True)=='confirmed'
+    assert len(ats[1])==1
+    assert b'{"id":"0","name":"Berkeley, CA, USA"}' in ats[1][0]
+    assert b'unapproved address' not in ats[1][0] and b'"address"' not in ats[1][0]
+
+
 @pytest.mark.parametrize('missing_fact',[False,True])
 def test_required_field_timeouts_retry_only_without_genuinely_missing_answers(store,ats,monkeypatch,missing_fact):
     from hireme.answers import resolve as real_resolve

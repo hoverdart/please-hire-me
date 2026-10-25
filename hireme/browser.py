@@ -1295,6 +1295,7 @@ class Browser:
                     # the current server draft rather than trusting DOM state.
                     self._control(a['field']).fill('')
                 self._fill(a)
+            if live and self.lever_resume:self.lever_resume.clear_unapproved_company(fields,answers,job['id'])
             try:self._verify(answers,documents,fields)
             except Blocked as error:
                 if error.reason!='form_changed':raise

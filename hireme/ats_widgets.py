@@ -5,12 +5,21 @@ LEVER_LOOKUP_TIMEOUT=5000
 
 
 def lever_location_value(control):
-    """Lever clears unselected text on blur; require its selected object too."""
-    import json
+    """Require a native picker choice, not the resume parser's address object.
+
+    Reviewed 2026-10-25: jobs.lever.co/js/parseResume.js can prefill the
+    same city label with a structured address. retrieveLocations.js instead
+    commits the official search result's exact id/name object. Keep the final
+    submission guard's narrow encoding; reselect parsed locations normally.
+    """
+    import json,re
     selected=control.locator('xpath=..').locator('input[type=hidden][name=selectedLocation]')
     if selected.count()!=1:return ''
     try:value=json.loads(selected.input_value())
     except (ValueError,TypeError):return ''
+    if (not isinstance(value,dict) or set(value)!={'id','name'}
+            or not isinstance(value.get('id'),str) or not 0<len(value['id'])<=1000
+            or re.search(r'[\x00-\x1f\x7f]',value['id'])):return ''
     name=value.get('name') if isinstance(value,dict) else None
     return name if isinstance(name,str) and name and name==control.input_value() else ''
 
