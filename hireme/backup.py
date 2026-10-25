@@ -14,10 +14,12 @@ from pathlib import Path, PurePosixPath
 
 from .store import Store, worker_lock
 from .util import private_dir
+from .storage import require_space
 
 MAX_MEMBER = 256*1024*1024
-MAX_EXPANDED = 2*1024*1024*1024
+MAX_EXPANDED = 16*1024*1024*1024
 MAX_LEDGER = MAX_EXPANDED
+MAX_COMPRESSED = 8*1024*1024*1024
 MAX_MANIFEST = 8*1024*1024
 COPY_CHUNK = 64*1024
 
@@ -94,13 +96,17 @@ def create_backup(store, destination: Path):
     destination.parent.mkdir(parents=True, exist_ok=True)
     manifest = {}
     with worker_lock(store.root):
+        require_space(store.root, (store.root/'ledger.sqlite3').stat().st_size)
+        require_space(destination.parent)
         _validate_references(store)
         # Pi /tmp is commonly a small RAM disk. A real discovery ledger can
         # exceed it; stage the consistent snapshot on private persistent disk.
         with tempfile.TemporaryDirectory(prefix='.backup-', dir=private_dir(store.root / 'tmp')) as temporary:
             ledger = Path(temporary)/'ledger.sqlite3'
             db = sqlite3.connect(ledger)
-            store.db.backup(db);db.close()
+            try:
+                store.db.backup(db,pages=1024,progress=lambda *_:require_space(ledger.parent))
+            finally:db.close()
             snapshot = Store(Path(temporary))
             # This is a copy. The source worker's configuration is untouched.
             snapshot.update_settings({'live_enabled':False});snapshot.recover();snapshot.close()
@@ -115,10 +121,14 @@ def create_backup(store, destination: Path):
                         checksum=hashlib.sha256();length=0
                         maximum=MAX_LEDGER if name=='ledger.sqlite3' else MAX_MEMBER
                         with path.open('rb') as source, archive.open(name, 'w', force_zip64=True) as output:
+                            next_capacity_check=0
                             while chunk:=source.read(COPY_CHUNK):
                                 length+=len(chunk)
                                 if length>maximum or expanded+length>MAX_EXPANDED:
                                     raise ValueError('Private history exceeds the supported backup size')
+                                if length>=next_capacity_check:
+                                    require_space(destination.parent)
+                                    next_capacity_check=length+16*1024*1024
                                 checksum.update(chunk);output.write(chunk)
                         manifest[name] = {'sha256':checksum.hexdigest(),'bytes':length}
                         expanded+=length
@@ -141,7 +151,7 @@ def create_backup(store, destination: Path):
                     if len(manifest_data)>MAX_MANIFEST or expanded+len(manifest_data)>MAX_EXPANDED:
                         raise ValueError('Backup manifest exceeds the supported backup size')
                     archive.writestr('manifest.json',manifest_data)
-                if Path(tempname).stat().st_size>1024*1024*1024:
+                if Path(tempname).stat().st_size>MAX_COMPRESSED:
                     raise ValueError('Compressed private history exceeds the supported backup size')
                 # Finish writing the ZIP before publishing its durable name.
                 with open(tempname,'rb') as completed:os.fsync(completed.fileno())
@@ -158,8 +168,8 @@ def create_backup(store, destination: Path):
 def restore_backup(archive_path: Path, destination: Path):
     if destination.exists() or destination.is_symlink():
         raise ValueError('Restore into a new directory; existing applicant history is never overwritten')
-    if archive_path.is_symlink() or not archive_path.is_file() or archive_path.stat().st_size>1024*1024*1024:
-        raise ValueError('Choose a regular backup archive up to 1 GiB')
+    if archive_path.is_symlink() or not archive_path.is_file() or archive_path.stat().st_size>MAX_COMPRESSED:
+        raise ValueError('Choose a regular backup archive up to 8 GiB')
     destination.parent.mkdir(parents=True,exist_ok=True)
     staging=Path(tempfile.mkdtemp(prefix='.restore-',dir=destination.parent))
     try:
@@ -168,6 +178,7 @@ def restore_backup(archive_path: Path, destination: Path):
             names=[e.filename for e in entries]
             if len(entries)>50000 or len(names)!=len(set(names)) or sum(e.file_size for e in entries)>MAX_EXPANDED:
                 raise ValueError('Invalid or excessive backup archive')
+            require_space(staging, sum(e.file_size for e in entries))
             if any(entry.flag_bits & 1 for entry in entries):
                 raise ValueError('Encrypted ZIP archives are not supported. Choose the original history backup; encrypted employer passwords use the separate transfer.')
             if 'manifest.json' not in names or archive.getinfo('manifest.json').file_size>MAX_MANIFEST:

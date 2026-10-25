@@ -5,6 +5,7 @@ import html
 import json
 import re
 import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
 from .net import Network,SafeRedirect
@@ -102,12 +103,44 @@ def probe(net,ats,slug):
     return out
 
 
+def _source_failure(error):
+    """Fixed diagnostics: response bodies, signed URLs and headers stay private."""
+    if isinstance(error, HTTPError):
+        code=error.code
+        kind=('not_found' if code in {404,410} else 'rate_limited' if code==429
+              else 'upstream_unavailable' if 500<=code<600 else 'access_review')
+        return kind, f'{kind.replace("_", " ").capitalize()} (HTTP {code})', code
+    if isinstance(error, (TimeoutError, URLError, ConnectionError)):
+        return 'connection_failed', 'Source connection did not complete', None
+    if isinstance(error, BaseException) and not isinstance(error, Blocked):
+        return 'source_changed', type(error).__name__, None
+    return 'review', str(error or '')[:500], None
+
+
 def source_result(store,sid,jobs=None,error=None):
-    if isinstance(error,BaseException) and not isinstance(error,Blocked):error=type(error).__name__
+    previous=store.db.execute('SELECT payload FROM sources WHERE id=?',(sid,)).fetchone()
+    try:previous=json.loads(previous['payload']) if previous else {}
+    except (ValueError,TypeError):previous={}
+    if not isinstance(previous,dict):previous={}
+    checked=time.time()
+    payload={'jobs':len(jobs or []),'last_success':previous.get('last_success')}
+    if error:
+        kind,message,code=_source_failure(error)
+        failures=previous.get('failure_count',0)
+        failures=min(failures+1,100) if type(failures) is int and failures>=0 else 1
+        delay=(7*86400 if kind=='not_found' else 86400 if kind=='access_review'
+               else min(21600,900*2**min(failures-1,5)))
+        if kind=='rate_limited':
+            try:delay=max(delay,min(86400,max(0,int(error.headers.get('Retry-After','0')))))
+            except (ValueError,TypeError,AttributeError):pass
+        payload.update(failure_kind=kind,http_status=code,failure_count=failures,next_check=checked+delay)
+        error=message
+    else:
+        payload.update(failure_count=0,next_check=checked+6*3600,last_success=now())
     # Full snapshots eliminate lossy global timestamp watermarks; partial failures keep existing jobs.
     if jobs is not None:
         from .policy import listing_scope
-        from .job_holds import hold,clear,safe_state
+        from .job_holds import hold,clear,safe_state,category,dependency
         scope_reasons={'seniority_mismatch','role_mismatch','internship_out_of_scope','fulltime_out_of_scope','parttime_out_of_scope'}
         pending=iter(jobs);done=False
         while not done:
@@ -125,8 +158,19 @@ def source_result(store,sid,jobs=None,error=None):
                     if safe_state(store,key) and not store.db.execute('SELECT 1 FROM job_decisions WHERE job_id=?',(key,)).fetchone():
                         try:listing_scope(job,settings)
                         except Blocked as exclusion:
-                            store.block(key,exclusion.reason,exclusion.detail)
-                            hold(store,job,exclusion.reason,exclusion.detail,'discovery')
+                            previous=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(key,)).fetchone()
+                            saved=store.db.execute('SELECT status,reason FROM jobs WHERE id=?',(key,)).fetchone()
+                            reason=exclusion.reason+(': '+exclusion.detail if exclusion.detail else '')
+                            unchanged=(previous and previous['reason']==exclusion.reason
+                                and previous['category']==category(exclusion.reason)
+                                and previous['dependency']==dependency(store,job,previous['category'],exclusion.reason)
+                                and saved['status']=='blocked' and saved['reason']==reason)
+                            # A source refresh is an observation, not another
+                            # application attempt. Keep unchanged holds and their
+                            # original evidence without growing the event journal.
+                            if not unchanged:
+                                store.block(key,exclusion.reason,exclusion.detail)
+                                hold(store,job,exclusion.reason,exclusion.detail,'discovery')
                         else:
                             previous=store.db.execute('SELECT reason FROM job_holds WHERE job_id=?',(key,)).fetchone()
                             if previous and previous['reason'] in scope_reasons:
@@ -134,16 +178,26 @@ def source_result(store,sid,jobs=None,error=None):
                                 store.db.execute("UPDATE jobs SET status='discovered',reason='' WHERE id=? AND status='blocked'",(key,))
                     if time.monotonic()-started>=.25:break
     store.db.execute("INSERT INTO sources VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,checked=excluded.checked,error=excluded.error,payload=excluded.payload",
-                     (sid,"error" if error else "ok",now(),str(error or "")[:500],json.dumps({"jobs":len(jobs or [])})))
+                     (sid,"error" if error else "ok",now(),str(error or "")[:500],json.dumps(payload)))
     results=getattr(store,'discovery_results',None)
     if results is not None:results[sid]='error' if error else 'ok'
 
 
 def sweep_boards(store,repo,ats=None,limit=None,deadline_seconds=1800):
     sources=board_sources(repo,ats,limit,store)
-    # Failed and least recently checked sources get the next slots; no alphabetical starvation.
-    checks={r["id"]:r["checked"] for r in store.db.execute("SELECT * FROM sources")}
-    sources.sort(key=lambda x:checks.get(":".join(x),""))
+    checks={r['id']:dict(r) for r in store.db.execute('SELECT * FROM sources')}
+    current=time.time()
+    def due(source):
+        row=checks.get(':'.join(source))
+        if not row:return True
+        try:retry=json.loads(row['payload']).get('next_check')
+        except (ValueError,TypeError,AttributeError):retry=None
+        return not isinstance(retry,(int,float)) or retry<=current
+    sources=[source for source in sources if due(source)]
+    # Revisit working boards before speculative slug probes. Rotate within each
+    # group by age, so a large candidate list cannot starve known good sources.
+    sources.sort(key=lambda x:(0 if checks.get(':'.join(x),{}).get('status')=='ok' else 1,
+                              checks.get(':'.join(x),{}).get('checked','')))
     net=Network(time.monotonic()+deadline_seconds)
     n=0
     with concurrent.futures.ThreadPoolExecutor(max_workers=store.settings()["discovery_workers"]) as pool:

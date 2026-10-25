@@ -104,7 +104,7 @@ These checks send no model requests or applications. See the [user guide](docs/g
 - **Answers & evidence** joins an attempt's posting identity, exact document references, submission outcome, reviewed recruiting feedback and next action. Export its private JSON record or download the original recorded PDFs. New attempts capture posting identity; older records clearly label unavailable historical context.
 - **Recruiting Insights** in Today compares reviewed responses by company, exact role title, source and resume PDF. Choose a response window and inspect the attempts behind each metric. Recent or uncertain submissions do not enter mature-response denominators; missing feedback is not a rejection.
 
-The version is **0.5.0rc2**, a public release candidate for self-hosting. Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
+The version is **0.5.0rc3**, a public release candidate for self-hosting. Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
 
 ## Guides and development
 
@@ -112,6 +112,8 @@ If you're trying it for your own search, the user guide is the next stop. If you
 
 - [User guide](docs/guide.md): documents, drafts, questions, models, scheduling, backups and Gmail.
 - [Raspberry Pi guide](docs/pi.md): setup, background services, restart and upgrades.
+- [Operations and encrypted backups](docs/operations.md): Pi health checks, off-device recovery and a Mac-owned monitor.
+- [Privacy](PRIVACY.md) and [security reporting](SECURITY.md): where your information goes and how to report a problem privately.
 - [Documentation map](docs/README.md): architecture, platform connections and contributor references.
 - [Contributing](CONTRIBUTING.md): local tests, packaging checks and safe fixture development.
 - [AutoApply comparison](docs/autoapply-comparison.md): source-reviewed ideas, implemented improvements and the next priorities.

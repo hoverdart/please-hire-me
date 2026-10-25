@@ -157,7 +157,7 @@ Recovery keeps interrupted submission intents uncertain and unfinished accounts 
 
 The authoritative database is `~/.local/share/please-hire-me/ledger.sqlite3`. Multiple checkouts share this directory by default. Documents, reviewed sources, evidence, browser sessions and credentials are private local files. For a different applicant, use another OS account or pass the same explicit `--data-dir` to every command for that instance. Do not split one applicant's history across directories.
 
-Choose **Preferences → Your data and backups** to download a backup after active work finishes. **Check a backup before moving it** validates an uploaded ZIP using a temporary restore, leaving the active workspace unchanged. Archives up to 1 GiB are supported.
+Choose **Preferences → Your data and backups** to download a backup after active work finishes. **Check a backup before moving it** validates an uploaded ZIP using a temporary restore, leaving the active workspace unchanged. Browser checks accept ZIP archives up to 1 GiB. The current CLI can restore up to 8 GiB compressed and 16 GiB expanded, subject to free disk space; update the restoration tool before using an archive larger than an older release supports.
 
 For a terminal backup and restore:
 
@@ -171,6 +171,8 @@ For a terminal backup and restore:
 ```
 
 Backups contain history, documents and evidence and are **not encrypted**. Store them privately and keep an off-device copy. Restore verifies checksums and ledger references and starts paused. Old documents and screenshots referenced by past attempts must remain available. Ordinary backups exclude integration credentials, employer password keys and browser sessions; reconnect those on the destination.
+
+For automatic encrypted Pi backups to a Mac, use the [operations guide](operations.md). The receiving Mac verifies a complete restore before marking an archive successful. Keep its age recovery key separately from the backup files.
 
 Do not run the same applicant simultaneously on Mac and Pi. Pause the source and remove its schedule before moving history; locks do not coordinate across machines.
 

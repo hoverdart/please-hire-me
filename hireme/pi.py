@@ -37,8 +37,8 @@ def service_units(store, repo, executable=None):
               'TimeoutStopSec=30\nKillMode=control-group\n'
               f'Environment={_quote("PATH="+str(Path.home()/".local/bin")+":"+os.environ.get("PATH","/usr/local/bin:/usr/bin:/bin"))}\n'
               'UnsetEnvironment=ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN\n')
-    worker = common + f'Type=oneshot\nExecStart={command} run\nTimeoutStartSec=4h\n'
-    dashboard = (common + f'Type=simple\nExecStart={command} dashboard --hide-token\nRestart=on-failure\nRestartSec=5\n'
+    worker = common + f'Type=oneshot\nExecStart={command} run\nTimeoutStartSec=4h\nMemoryHigh=1536M\nMemoryMax=2G\nTasksMax=256\nOOMPolicy=stop\n'
+    dashboard = (common + f'Type=simple\nExecStart={command} dashboard --hide-token\nRestart=on-failure\nRestartSec=5\nMemoryHigh=256M\nMemoryMax=768M\nTasksMax=128\nOOMPolicy=stop\n'
                  '\n[Install]\nWantedBy=default.target\n')
     timer = ('[Unit]\nDescription=Scheduled application batches\n\n[Timer]\n'
              f'OnBootSec=5min\nOnUnitInactiveSec={store.settings()["schedule_hours"]}h\n'

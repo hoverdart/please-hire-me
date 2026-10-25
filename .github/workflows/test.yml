@@ -1,5 +1,10 @@
 name: Local invariants
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -10,14 +15,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
       - run: python -m pip install pip-audit==2.10.1
       # The suite verifies that the development lock includes every runtime pin.
       - run: python -m pip_audit -r requirements/development.lock --disable-pip --no-deps
   test:
+    if: github.event_name != 'schedule'
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -33,14 +41,22 @@ jobs:
             python: '3.11'
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -r requirements/development.lock
       - run: python -m pip install --no-deps -e .
       - run: python -m pip check
       - run: python -m playwright install --with-deps chromium
+      - name: Install age for encrypted backup verification (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y age
+      - name: Install age for encrypted backup verification (macOS)
+        if: runner.os == 'macOS'
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install age
       - run: python -m pytest -q
       - run: python -m compileall -q hireme scripts tests
       - run: for file in hireme/static/*.js; do node --check "$file" || exit; done
@@ -53,7 +69,7 @@ jobs:
           git archive --format=tar.gz --prefix="please-hire-me-$version/" -o "dist/please-hire-me-$version-source.tar.gz" HEAD
       - run: python scripts/check_release_artifacts.py dist/*
       - run: python scripts/check_install_artifact.py dist/*.whl
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-distributions-${{ matrix.os }}-python-${{ matrix.python }}
           path: dist/*

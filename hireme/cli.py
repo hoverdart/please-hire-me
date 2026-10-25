@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -32,6 +33,12 @@ def main(argv=None):
     p=sub.add_parser('release-check',help='Read a private release snapshot without initializing or changing applicant history')
     p.add_argument('--expected-revision');p.add_argument('--require-paused',action='store_true');p.add_argument('--require-scheduler',action='store_true');p.add_argument('--output',type=Path)
     p.add_argument('--json',action='store_true',help='Output JSON (the default)')
+    p=sub.add_parser('health',help='Check operational health without application writes or inference')
+    p.add_argument('--record',action='store_true');p.add_argument('--json',action='store_true')
+    sub.add_parser('remote-ops',help='Restricted SSH operations for the backup monitor')
+    p=sub.add_parser('backup-agent',help='Monitor a Pi and retain verified encrypted backups on this Mac')
+    p.add_argument('action',choices=['run','install']);p.add_argument('config',type=Path)
+    p.add_argument('--force',action='store_true',help='Take a new backup during this check')
     p=sub.add_parser('workday',help='Inspect or commission an exact reviewed Workday flow')
     actions=p.add_subparsers(dest='action',required=True)
     status=actions.add_parser('status',help='Read capability evidence without changing applicant history')
@@ -46,6 +53,7 @@ def main(argv=None):
     p=sub.add_parser('import-resume');p.add_argument('path',type=Path);p.add_argument('--transcript',action='store_true')
     p=sub.add_parser('gmail');p.add_argument('action',choices=['import-client','connect','status','check','sync-feedback','disconnect']);p.add_argument('path',type=Path,nargs='?')
     p=sub.add_parser('backup');p.add_argument('path',type=Path)
+    sub.add_parser('backup-stream',help='Stream a consistent history ZIP to stdout for an encrypted off-device backup')
     p=sub.add_parser('restore');p.add_argument('path',type=Path)
     p=sub.add_parser('account-vault');p.add_argument('action',choices=['export','import']);p.add_argument('path',type=Path)
     p=sub.add_parser('pi');p.add_argument('action',choices=['configure','preflight','units','install']);p.add_argument('--directory',type=Path)
@@ -69,6 +77,29 @@ def main(argv=None):
     p=sub.add_parser('import-legacy');p.add_argument('path',type=Path,default=REPO,nargs='?')
     args=parser.parse_args(argv)
     os.umask(0o077)
+    if args.command=='backup-agent':
+        from .backup_agent import run_agent,install_agent
+        try:
+            result=install_agent(args.config,REPO) if args.action=='install' else run_agent(args.config,force=args.force)
+            print(json.dumps({'ready':result.get('ready',True),'failures':result.get('failures',[]),
+                              'backup_verified_at':(result.get('last_backup') or {}).get('verified_at'),
+                              'installed':result.get('installed',False)}))
+            return 0 if result.get('ready',True) else 1
+        except (OSError,ValueError,Blocked,subprocess.SubprocessError):
+            print('Operations setup failed. Check private configuration, key permissions and SSH access.',file=sys.stderr)
+            return 2
+    if args.command=='health':
+        from .health import check_health,record_health
+        result=check_health(args.data_dir)
+        if args.record:record_health(args.data_dir,result)
+        print(json.dumps(result,indent=2,sort_keys=True))
+        return 0 if result['ready'] else 1
+    if args.command=='remote-ops':
+        from .remote_ops import execute
+        try:return execute(args.data_dir,os.environ.get('SSH_ORIGINAL_COMMAND',''))
+        except Exception:
+            print('Remote operation failed. Inspect private worker health; no automatic application retry was requested.',file=sys.stderr)
+            return 2
     if args.command=='release-check':
         from .release_check import check_release,write_report
         try:
@@ -146,6 +177,9 @@ def main(argv=None):
         elif args.command=='backup':
             from .backup import create_backup
             print(json.dumps(create_backup(store,args.path)))
+        elif args.command=='backup-stream':
+            from .remote_ops import stream_backup
+            stream_backup(store,sys.stdout.buffer)
         elif args.command=='account-vault':
             import getpass
             from .account_transfer import export_accounts,import_accounts

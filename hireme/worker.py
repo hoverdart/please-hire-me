@@ -34,6 +34,9 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                 raise Blocked('setup_incomplete',', '.join(store.missing_setup()))
             store.checkpoint()
             if live and not s['live_enabled']:raise Blocked('paused')
+            from .storage import require_space
+            try:require_space(store.root)
+            except ValueError:raise Blocked('storage_low','Free disk space before starting another application batch') from None
             jobs_before=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
             if discover:
                 store.checkpoint(); sweep_lists(store)

@@ -69,7 +69,8 @@ class ReadOnlyLedger:
                                     metadata.st_mtime_ns, metadata.st_ctime_ns)
                 return result
             before = generation()
-            required = sum(info[2] for info in before.values() if info) + 16 * 1024 * 1024
+            from .storage import MIN_FREE_BYTES
+            required = sum(info[2] for info in before.values() if info) + MIN_FREE_BYTES
             if shutil.disk_usage(self.root.parent).free < required:
                 raise ValueError('snapshot_disk_space_unavailable')
             snapshot = Path(self._temporary.name)
@@ -273,7 +274,7 @@ def _integrations(view, settings):
     token = integrations / 'gmail-token.json'
     gmail_bound = (bool(owner_email) and account.get('email') == owner_email.casefold()
                    and token.is_file() and not token.is_symlink())
-    gmail_enabled = settings['gmail_reports'] or settings['gmail_verification']
+    gmail_enabled = any(settings[key] for key in ('gmail_reports', 'gmail_verification', 'gmail_feedback'))
     return {
         'ready': model_configured and (not gmail_enabled or gmail_bound),
         'model': {'provider': provider, 'configured': model_configured, 'login_and_connectivity': 'not_checked'},
@@ -306,6 +307,10 @@ def check_release(root, repo, *, expected_revision=None, require_paused=False, r
     view = None
     lock_fd = None
     try:
+        from .storage import capacity
+        report['storage']=capacity(root)
+        if report['storage']['low']:
+            failures.append('storage_low')
         view = ReadOnlyLedger(root)
         lock = view.root / 'worker.lock'
         worker_running = False

@@ -1,4 +1,4 @@
-include README.md LICENSE CONTRIBUTING.md CLAUDE.md PRODUCT.md DESIGN.md
+include README.md LICENSE CONTRIBUTING.md CLAUDE.md PRODUCT.md DESIGN.md SECURITY.md PRIVACY.md
 include config/README.md config/*.example.*
 include data/README.md data/boards.md data/slug-candidates.txt data/sources.md
 include scripts/README.md scripts/check_release_artifacts.py scripts/check_install_artifact.py
