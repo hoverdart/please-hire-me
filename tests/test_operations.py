@@ -79,6 +79,22 @@ def test_remote_key_cannot_execute_shell_or_arbitrary_commands(store):
         with pytest.raises(ValueError,match='permits'):execute(store.root,command)
 
 
+def test_remote_health_uses_worker_path_without_forwarding_other_unit_environment(store,tmp_path,monkeypatch,capsys):
+    from hireme.remote_ops import execute
+    home=tmp_path/'home';unit=home/'.config/systemd/user/please-hire-me-worker.service'
+    unit.parent.mkdir(parents=True)
+    unit.write_text('Environment="PATH=/synthetic/cli:/usr/bin"\nEnvironment="SENSITIVE_VALUE=not-forwarded"\n')
+    monkeypatch.setattr(Path,'home',lambda:home)
+    monkeypatch.setenv('PATH','/usr/bin');monkeypatch.delenv('SENSITIVE_VALUE',raising=False)
+    def check(_):
+        assert os.environ['PATH']=='/synthetic/cli:/usr/bin'
+        assert 'SENSITIVE_VALUE' not in os.environ
+        return {'ready':True}
+    monkeypatch.setattr('hireme.health.check_health',check)
+    assert execute(store.root,'health')==0
+    assert json.loads(capsys.readouterr().out)['ready']
+
+
 def test_remote_backup_ack_is_bounded_and_contains_only_verified_metadata(store):
     from hireme.remote_ops import execute
     good={'verified_at':now(),'sha256':'a'*64,'bytes':1234,'applications':119}

@@ -10,6 +10,8 @@ REQ = '12345678-1234-1234-1234-123456789abc'
     (f'https://jobs.lever.co/acme/{REQ}', f'https://jobs.lever.co/acme/{REQ}/apply?utm_source=test'),
     ('https://boards.greenhouse.io/acme/jobs/123', 'https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123'),
     ('https://boards.eu.greenhouse.io/acme/jobs/123', 'https://job-boards.eu.greenhouse.io/acme/jobs/123?gh_src=test'),
+    ('https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Software-Intern_JR2023495',
+     'https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Renamed-Software-Intern_JR2023495'),
 ])
 def test_known_ats_requisition_aliases_share_identity(first, second):
     assert application_identity(first) == application_identity(second)
@@ -79,3 +81,31 @@ def test_ashby_tenant_rename_cannot_retry_a_recorded_uuid(store,job,package,stat
     store.upsert_job(second)
     with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(second,store.settings())
     assert store.db.execute('SELECT state FROM applications WHERE id=?',(aid,)).fetchone()[0]==state
+
+
+@pytest.mark.parametrize('state',['confirmed','unknown','awaiting_verification','not_submitted','submitting'])
+def test_workday_locale_or_title_alias_cannot_repeat_a_recorded_requisition(store,job,package,state):
+    host='nvidia.wd5.myworkdayjobs.com'
+    first={**job,'id':digest('workday-original'),'host':host,
+           'url':f'https://{host}/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Software-Intern_JR2023495'}
+    store.upsert_job(first)
+    aid=store.prepare(first,{**package,'job_id':first['id'],'url':first['url']})
+    store.db.execute("UPDATE applications SET state=?,attempted='2020-01-01T00:00:00+00:00' WHERE id=?",(state,aid))
+    second={**first,'id':digest('workday-locale-alias'),'company':'Another feed name',
+            'url':f'https://{host}/en-US/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/New-Title_JR2023495'}
+    store.upsert_job(second)
+    before=dict(store.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone())
+    with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(second,store.settings())
+    assert dict(store.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone())==before
+    assert store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]==3
+
+
+@pytest.mark.parametrize('url',[
+    'https://other.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Intern_JR2023495',
+    'https://nvidia.wd5.myworkdayjobs.com/AnotherSite/job/US-CA-Santa-Clara/Intern_JR2023495',
+    'https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Intern_JR2023496',
+    'https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/apply/Intern_JR2023495',
+])
+def test_workday_alias_comparison_does_not_merge_unknown_tenants_sites_or_requisitions(url):
+    known='https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Intern_JR2023495'
+    assert application_identity(url)!=application_identity(known)

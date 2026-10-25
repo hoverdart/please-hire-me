@@ -2,13 +2,27 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import sys
 import tempfile
 
 from .util import atomic_json, private_dir
+
+
+def _worker_path():
+    """Use the installed worker's CLI search path, not SSH's minimal PATH."""
+    unit=Path.home()/'.config/systemd/user/please-hire-me-worker.service'
+    if unit.is_file() and not unit.is_symlink() and unit.stat().st_size<=65536:
+        for line in unit.read_text().splitlines():
+            if not line.startswith('Environment='):continue
+            for item in shlex.split(line.split('=',1)[1]):
+                if item.startswith('PATH='):
+                    return item[5:].replace('%%','%')
+    return str(Path.home()/'.local/bin')+':'+os.environ.get('PATH','/usr/bin:/bin')
 
 
 def stream_backup(store, output):
@@ -22,6 +36,7 @@ def stream_backup(store, output):
 
 def execute(root, command, *, output=None, input_stream=None):
     if command=='health':
+        os.environ['PATH']=_worker_path()
         from .health import check_health
         result=check_health(root)
         print(json.dumps(result))
