@@ -402,8 +402,13 @@ class Store:
         if not isinstance(value,str) or not value.strip() or len(value)>12000:
             raise ValueError("A nonempty answer is required")
         options = json.loads(q["options"])
-        if options and value not in options:
-            raise ValueError("Choose an exact option")
+        if options:
+            metadata=self.db.execute('SELECT context FROM question_contexts WHERE id=?',(qid,)).fetchone()
+            context=json.loads(metadata['context']) if metadata else {}
+            from .answers import _listed_answer
+            field={'label':q['label'],'type':context.get('widget'),'options':options}
+            if not _listed_answer(field,value):
+                raise ValueError("Choose the exact listed options and the number requested by this question")
         if fact_key:
             f = self.facts().get(fact_key)
             if not f or f["value"] != value:
