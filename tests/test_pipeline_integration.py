@@ -54,6 +54,8 @@ class Posting:
     operations: list = field(default_factory=list)
     attached_file: dict | None = None
     region: str = 'us'
+    parser_company: str | None = None
+    initial_company: str = ''
 
     def __post_init__(self):
         self.req = identifier(self.name)
@@ -120,6 +122,8 @@ class Posting:
         lever = (f'<input type="hidden" name="accountId" value="{self.account}">'
                  '<input type="hidden" name="resumeStorageId" value="">'
                  '<input type="hidden" name="h-captcha-response" value="synthetic-native-token">' if self.platform == 'lever' else '')
+        if self.platform=='lever' and self.parser_company is not None:
+            lever+='<label for="org">Current company</label><input id="org" name="org" value="'+escape(self.initial_company,quote=True)+'">'
         resume_id = 'resume-upload-input' if self.platform == 'lever' else 'resume'
         base = {'organizationHostedJobsPageName': self.tenant, 'formRenderIdentifier': self.render,
                 'formDefinitionIdentifier': self.definition}
@@ -152,7 +156,8 @@ class Posting:
                 "  await fetch(config.url,{method:'POST',body:data});window.fixtureGHUpload={name:file.name,url:config.url+'/'+key};return;}\n"
                 " if(platform==='lever'){data.append('resume',file);data.append('accountId',document.querySelector('[name=accountId]').value);\n"
                 "  const response=await fetch('/parseResume',{method:'POST',body:data});const result=await response.json();\n"
-                "  document.querySelector('[name=resumeStorageId]').value=result.resumeStorageId;return;}\n"
+                "  document.querySelector('[name=resumeStorageId]').value=result.resumeStorageId;\n"
+                "  if(result.position!==undefined)document.querySelector('[name=org]').value=outcome==='company_changed'?'Changed applicant entry':result.position;return;}\n"
                 " if(platform==='ashby'){const response=await send({operationName:'ApiCreateFileUploadHandle',"
                 "query:createFileQuery,variables:{organizationHostedJobsPageName:base.organizationHostedJobsPageName,fileUploadContext:'NonUserFormEngine',filename:file.name,contentType:'application/pdf',contentLength:file.size}});"
                 " const result=await response.json();window.fixtureUpload=result.data.fileUploadHandle;window.fixtureHandle=window.fixtureUpload.handle;\n"
@@ -335,7 +340,8 @@ class ClosedATS:
             assert not browser.attempted
             payload = changes.get('post_data', request.post_data_buffer or b'')
             assert self.document_bytes in payload and posting.account.encode() in payload
-            answer({'resumeStorageId': 'fixture-storage-' + posting.req}); return
+            answer({'resumeStorageId': 'fixture-storage-' + posting.req,
+                    **({'position':posting.parser_company} if posting.parser_company is not None else {})}); return
         if posting.platform in {'greenhouse', 'lever'} and (posting.platform=='greenhouse' and parsed.hostname==('boards.eu.greenhouse.io' if posting.region=='eu' else 'boards.greenhouse.io') and parsed.path==urlsplit(posting.url).path or posting.platform=='lever' and request.url==posting.url+'/apply'):
             assert browser.attempted
             payload = changes.get('post_data',request.post_data_buffer or b'')
@@ -400,6 +406,24 @@ def test_real_pipeline_confirms_and_reports_then_excludes_the_same_posting(store
     assert posting.requests == before and network.browser_starts == 1 and not network.unexpected
     assert len(network.mailbox.messages_sent) == 1
     assert {row[0] for row in store.db.execute('SELECT state FROM report_outbox')} == {'sent', 'suppressed'}
+
+
+@pytest.mark.parametrize('initial_company,outcome',[('','confirmed'),('Existing applicant entry','confirmed'),('','company_changed')])
+def test_lever_parser_company_cannot_add_an_unapproved_claim_or_erase_existing_input(store,monkeypatch,initial_company,outcome):
+    posting=Posting('lever','Synthetic parser company',parser_company='Parsed Employer',initial_company=initial_company,outcome=outcome)
+    network=harness(store,monkeypatch,[posting])
+    result=network.run()
+    if initial_company or outcome=='company_changed':
+        assert result['confirmed']==0
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind='parser_prefill_cleared'").fetchone()
+        assert any(request[2]=='/parseResume' for request in posting.requests)==(not initial_company)
+    else:
+        assert result['confirmed']==1,result
+        app=store.db.execute('SELECT package FROM applications').fetchone()
+        assert all(a['field'].get('ref',{}).get('name')!='org' for a in json.loads(app[0])['answers'])
+        assert store.db.execute("SELECT 1 FROM events WHERE kind='parser_prefill_cleared'").fetchone()
+    assert not network.unexpected
 
 
 def test_eu_greenhouse_rejects_wrong_region_post_before_the_one_canonical_native_grant(store,monkeypatch):
