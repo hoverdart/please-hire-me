@@ -1,7 +1,11 @@
 """One source-bound modern Greenhouse JSON submission and native upload grant.
 
-Reviewed renderer: entry.client-DnzCgKgt.js, SHA256
-378c96ee0ba18cc20667ed84f7822c0d78d833296d843097040c47e2dfba2728.
+Reviewed standard and embedded renderers: entry.client-2CybloNd.js, SHA256
+71f11e09f0995f3fed6367d6a3fe535dd7f22f24b292619e10e19f24ff8f964b;
+embed.job_app-CgQ1D6ea.js, SHA256
+30542f66f9ea490d54bdc45ddb843f37b937fe208e8b6f8887769db2807186ee.
+Pelias city formatting: vendor-Ann2cuF6.js, SHA256
+3ad72a1df8aa7ef0b61ffc534c09cc689174e47e38a491735eab005dcef2da18.
 Its response.ok acknowledgement still requires the exact confirmation route and
 a fresh completed-application receipt. Unknown/legacy encodings remain held.
 """
@@ -12,6 +16,7 @@ from email import policy
 from email.parser import BytesParser
 import hashlib
 import json
+import math
 import re
 import time
 from urllib.parse import parse_qsl, urljoin, urlsplit
@@ -25,6 +30,8 @@ UPLOAD_HOSTS = {'grnhse-prod-jben-us-west-2.s3.us-west-2.amazonaws.com',
                 'grnhse-prod-jben-us-east-1.s3.us-east-1.amazonaws.com',
                 'grnhse-prod-jben-eu-west-1.s3.eu-west-1.amazonaws.com'}
 ROUTE = 'routes/$url_token_.jobs_.$job_post_id'
+EMBED_ROUTE = 'routes/embed.job_app'
+LOCATION_HOST = 'api-geocode-earth-proxy.greenhouse.io'
 BASIC = {'first_name', 'last_name', 'preferred_name', 'email', 'phone',
          'resume_text', 'cover_letter_text'}
 CONSENTS = {'gdpr_consent_given', 'gdpr_processing_consent_given',
@@ -44,6 +51,69 @@ def _https(url, hosts):
     except (ValueError, TypeError):
         pass
     return None
+
+
+def _page_identity(url):
+    parsed = _https(url, HOSTS)
+    if not parsed:
+        return None
+    match = re.fullmatch(r'/([A-Za-z0-9_-]+)/jobs/([0-9]+)', parsed.path)
+    if match:
+        return (*match.groups(), False)
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    values = dict(pairs)
+    if (parsed.path != '/embed/job_app' or len(pairs) != len(values)
+            or set(values) - {'for', 'token', 't', 'gh_src', 'ccuid'}
+            or not re.fullmatch(r'[A-Za-z0-9_-]+', values.get('for', ''))
+            or not re.fullmatch(r'[0-9]+', values.get('token', ''))):
+        return None
+    return values['for'], values['token'], True
+
+
+def _city(feature):
+    """Only native city suggestions, using the reviewed Pelias display label."""
+    if not isinstance(feature, dict):
+        return None
+    props, geometry = feature.get('properties'), feature.get('geometry')
+    if not isinstance(props, dict) or not isinstance(geometry, dict):
+        return None
+    coords = geometry.get('coordinates')
+    country, label, code = props.get('country'), props.get('label'), props.get('country_code')
+    if (props.get('layer') not in {'locality', 'borough'} or geometry.get('type') != 'Point'
+            or not isinstance(coords, list) or len(coords) != 2
+            or any(type(x) not in (int, float) or not math.isfinite(x) for x in coords)
+            or not -180 <= coords[0] <= 180 or not -90 <= coords[1] <= 90
+            or not all(isinstance(x, str) and 0 < len(x) <= 1000 for x in (country, label))
+            or not isinstance(code, str) or not re.fullmatch(r'[A-Z]{2}', code)):
+        return None
+    parts = [part.strip() for part in label.split(',')]
+    if len(parts) == 2:
+        label = ', '.join((parts[0], country))
+    elif len(parts) == 3:
+        region = props.get('macroregion') if parts[1] in (props.get('macroregion'), props.get('macroregion_a')) else props.get('region')
+        if not isinstance(region, str) or not region:
+            return None
+        label = ', '.join((parts[0], region, country))
+    return label, (coords[1], coords[0], code)
+
+
+def _phone(value, actual, answers):
+    """The renderer sends intl-tel-input.getNumber(), not its display text."""
+    approved = re.sub(r'[^0-9]', '', value)
+    if (not isinstance(actual, str) or not approved or len(actual) > 100
+            or not re.fullmatch(r'[+0-9 ().-]+', actual)
+            or re.sub(r'[^0-9]', '', actual) != approved):
+        _unsupported()
+    if re.fullmatch(r'\+[0-9 ().-]+', value.strip()) and 8 <= len(approved) <= 15:
+        return '+' + approved
+    countries = [answer for answer in answers if _identity(answer['field']) == {'country'}]
+    if (len(countries) == 1 and countries[0]['field'].get('type') == 'combobox'
+            and re.search(r'\+1$', countries[0]['value'])):
+        if len(approved) == 10:
+            return '+1' + approved
+        if len(approved) == 11 and approved.startswith('1'):
+            return '+' + approved
+    _unsupported()
 
 
 def _identity(field):
@@ -90,6 +160,31 @@ def observe_upload(browser, response, key):
     if browser.current_host not in HOSTS:
         return
     request = response.request
+    location = _https(request.url, {LOCATION_HOST})
+    if location and request.method == 'GET' and response.status == 200 and _page_identity(browser.page.url):
+        pairs = parse_qsl(location.query, keep_blank_values=True)
+        query = dict(pairs)
+        if (location.path != '/v1/autocomplete' or len(pairs) != len(query)
+                or set(query) - {'api_key', 'layers', 'lang', 'text', 'size'}
+                or query.get('layers') not in {'locality', 'locality,borough'} or query.get('lang') != 'en'
+                or not 0 < len(query.get('text', '')) <= 1000):
+            return
+        try:
+            data = response.json()
+            features = data.get('features') if isinstance(data, dict) else None
+            if not isinstance(features, list) or len(features) > 1000:
+                return
+            suggestions = getattr(browser, 'greenhouse_native_locations', None)
+            if suggestions is None:
+                suggestions = browser.greenhouse_native_locations = {}
+            for feature in features:
+                city = _city(feature)
+                if city:
+                    label, value = city
+                    suggestions.setdefault(label, set()).add(value)
+        except (ValueError, TypeError, AttributeError):
+            pass
+        return
     parsed = _https(request.url, HOSTS)
     if parsed and request.method == 'GET' and response.status == 200:
         canonical = 'boards.eu.greenhouse.io' if '.eu.greenhouse.io' in browser.current_host else 'boards.greenhouse.io'
@@ -134,7 +229,8 @@ def observe_upload(browser, response, key):
                 return
             match = re.fullmatch(r'/v1/boards/([A-Za-z0-9_-]+)/education/(schools|degrees|disciplines)', parsed.path)
             page = urlsplit(browser.page.url)
-            if (match and page.hostname == browser.current_host and page.path.startswith('/' + match[1] + '/jobs/')
+            identity = _page_identity(browser.page.url)
+            if (match and page.hostname == browser.current_host and identity and identity[0] == match[1]
                     and all(name in {'term', 'page'} for name, _ in parse_qsl(parsed.query))
                     and isinstance(data, dict) and isinstance(data.get('items'), list) and len(data['items']) <= 5000):
                 options = browser.greenhouse_native_options.setdefault(match[2], {})
@@ -252,7 +348,9 @@ class GreenhouseSubmission:
             timezone:Intl.DateTimeFormat().resolvedOptions().timeZone, url:location.href})""")
         if not isinstance(state, dict) or not isinstance(state.get('loaders'), dict):
             _unsupported()
-        root, route = state['loaders'].get('root'), state['loaders'].get(ROUTE)
+        identity = _page_identity(state.get('url'))
+        embedded = bool(identity and identity[2])
+        root, route = state['loaders'].get('root'), state['loaders'].get(EMBED_ROUTE if embedded else ROUTE)
         if not isinstance(root, dict) or not isinstance(route, dict) or root.get('internal') or root.get('preview'):
             _unsupported()
         current = _https(state.get('url'), HOSTS)
@@ -261,22 +359,38 @@ class GreenhouseSubmission:
         if (not current or not posting or current.hostname != browser.current_host
                 or not isinstance(tenant, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', tenant)
                 or not isinstance(identifier, str) or not re.fullmatch(r'[0-9]+', identifier)
-                or current.path != '/' + tenant + '/jobs/' + identifier
-                or posting.path != current.path or root.get('urlToken') != tenant):
+                or identity != (tenant, identifier, embedded)
+                or _page_identity(job['url']) != (tenant, identifier, False)
+                or posting.hostname != current.hostname or root.get('urlToken') != tenant
+                or bool(root.get('embedded')) != embedded or route.get('internal')):
             _unsupported()
         self.tenant, self.identifier = tenant, identifier
         self.submit_url = route.get('submitPath')
         final = _https(self.submit_url, HOSTS)
         canonical = 'boards.eu.greenhouse.io' if '.eu.greenhouse.io' in current.hostname else 'boards.greenhouse.io'
-        if (not final or final.hostname != canonical or final.path != current.path or final.query
+        path = '/' + tenant + '/jobs/' + identifier
+        confirmation = '/embed/job_app/confirmation?for=' + tenant + '&token=' + identifier if embedded else path + '/confirmation'
+        if (not final or final.hostname != canonical or final.path != ('/embed' + path if embedded else path) or final.query
                 or root.get('ENV', {}).get('JBEN_URL') != 'https://' + canonical
-                or route.get('confirmationPath') != current.path + '/confirmation'):
+                or route.get('confirmationPath') != confirmation):
             _unsupported()
         self.confirmation_url = urljoin(state['url'], route['confirmationPath'])
         self.metadata = route.get('jobPost')
         public = _https(self.metadata.get('public_url'), HOSTS) if isinstance(self.metadata, dict) else None
-        if (not isinstance(self.metadata, dict) or not public or public.path != current.path
-                or public.hostname != current.hostname or public.query
+        public_valid = bool(public and public.path == path and public.hostname == current.hostname and not public.query)
+        if embedded and isinstance(self.metadata, dict):
+            # The public URL may name the employer's custom careers page. It
+            # is identity evidence only; it never gains navigation/write access.
+            raw = self.metadata.get('public_url')
+            try:
+                candidate = urlsplit(raw) if isinstance(raw, str) else None
+                public_valid = public_valid or bool(candidate and candidate.scheme == 'https' and candidate.hostname
+                    and not candidate.username and not candidate.password and candidate.port in (None, 443)
+                    and not candidate.fragment and candidate.path == '/jobs/' + identifier
+                    and parse_qsl(candidate.query, keep_blank_values=True) == [('gh_jid', identifier)])
+            except ValueError:
+                public_valid = False
+        if (not isinstance(self.metadata, dict) or not public_valid
                 or not isinstance(self.metadata.get('questions'), list)
                 or not isinstance(self.metadata.get('fingerprint'), str)
                 or not re.fullmatch(r'[a-f0-9]{40,64}', self.metadata['fingerprint'])
@@ -352,18 +466,30 @@ class GreenhouseSubmission:
                 target[prefix + '_url'] = uploaded['url']
                 target[prefix + '_url_filename'] = uploaded['filename']
                 continue
+            if name == 'candidate_location':
+                value = answer('candidate-location', bool(question.get('required')))
+                if value is not None:
+                    locations = getattr(self.browser, 'greenhouse_native_locations', {}).get(value, set())
+                    if kind != 'input_text' or len(locations) != 1:
+                        _unsupported()
+                    latitude, longitude, country = next(iter(locations))
+                    # Use the renderer's Number.toString representation, not a
+                    # separately inferred or rounded location.
+                    coordinates = self.browser.page.evaluate('(values) => values.map(String)', [latitude, longitude])
+                    if (not isinstance(coordinates, list) or len(coordinates) != 2
+                            or any(not isinstance(x, str) or not re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?(?:e[+-]?[0-9]+)?', x)
+                                   or len(x) > 40 for x in coordinates)
+                            or tuple(map(float, coordinates)) != (latitude, longitude)):
+                        _unsupported()
+                    result.update(location=value, latitude=coordinates[0], longitude=coordinates[1], country_short_name=country)
+                continue
             value = answer(name, bool(question.get('required')), question)
             if name in BASIC:
                 if value:
                     if name == 'phone':
                         fields = [item['field'] for item in answers if name in _identity(item['field'])]
                         actual = self.browser._control(fields[0]).input_value()
-                        approved = re.sub(r'[^0-9]', '', value)
-                        if (not isinstance(actual, str) or not approved or len(actual) > 100
-                                or re.search(r'[\r\n\x00]', actual)
-                                or re.sub(r'[^0-9]', '', actual) != approved):
-                            _unsupported()
-                        value = actual
+                        value = _phone(value, actual, answers)
                     result[name] = value
                 continue
             match = re.fullmatch(r'question_([0-9]+)(?:\[\])?', name)
@@ -397,6 +523,37 @@ class GreenhouseSubmission:
                     if len(values) != 1:
                         _unsupported()
                     result[name] = values[0]
+        demographics = self.metadata.get('demographic_questions')
+        for question in demographics.get('questions', []) if isinstance(demographics, dict) else []:
+            identifier = question.get('id')
+            if type(identifier) not in (int, str) or not re.fullmatch(r'[0-9]+', str(identifier)):
+                _unsupported()
+            value = answer(str(identifier), bool(question.get('required')),
+                           {'label': question.get('name')})
+            if value is None:
+                continue
+            choices = question.get('answer_options')
+            if not isinstance(choices, list) or not choices or not all(isinstance(x, dict) for x in choices):
+                _unsupported()
+            labels = [choice.get('name') for choice in choices]
+            ids = [str(choice.get('id')) for choice in choices]
+            if (not all(isinstance(label, str) for label in labels) or len(set(labels)) != len(labels)
+                    or len(set(ids)) != len(ids) or any(not re.fullmatch(r'[0-9]+', x) for x in ids)):
+                _unsupported()
+            from .answers import selections
+            selected = selections(value, labels)
+            schema = question.get('answer_type')
+            answer_type = schema.get('key') if isinstance(schema, dict) else None
+            if (not selected or answer_type not in {'SINGLE_SELECT', 'MULTI_SELECT'}
+                    or answer_type == 'SINGLE_SELECT' and len(selected) != 1):
+                _unsupported()
+            options = []
+            for choice in choices:
+                if choice['name'] in selected:
+                    if choice.get('free_form') is not False:
+                        _unsupported()
+                    options.append({'answer_option_id': str(choice['id'])})
+            result['demographic_answers'].append({'question_id': identifier, 'answer_options': options})
         compliance = self.metadata.get('data_compliance') or {}
         keys = set()
         if compliance.get('single_purpose_consent'):

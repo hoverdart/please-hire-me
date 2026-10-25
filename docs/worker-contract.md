@@ -29,6 +29,8 @@ Structured Ashby location values require an exact approved label and an unambigu
 
 Greenhouse and Ashby uploads require a successful response for the approved PDF; Ashby also requires confirmation that its file handle was attached to the form. A visible filename alone is insufficient. Required Ashby question headings apply to radio, checkbox, autocomplete and Yes/No controls.
 
+Greenhouse's reviewed standard and embedded forms bind the board, job, final endpoint and confirmation route. An employer's custom public careers link never gains write access. Education IDs must come from that board's native lookup. City coordinates must match a unique native city suggestion for the approved location; street-address and reverse-location results cannot authorize them. Demographic choices use the exact approved labels and native IDs, including explicit opt-outs; free-form disclosures remain held. Phone serialization uses the confirmed international number or an explicitly approved North American calling code, without changing its approved digits.
+
 Lever's native location picker requires an exact approved suggestion and a matching committed location object. Unavailable choices can be omitted only when the employer's field is optional.
 
 Lever's native resume parser accepts only the exact approved PDF for the rendered employer account. Its successful storage acknowledgement must match the form before final submission; HTTP success or a visible filename alone is insufficient. Preparation suppresses remote parsing and uploads as well as final submission.
