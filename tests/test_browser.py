@@ -9,6 +9,13 @@ from hireme.util import Blocked,digest
 @pytest.fixture
 def ats(request):
     records=[];html=(Path(__file__).parent/'fixtures/application.html').read_bytes()
+    if getattr(request,'param',None)=='local-file-replacement':
+        html=html.replace(b'</body>',b'''<script>
+          document.querySelector('input[type=file]').addEventListener('change', event => {
+            window.fileSelections=(window.fileSelections||0)+1;
+            event.target.remove();
+          });
+        </script></body>''')
     if getattr(request,'param',False) is True:
         html=html.replace(b'<button type="submit">',b'<label for="cover_letter">Cover Letter*</label><input id="cover_letter" name="cover_letter" type="file" required><button type="submit">')
     if getattr(request,'param',None)=='otp':
@@ -139,6 +146,18 @@ def test_local_exact_answers_upload_confirm_and_no_retry(store,ats):
 
 def test_prepare_only_never_submits(store,ats):
     with Browser(store,test_url=ats[0]) as b:assert b.apply(local_job(store,ats),live=False)=='prepared'
+    assert not ats[1]
+
+
+@pytest.mark.parametrize('ats',['local-file-replacement'],indirect=True)
+def test_preparation_keeps_selected_pdf_local_without_mutating_the_upload_widget(store,ats):
+    job=local_job(store,ats)
+    with Browser(store,test_url=ats[0]) as browser:
+        assert browser.apply(job,live=False)=='prepared'
+        assert browser.page.evaluate('window.fileSelections||0')==0
+        assert browser.page.locator('input[type=file]').evaluate('(e)=>e.files.length')==0
+    package=json.loads(store.db.execute('SELECT package FROM applications WHERE job_id=?',(job['id'],)).fetchone()[0])
+    assert package['documents'][0]['hash']==store.db.execute("SELECT hash FROM documents WHERE kind='resume'").fetchone()[0]
     assert not ats[1]
 
 

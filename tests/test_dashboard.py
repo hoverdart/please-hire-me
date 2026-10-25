@@ -206,7 +206,8 @@ def test_dashboard_worker_failure_is_visible_and_retryable(store, failure_mode):
     finally: process.terminate(); process.join(5)
 
 
-def test_dashboard_stops_preparation_without_resuming_submissions(store, job):
+@pytest.mark.parametrize('width',[320,390,1440])
+def test_dashboard_stops_preparation_without_resuming_submissions(store, job, tmp_path, width):
     from playwright.sync_api import sync_playwright, expect
     store.update_settings({'live_enabled': False})
     sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
@@ -215,12 +216,14 @@ def test_dashboard_stops_preparation_without_resuming_submissions(store, job):
     try:
         wait_for_dashboard(process,base)
         with sync_playwright() as p:
-            browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
+            browser = p.chromium.launch(); page = browser.new_page(viewport={'width': width, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(base + '/#token=fixture-capability')
             expect(page.locator('#worker-state')).to_have_text('Preparing applications…')
             expect(page.locator('#pause')).to_have_text('Stop preparation & pause')
             expect(page.locator('#pause')).to_be_enabled(); expect(page.locator('#run')).to_be_disabled()
+            assert page.locator('#worker-strip button').evaluate_all('(buttons)=>buttons.every(b=>b.scrollWidth<=b.clientWidth && b.scrollHeight<=b.clientHeight)')
+            page.locator('#worker-strip').screenshot(path=str(tmp_path/f'preparation-controls-{width}.png'))
             page.locator('#pause').click(); page.evaluate('refresh()')
             expect(page.locator('#worker-state')).to_have_text('Submissions paused')
             expect(page.locator('#worker-error')).to_be_hidden()
