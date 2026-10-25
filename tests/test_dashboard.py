@@ -34,6 +34,20 @@ def pause_first_request(page,pattern,pending):
     page.route(pattern,handle)
 
 
+def assert_layout_fits_viewport(page):
+    """Measure rendered layout, retaining useful diagnostics for persistent overflow."""
+    from playwright.sync_api import TimeoutError as RenderingTimeout
+    try:
+        page.wait_for_function('() => document.documentElement.scrollWidth <= innerWidth',timeout=2000)
+    except RenderingTimeout:
+        pass  # The assertion below reports which rendered elements overflow.
+    layout=page.evaluate('''() => ({width:innerWidth, scroll:document.documentElement.scrollWidth,
+        overflowing:[...document.querySelectorAll('body *')].filter(e=>e.getClientRects().length &&
+            e.getBoundingClientRect().right>innerWidth).slice(0,20).map(e=>({tag:e.tagName,id:e.id,
+            right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width}))})''')
+    assert layout['scroll']<=layout['width'],layout
+
+
 def launch(root,repo,port):
     from hireme import scheduler
     scheduler.status=lambda *args, **kwargs: {'installed':False}
@@ -192,7 +206,8 @@ def test_dashboard_worker_failure_is_visible_and_retryable(store, failure_mode):
     finally: process.terminate(); process.join(5)
 
 
-def test_dashboard_stops_preparation_without_resuming_submissions(store, job):
+@pytest.mark.parametrize('width',[320,390,1440])
+def test_dashboard_stops_preparation_without_resuming_submissions(store, job, tmp_path, width):
     from playwright.sync_api import sync_playwright, expect
     store.update_settings({'live_enabled': False})
     sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
@@ -201,12 +216,14 @@ def test_dashboard_stops_preparation_without_resuming_submissions(store, job):
     try:
         wait_for_dashboard(process,base)
         with sync_playwright() as p:
-            browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
+            browser = p.chromium.launch(); page = browser.new_page(viewport={'width': width, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(base + '/#token=fixture-capability')
             expect(page.locator('#worker-state')).to_have_text('Preparing applications…')
             expect(page.locator('#pause')).to_have_text('Stop preparation & pause')
             expect(page.locator('#pause')).to_be_enabled(); expect(page.locator('#run')).to_be_disabled()
+            assert page.locator('#worker-strip button').evaluate_all('(buttons)=>buttons.every(b=>b.scrollWidth<=b.clientWidth && b.scrollHeight<=b.clientHeight)')
+            page.locator('#worker-strip').screenshot(path=str(tmp_path/f'preparation-controls-{width}.png'))
             page.locator('#pause').click(); page.evaluate('refresh()')
             expect(page.locator('#worker-state')).to_have_text('Submissions paused')
             expect(page.locator('#worker-error')).to_be_hidden()
@@ -412,6 +429,8 @@ def test_question_review_shows_employer_wording_and_safe_policy_links_before_ans
             page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=questions]').click()
             question = page.locator('#question-list article')
             expect(question).to_have_count(1)
+            expect(question).to_be_visible()
+            expect(page.locator('#question-list')).not_to_have_attribute('aria-busy','true')
             explanation = question.locator('p').filter(has_text='I confirm the application details')
             expect(explanation).to_have_text(wording)
             assert explanation.evaluate('(e)=>Boolean(e.compareDocumentPosition(e.parentElement.querySelector("form")) & Node.DOCUMENT_POSITION_FOLLOWING)')
@@ -420,7 +439,8 @@ def test_question_review_shows_employer_wording_and_safe_policy_links_before_ans
             expect(question.get_by_text('Unsafe policy')).to_have_count(0)
             expect(question.locator('select').first).to_have_value('')
             expect(question.locator('select').first).to_have_attribute('aria-describedby', explanation.get_attribute('id'))
-            assert page.evaluate('window.badContext === undefined && document.documentElement.scrollWidth <= innerWidth')
+            assert page.evaluate('window.badContext === undefined')
+            assert_layout_fits_viewport(page)
             assert not errors
             page.screenshot(path=str(tmp_path / f'question-wording-{width}.png'), full_page=True)
             browser.close()

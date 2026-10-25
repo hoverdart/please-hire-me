@@ -1050,6 +1050,10 @@ class Browser:
                 actual=re.sub(r'[^0-9]','',actual);value=re.sub(r'[^0-9]','',value)
             if actual!=value:raise Blocked('field_verification_failed',f['label'])
         for d in documents:
+            if self.preparing:
+                path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
+                if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')
+                continue
             if self.lever_resume and d['hash']==self.lever_resume.document['hash']:self.lever_resume.verify()
             if not self.preparing and self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and d['hash'] not in self.uploaded_files:
                 raise Blocked('upload_verification_failed','Greenhouse has not acknowledged the approved PDF upload')
@@ -1062,14 +1066,15 @@ class Browser:
             sizes=el.evaluate('(e)=>Array.from(e.files||[]).map(f=>f.size)')
             expected=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents').stat().st_size
             if sizes!=[expected] and not (d['hash'] in self.uploaded_files and d['filename'] in self.page.locator('body').inner_text()):raise Blocked('upload_verification_failed')
-        if self.page.locator('[aria-invalid=true]').count() or not self.page.evaluate('''() => Array.from(document.forms).every(f=>Array.from(f.elements).every(e=>{
+        if self.page.locator('[aria-invalid=true]').count() or not self.page.evaluate('''preparing => Array.from(document.forms).every(f=>Array.from(f.elements).every(e=>{
+            if(preparing && e.type==='file')return true;
             if(e.type==='checkbox' && e.name && e.getAttribute('description')){
                 const group=Array.from(f.elements).filter(x=>x.type==='checkbox'&&x.name===e.name&&x.getAttribute('description')===e.getAttribute('description'));
                 // Greenhouse marks each option required, but requires a group answer.
                 if(group.length>1)return !group.some(x=>x.required)||group.some(x=>x.checked);
             }
             return !e.checkValidity||e.checkValidity();
-        }))'''):raise Blocked('invalid_fields')
+        }))''',self.preparing):raise Blocked('invalid_fields')
 
     def apply(self,job,live=True):
         self.workday_grant=None
@@ -1258,6 +1263,10 @@ class Browser:
             for d in documents:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')
+                # Selecting a local file can replace the widget or start a
+                # parser even when network writes are blocked. Preparation
+                # validates the chosen PDF without touching upload controls.
+                if not live:continue
                 self.upload_payloads[d['hash']]=path.read_bytes()
                 if d in retained_docs:continue
                 control=self._control(d['field'])
