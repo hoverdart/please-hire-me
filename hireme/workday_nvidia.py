@@ -31,6 +31,26 @@ SOURCE_READS={
 }
 
 
+def native_response_shape(value):
+    """Bounded JSON structure only; never retain response values or nested keys."""
+    def kind(item):
+        if item is None:return 'null'
+        if isinstance(item,bool):return 'boolean'
+        if isinstance(item,(int,float)):return 'number'
+        if isinstance(item,str):return 'string'
+        if isinstance(item,list):return 'array'
+        if isinstance(item,dict):return 'object'
+        return 'unknown'
+    result={'type':kind(value)}
+    if isinstance(value,dict):
+        keys=sorted(key for key in value if isinstance(key,str)
+                    and re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}',key))[:32]
+        result.update(fields={key:kind(value[key]) for key in keys},field_count=len(value))
+        if len(keys)!=len(value):result['omitted_field_count']=len(value)-len(keys)
+    elif isinstance(value,list):result['item_count']=len(value)
+    return result
+
+
 class NativeBrowserTransport:
     """No APIRequestContext or cookie export; every request crosses Browser.route."""
     def __init__(self,controller):
@@ -73,11 +93,39 @@ class NativeBrowserTransport:
                     } finally {clearTimeout(timer)}
                 }""",{'url':operation.url,'method':operation.method,'headers':operation.headers,
                        'body':operation.body.decode('utf-8'),'timeout':NATIVE_TIMEOUT_MS})
-            return pending.value
+            response=pending.value
+            if operation.purpose=='draft_create':self._record_creation_response(response)
+            return response
         except Blocked:raise
         except Exception:
             raise Blocked('remote_draft_uncertain' if operation.method!='GET' else 'workday_native_read_failed',
                 'The exact native employer response could not be verified') from None
+
+    def _record_creation_response(self,response):
+        """Keep evidence before strict ACK decoding can discard an unknown shape."""
+        grant=getattr(self.browser,'workday_grant',None)
+        record_id=getattr(grant,'record_id',None)
+        if not getattr(grant,'used',False) or not re.fullmatch(r'[a-f0-9]{64}',str(record_id)):
+            return
+        detail={'version':1,'record_id':record_id,'http_status':response.status}
+        try:body=response.body()
+        except Exception:detail['shape']={'type':'unavailable'}
+        else:
+            detail.update(body_sha256=hashlib.sha256(body).hexdigest(),body_bytes=len(body))
+            if len(body)>1024*1024:detail['shape']={'type':'oversized'}
+            else:
+                try:
+                    value=json.loads(body)
+                    detail['shape']=native_response_shape(value)
+                    # An opaque draft ID is recovery evidence, not an ACK.
+                    # Keep credentials and arbitrary response values excluded.
+                    if (response.status==200 and isinstance(value,dict)
+                            and not any(value.get(key) for key in ('error','errors','errorCode','commonRequestId'))
+                            and isinstance(value.get('sessionId'),str) and 0<len(value['sessionId'])<=4096):
+                        try:detail['candidate_remote_id']=identifier(value.get('id'))
+                        except Blocked:pass
+                except (ValueError,UnicodeError,RecursionError):detail['shape']={'type':'invalid_json'}
+        self.store.event('workday_draft_response',self.controller.job['id'],detail)
 
     def get(self,url):
         return self.request(NativeOperation(url,'GET',b'',{'accept':'application/json'},'read'))

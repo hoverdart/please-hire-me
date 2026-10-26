@@ -166,7 +166,7 @@ class ClosedNvidiaEmployer:
         if request.method=='GET' and path.endswith('/canapplycontinue'):return reply({'canApply':True,'canContinue':True})
         if request.method=='GET' and path.endswith('/applications') and query.get('draftsOnly')==['true']:
             assert query.get('type')==['active'] and query.get('jobPostingAnchorId')==['Job_Posting_Anchor_ID='+SLUG]
-            rows=[{'applicationId':REMOTE,'draft':True,'posting':{'isPosted':True}}] if self.draft_exists and not self.final_sent else []
+            rows=[{'applicationId':REMOTE,'draft':True,'posting':{'isPosted':True}}] if self.draft_exists and not self.final_sent and self.outcome!='unknown_create_ack' else []
             return reply({'total':len(rows),'data':rows})
         if request.method=='GET' and path.endswith('/applications') and query.get('type') in (['active'],['inactive']):return reply({'total':0,'data':[]})
         if request.method=='GET' and request.url==native_url('common','countries/'+COUNTRY+'/regions'):
@@ -188,6 +188,8 @@ class ClosedNvidiaEmployer:
             assert body==b'{}'
             assert not self.draft_exists
             self.draft_exists=True
+            if self.outcome=='unknown_create_ack':
+                return reply({'id':REMOTE,'sessionId':SESSION,'extraMetadata':{'candidate':'synthetic-private-candidate'}})
             return reply({'id':REMOTE,'sessionId':SESSION})
         if request.method=='POST' and path.endswith(('/scanfile','/attachments')):
             message=BytesParser(policy=policy.default).parsebytes(b'Content-Type: '+request.headers['content-type'].encode()+b'\r\n\r\n'+body)
@@ -360,6 +362,36 @@ def test_nvidia_native_process_loss_after_acceptance_recovers_unknown_and_report
     body=message.get_body(preferencelist=('plain',)).get_content()
     assert 'Confirmed submissions: 0' in body and 'Submission outcome is uncertain.' in body
     assert employer.requests==before and len(employer.mailbox.messages_sent)==1 and not employer.unexpected
+
+
+def test_nvidia_unknown_creation_retains_recovery_diagnostics_and_never_recreates(store,monkeypatch):
+    employer=ClosedNvidiaEmployer(store,monkeypatch,outcome='unknown_create_ack')
+    employer.install_driver(monkeypatch)
+    result=employer.run()
+    assert result['confirmed']==0 and result['attempts']==1
+    intent,=store.db.execute('SELECT * FROM remote_draft_steps').fetchall()
+    assert intent['state']=='unknown' and not intent['acknowledgement']
+    assert not store.db.execute('SELECT 1 FROM workday_drafts').fetchone()
+    assert not employer.records and not employer.attachments and not employer.final_sent
+    event,=store.db.execute("SELECT * FROM events WHERE kind='workday_draft_response'").fetchall()
+    diagnostic=json.loads(event['detail'])
+    assert event['subject']==employer.job['id']
+    assert diagnostic['record_id']==intent['id'] and diagnostic['http_status']==200
+    assert diagnostic['candidate_remote_id']==REMOTE
+    assert diagnostic['shape']=={'type':'object','fields':{
+        'extraMetadata':'object','id':'string','sessionId':'string'},'field_count':3}
+    import hashlib
+    expected={'id':REMOTE,'sessionId':SESSION,'extraMetadata':{'candidate':'synthetic-private-candidate'}}
+    assert diagnostic['body_sha256']==hashlib.sha256(json.dumps(expected).encode()).hexdigest()
+    for private in (SESSION,'synthetic-private-candidate'):
+        assert private not in event['detail']
+    before=copy.deepcopy(employer.native_writes)
+    reopened=Store(store.root)
+    try:
+        assert employer.run(reopened)['attempts']==0
+        assert reopened.db.execute('SELECT state FROM remote_draft_steps').fetchone()[0]=='unknown'
+    finally:reopened.close()
+    assert employer.native_writes==before and not employer.unexpected
 
 
 def test_nvidia_unknown_save_ack_cannot_be_promoted_by_already_correct_backend_values(store,monkeypatch):
