@@ -7,6 +7,7 @@ import urllib.request
 import pytest
 from hireme.server import serve
 from pathlib import Path
+from tests.dashboard_evidence import dashboard_evidence
 
 
 def wait_for_dashboard(process,base,timeout=30):
@@ -678,8 +679,9 @@ def test_complete_batch_history_pages_searches_old_notes_and_retries(store):
     base = f'http://127.0.0.1:{port}'
     try:
         wait_for_dashboard(process,base)
-        with sync_playwright() as p:
+        with sync_playwright() as p, dashboard_evidence('batch-history') as observe:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []; history_requests = []
+            observe(page)
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.on('request', lambda request: history_requests.append(request.url) if '/api/runs' in request.url else None)
             page.goto(base + '/#token=fixture-capability')
@@ -771,8 +773,9 @@ def test_saved_posting_dialog_checks_current_saved_preferences_without_writes(st
         for _ in range(50):
             try:urllib.request.urlopen(base).close();break
             except OSError:time.sleep(.1)
-        with sync_playwright() as p:
+        with sync_playwright() as p, dashboard_evidence('saved-posting') as observe:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':320,'height':844});errors=[];checks=[]
+            observe(page)
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.on('request',lambda request:checks.append(request.url) if '/api/posting-check/' in request.url else None)
             page.goto(base+'/#token=fixture-capability')
