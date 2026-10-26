@@ -7,6 +7,14 @@ import time
 from urllib.parse import urlsplit
 
 
+def open_fixture_dashboard(page, base):
+    """Wait for initial data before starting the existing render deadlines."""
+    with page.expect_response(lambda response: response.request.method == 'GET'
+            and response.url.split('?', 1)[0] == base + '/api/state', timeout=30000) as initial:
+        page.goto(base + '/#token=fixture-capability')
+    assert initial.value.status == 200
+
+
 @contextmanager
 def dashboard_evidence(label):
     """Capture before Playwright closes; retain the original failure and timeout."""
