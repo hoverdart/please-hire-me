@@ -37,6 +37,8 @@ Lever's native resume parser accepts only the exact approved PDF for the rendere
 
 Lever's official verification client may load and perform its native checks. Visible CAPTCHA challenges still stop the worker. An unavailable client stops before the final submission intent.
 
+NVIDIA draft creation records a private response diagnostic before decoding its acknowledgement. It binds the HTTP status, response-body checksum and bounded top-level JSON field names/types to the existing durable intent. Response values, nested keys, raw bodies and session tokens are not retained. An unfamiliar response remains uncertain; the diagnostic cannot acknowledge a draft, enable the adapter or authorize another creation.
+
 Confirmed locality and onsite preferences can answer Bay Area office questions and establish that a Berkeley resident does not require relocation to the Bay Area. Willingness to relocate does not establish relocation need. New experience claims and recent reading still require real source facts.
 
 After an uncertain outcome is verified and reconciled as not submitted, an explicit `python -m hireme retry-not-submitted APPLICATION_ID --note 'Reason for retry'` preserves the previous attempt in the event ledger and requeues the job. Unknown, pending-verification and confirmed records cannot be retried through this command. Preparation cycles report prepared counts separately from confirmed submissions.

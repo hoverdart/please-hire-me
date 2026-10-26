@@ -11,6 +11,26 @@ from hireme.workday_nvidia import NativeBrowserTransport,definition_properties,n
 from hireme.workday_profiles import NVIDIA
 
 
+def test_native_response_diagnostics_do_not_retain_values_or_nested_applicant_fields():
+    from hireme.workday_nvidia import native_response_shape
+    value={'id':'private-id','sessionId':'private-token','error':False,
+           'details':{'private@example.invalid':'private applicant'},'items':['private-value']}
+    assert native_response_shape(value)=={'type':'object','field_count':5,'fields':{
+        'details':'object','error':'boolean','id':'string','items':'array','sessionId':'string'}}
+    assert native_response_shape(['private-value'])=={'type':'array','item_count':1}
+    assert native_response_shape('private-token')=={'type':'string'}
+
+
+def test_native_response_diagnostics_bound_untrusted_field_names_and_counts():
+    from hireme.workday_nvidia import native_response_shape
+    value={f'field{index}':'private' for index in range(100)}
+    value.update({'private@example.invalid':'private','x'*100:'private'})
+    result=native_response_shape(value)
+    assert result['field_count']==102 and result['omitted_field_count']==70
+    assert len(result['fields'])==32
+    assert 'private' not in json.dumps(result) and '@' not in json.dumps(result)
+
+
 @pytest.mark.parametrize('value,precision,expected',[('2024-08','YYYY','2024'),('2028-05','YYYY-MM','2028-05'),
     ('2028-05-19','YYYY-MM-DD','2028-05-19')])
 def test_native_manual_dates_use_observed_precision_without_inventing_components(value,precision,expected):
