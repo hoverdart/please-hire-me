@@ -32,11 +32,12 @@ def test_native_response_diagnostics_bound_untrusted_field_names_and_counts():
 
 
 @pytest.mark.parametrize('change,expected',[('valid','candidate-id'),('invalid_id',None),
-    ('missing_session',None),('error',None),('http_error',None)])
+    ('missing_session','candidate-id'),('sessionless_reference','candidate-id'),('error',None),('http_error',None)])
 def test_creation_diagnostic_retains_only_a_candidate_id_and_never_a_session(store,job,change,expected):
     value={'id':'candidate-id','sessionId':'synthetic-private-session','extra':{'contact':'private@example.invalid'}}
     if change=='invalid_id':value['id']='private@example.invalid'
     elif change=='missing_session':value.pop('sessionId')
+    elif change=='sessionless_reference':value={'id':'candidate-id','descriptor':'synthetic-private-label'}
     elif change=='error':value['errorCode']='SYNTHETIC_REJECTION'
     body=json.dumps(value).encode()
     browser=SimpleNamespace(store=store,page=None,workday_grant=SimpleNamespace(used=True,record_id='a'*64))
@@ -47,6 +48,7 @@ def test_creation_diagnostic_retains_only_a_candidate_id_and_never_a_session(sto
     assert 'synthetic-private-session' not in json.dumps(diagnostic)
     assert 'private@example.invalid' not in json.dumps(diagnostic)
     assert 'SYNTHETIC_REJECTION' not in json.dumps(diagnostic)
+    assert 'synthetic-private-label' not in json.dumps(diagnostic)
     assert not store.db.execute('SELECT 1 FROM workday_drafts').fetchone()
     assert not store.db.execute('SELECT 1 FROM applications').fetchone()
 

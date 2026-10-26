@@ -166,7 +166,7 @@ class ClosedNvidiaEmployer:
         if request.method=='GET' and path.endswith('/canapplycontinue'):return reply({'canApply':True,'canContinue':True})
         if request.method=='GET' and path.endswith('/applications') and query.get('draftsOnly')==['true']:
             assert query.get('type')==['active'] and query.get('jobPostingAnchorId')==['Job_Posting_Anchor_ID='+SLUG]
-            rows=[{'applicationId':REMOTE,'draft':True,'posting':{'isPosted':True}}] if self.draft_exists and not self.final_sent and self.outcome!='unknown_create_ack' else []
+            rows=[{'applicationId':REMOTE,'draft':True,'posting':{'isPosted':True}}] if self.draft_exists and not self.final_sent and self.outcome not in {'unknown_create_ack','sessionless_create_ack'} else []
             return reply({'total':len(rows),'data':rows})
         if request.method=='GET' and path.endswith('/applications') and query.get('type') in (['active'],['inactive']):return reply({'total':0,'data':[]})
         if request.method=='GET' and request.url==native_url('common','countries/'+COUNTRY+'/regions'):
@@ -190,6 +190,8 @@ class ClosedNvidiaEmployer:
             self.draft_exists=True
             if self.outcome=='unknown_create_ack':
                 return reply({'id':REMOTE,'sessionId':SESSION,'extraMetadata':{'candidate':'synthetic-private-candidate'}})
+            if self.outcome=='sessionless_create_ack':
+                return reply({'id':REMOTE,'descriptor':'synthetic-private-label'})
             return reply({'id':REMOTE,'sessionId':SESSION})
         if request.method=='POST' and path.endswith(('/scanfile','/attachments')):
             message=BytesParser(policy=policy.default).parsebytes(b'Content-Type: '+request.headers['content-type'].encode()+b'\r\n\r\n'+body)
@@ -364,8 +366,12 @@ def test_nvidia_native_process_loss_after_acceptance_recovers_unknown_and_report
     assert employer.requests==before and len(employer.mailbox.messages_sent)==1 and not employer.unexpected
 
 
-def test_nvidia_unknown_creation_retains_recovery_diagnostics_and_never_recreates(store,monkeypatch):
-    employer=ClosedNvidiaEmployer(store,monkeypatch,outcome='unknown_create_ack')
+@pytest.mark.parametrize('outcome,expected',[
+    ('unknown_create_ack',{'id':REMOTE,'sessionId':SESSION,'extraMetadata':{'candidate':'synthetic-private-candidate'}}),
+    ('sessionless_create_ack',{'id':REMOTE,'descriptor':'synthetic-private-label'}),
+])
+def test_nvidia_unknown_creation_retains_recovery_diagnostics_and_never_recreates(store,monkeypatch,outcome,expected):
+    employer=ClosedNvidiaEmployer(store,monkeypatch,outcome=outcome)
     employer.install_driver(monkeypatch)
     result=employer.run()
     assert result['confirmed']==0 and result['attempts']==1
@@ -379,11 +385,10 @@ def test_nvidia_unknown_creation_retains_recovery_diagnostics_and_never_recreate
     assert diagnostic['record_id']==intent['id'] and diagnostic['http_status']==200
     assert diagnostic['candidate_remote_id']==REMOTE
     assert diagnostic['shape']=={'type':'object','fields':{
-        'extraMetadata':'object','id':'string','sessionId':'string'},'field_count':3}
+        key:'object' if isinstance(value,dict) else 'string' for key,value in expected.items()},'field_count':len(expected)}
     import hashlib
-    expected={'id':REMOTE,'sessionId':SESSION,'extraMetadata':{'candidate':'synthetic-private-candidate'}}
     assert diagnostic['body_sha256']==hashlib.sha256(json.dumps(expected).encode()).hexdigest()
-    for private in (SESSION,'synthetic-private-candidate'):
+    for private in (SESSION,'synthetic-private-candidate','synthetic-private-label'):
         assert private not in event['detail']
     before=copy.deepcopy(employer.native_writes)
     reopened=Store(store.root)
