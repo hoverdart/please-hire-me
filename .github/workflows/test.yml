@@ -58,6 +58,14 @@ jobs:
         if: runner.os == 'macOS'
         run: HOMEBREW_NO_AUTO_UPDATE=1 brew install age
       - run: python -m pytest -q
+      - name: Retain synthetic dashboard failure evidence
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dashboard-failure-${{ matrix.os }}-python-${{ matrix.python }}
+          path: test-results/dashboard/
+          if-no-files-found: ignore
+          retention-days: 7
       - run: python -m compileall -q hireme scripts tests
       - run: for file in hireme/static/*.js; do node --check "$file" || exit; done
       - run: for file in run.sh setup.sh scripts/*.sh; do bash -n "$file"; done

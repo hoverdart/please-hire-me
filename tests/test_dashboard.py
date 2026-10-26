@@ -7,6 +7,7 @@ import urllib.request
 import pytest
 from hireme.server import serve
 from pathlib import Path
+from tests.dashboard_evidence import dashboard_evidence, open_fixture_dashboard
 
 
 def wait_for_dashboard(process,base,timeout=30):
@@ -48,9 +49,20 @@ def assert_layout_fits_viewport(page):
     assert layout['scroll']<=layout['width'],layout
 
 
-def launch(root,repo,port):
+def launch(root,repo,port,initial_state_delay=0):
     from hireme import scheduler
     scheduler.status=lambda *args, **kwargs: {'installed':False}
+    if initial_state_delay:
+        from hireme.store import Store
+        snapshot=Store.snapshot
+        first=True
+        def delayed_snapshot(self,*args,**kwargs):
+            nonlocal first
+            if first:
+                first=False
+                time.sleep(initial_state_delay)
+            return snapshot(self,*args,**kwargs)
+        Store.snapshot=delayed_snapshot
     serve(Path(root),Path(repo),port,token="fixture-capability")
 
 
@@ -663,7 +675,8 @@ def test_model_request_budget_counts_all_providers_without_replacing_connection_
     finally: process.terminate(); process.join(5)
 
 
-def test_complete_batch_history_pages_searches_old_notes_and_retries(store):
+@pytest.mark.parametrize('initial_state_delay',[0,6])
+def test_complete_batch_history_pages_searches_old_notes_and_retries(store,initial_state_delay):
     for index in range(61):
         store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',
                          (f'run-{index:03}', '2026-10-03T12:00:00+00:00', None, 'finished', 0,
@@ -674,15 +687,16 @@ def test_complete_batch_history_pages_searches_old_notes_and_retries(store):
                      ('2000-01-01T00:00:00+00:00', 'old-blocked', 'claude-cli'))
     from playwright.sync_api import sync_playwright, expect
     sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
-    process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port)); process.start()
+    process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port,initial_state_delay)); process.start()
     base = f'http://127.0.0.1:{port}'
     try:
         wait_for_dashboard(process,base)
-        with sync_playwright() as p:
+        with sync_playwright() as p, dashboard_evidence('batch-history') as observe:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []; history_requests = []
+            observe(page)
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.on('request', lambda request: history_requests.append(request.url) if '/api/runs' in request.url else None)
-            page.goto(base + '/#token=fixture-capability')
+            open_fixture_dashboard(page,base)
             expect(page.locator('#runs .run-row')).to_have_count(5)
             expect(page.locator('#runs')).to_contain_text('Preparation batch · 2 prepared')
             expect(page.locator('#runs')).not_to_contain_text('2 submitted')
@@ -760,22 +774,24 @@ def test_complete_source_health_search_pages_retry_and_mobile_layout(store):
     finally: process.terminate(); process.join(5)
 
 
-def test_saved_posting_dialog_checks_current_saved_preferences_without_writes(store,job):
+@pytest.mark.parametrize('initial_state_delay',[0,6])
+def test_saved_posting_dialog_checks_current_saved_preferences_without_writes(store,job,initial_state_delay):
     from playwright.sync_api import sync_playwright,expect
     store.update_settings({'live_enabled':False})
     before=store.snapshot()
     sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
-    process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port));process.start()
+    process=multiprocessing.Process(target=launch,args=(str(store.root),str(Path.cwd()),port,initial_state_delay));process.start()
     base=f'http://127.0.0.1:{port}'
     try:
         for _ in range(50):
             try:urllib.request.urlopen(base).close();break
             except OSError:time.sleep(.1)
-        with sync_playwright() as p:
+        with sync_playwright() as p, dashboard_evidence('saved-posting') as observe:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':320,'height':844});errors=[];checks=[]
+            observe(page)
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.on('request',lambda request:checks.append(request.url) if '/api/posting-check/' in request.url else None)
-            page.goto(base+'/#token=fixture-capability')
+            open_fixture_dashboard(page,base)
             page.locator('[data-view="settings"]').click()
             page.locator('#settings-form [name="locations"]').fill('London')
             page.locator('[data-view="today"]').click()

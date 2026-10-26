@@ -120,8 +120,7 @@ class NativeBrowserTransport:
                     # An opaque draft ID is recovery evidence, not an ACK.
                     # Keep credentials and arbitrary response values excluded.
                     if (response.status==200 and isinstance(value,dict)
-                            and not any(value.get(key) for key in ('error','errors','errorCode','commonRequestId'))
-                            and isinstance(value.get('sessionId'),str) and 0<len(value['sessionId'])<=4096):
+                            and not any(value.get(key) for key in ('error','errors','errorCode','commonRequestId'))):
                         try:detail['candidate_remote_id']=identifier(value.get('id'))
                         except Blocked:pass
                 except (ValueError,UnicodeError,RecursionError):detail['shape']={'type':'invalid_json'}
