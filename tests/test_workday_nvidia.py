@@ -144,6 +144,56 @@ def owned_driver(store,job):
     return driver,calls
 
 
+def confirmed_resume_history(store):
+    store.update_settings({'tailored_resumes':True})
+    store.put_history_entry('employment',{'organization':'Previous Employer','title':'Software Intern',
+        'description':'Built Python services and maintained verified scheduling tools.'},
+        source='Applicant confirmed experience',confirmed=True)
+
+
+def test_native_resume_selection_uses_the_reviewed_tailored_pdf_and_field_binding(store,job):
+    from hireme.answers import validate_package
+    from hireme.tailored_resumes import generate,validate
+    driver,calls=owned_driver(store,job)
+    confirmed_resume_history(store)
+    reviewed=generate(store,driver.job)
+    original=store.db.execute("SELECT hash FROM documents WHERE kind='resume'").fetchone()[0]
+    selected=driver.selected_documents()
+    assert len(selected)==1 and selected[0]['hash']==reviewed['hash']!=original
+    assert selected[0]['artifact_id']==reviewed['artifact_id']
+    assert selected[0]['field']==driver.resume_field()
+    assert driver.documents({'section':'My Experience'})==selected
+    assert validate(store,driver.job,selected[0])==validate(store,driver.job,reviewed)
+    package={'job_id':driver.job['id'],'url':driver.job['url'],'answers':[],
+        'documents':selected,'facts_hash':digest(store.facts()),'steps':[{'fields':[selected[0]['field']]}]}
+    validate_package(store,driver.job,package)
+    assert not calls and not store.db.execute('SELECT 1 FROM remote_draft_steps').fetchone()
+
+
+def test_native_tailored_resume_never_falls_back_to_original_without_confirmed_history(store,job):
+    driver,calls=owned_driver(store,job)
+    store.update_settings({'tailored_resumes':True})
+    with pytest.raises(Blocked,match='resume_history_required'):driver.selected_documents()
+    assert not calls and not store.db.execute('SELECT 1 FROM application_artifacts').fetchone()
+
+
+def test_native_resume_selection_keeps_original_when_tailoring_is_disabled(store,job):
+    driver,calls=owned_driver(store,job)
+    original=dict(store.db.execute("SELECT * FROM documents WHERE kind='resume'").fetchone())
+    assert driver.selected_documents()==[{**original,'field':driver.resume_field()}]
+    assert not calls and not store.db.execute('SELECT 1 FROM application_artifacts').fetchone()
+
+
+def test_native_resume_selection_rejects_tampered_reviewed_tailored_pdf(store,job):
+    from hireme.tailored_resumes import generate
+    driver,calls=owned_driver(store,job)
+    confirmed_resume_history(store)
+    reviewed=generate(store,driver.job)
+    (store.root/'documents'/reviewed['filename']).write_bytes(b'%PDF-tampered')
+    with pytest.raises(Blocked,match='document_tampered'):driver.selected_documents()
+    assert not calls and not store.db.execute('SELECT 1 FROM remote_draft_steps').fetchone()
+
+
 def test_owned_existing_draft_adoption_is_read_only_and_binds_empty_native_resume_session(store,job):
     driver,calls=owned_driver(store,job)
     observation,proof=driver.find_draft()
