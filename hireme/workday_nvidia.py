@@ -114,7 +114,16 @@ class NativeBrowserTransport:
             detail.update(body_sha256=hashlib.sha256(body).hexdigest(),body_bytes=len(body))
             if len(body)>1024*1024:detail['shape']={'type':'oversized'}
             else:
-                try:detail['shape']=native_response_shape(json.loads(body))
+                try:
+                    value=json.loads(body)
+                    detail['shape']=native_response_shape(value)
+                    # An opaque draft ID is recovery evidence, not an ACK.
+                    # Keep credentials and arbitrary response values excluded.
+                    if (response.status==200 and isinstance(value,dict)
+                            and not any(value.get(key) for key in ('error','errors','errorCode','commonRequestId'))
+                            and isinstance(value.get('sessionId'),str) and 0<len(value['sessionId'])<=4096):
+                        try:detail['candidate_remote_id']=identifier(value.get('id'))
+                        except Blocked:pass
                 except (ValueError,UnicodeError,RecursionError):detail['shape']={'type':'invalid_json'}
         self.store.event('workday_draft_response',self.controller.job['id'],detail)
 

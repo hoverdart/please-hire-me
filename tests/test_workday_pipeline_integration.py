@@ -364,7 +364,7 @@ def test_nvidia_native_process_loss_after_acceptance_recovers_unknown_and_report
     assert employer.requests==before and len(employer.mailbox.messages_sent)==1 and not employer.unexpected
 
 
-def test_nvidia_unknown_creation_retains_value_free_diagnostics_and_never_recreates(store,monkeypatch):
+def test_nvidia_unknown_creation_retains_recovery_diagnostics_and_never_recreates(store,monkeypatch):
     employer=ClosedNvidiaEmployer(store,monkeypatch,outcome='unknown_create_ack')
     employer.install_driver(monkeypatch)
     result=employer.run()
@@ -377,12 +377,13 @@ def test_nvidia_unknown_creation_retains_value_free_diagnostics_and_never_recrea
     diagnostic=json.loads(event['detail'])
     assert event['subject']==employer.job['id']
     assert diagnostic['record_id']==intent['id'] and diagnostic['http_status']==200
+    assert diagnostic['candidate_remote_id']==REMOTE
     assert diagnostic['shape']=={'type':'object','fields':{
         'extraMetadata':'object','id':'string','sessionId':'string'},'field_count':3}
     import hashlib
     expected={'id':REMOTE,'sessionId':SESSION,'extraMetadata':{'candidate':'synthetic-private-candidate'}}
     assert diagnostic['body_sha256']==hashlib.sha256(json.dumps(expected).encode()).hexdigest()
-    for private in (REMOTE,SESSION,'synthetic-private-candidate','candidate'):
+    for private in (SESSION,'synthetic-private-candidate'):
         assert private not in event['detail']
     before=copy.deepcopy(employer.native_writes)
     reopened=Store(store.root)
