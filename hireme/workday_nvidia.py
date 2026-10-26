@@ -21,7 +21,7 @@ from .workday_native import (NativeOperation, SESSION_HEADER, SOURCE_SIGNATURE, 
 from .workday_profiles import NVIDIA, NVIDIA_SITE
 
 
-DRIVER_VERSION=1
+DRIVER_VERSION=2
 NATIVE_TIMEOUT_MS=25000
 US='bc33aa3152ec42d4995f4791a106ed09'
 ORIGIN='https://'+NVIDIA
@@ -531,7 +531,11 @@ class NvidiaNativeDriver:
                 'native_id':'approved-resume','native_resource':'resumeattachments'}
 
     def selected_documents(self):
-        row=self.store.db.execute("SELECT * FROM documents WHERE kind='resume'").fetchone()
+        if self.store.settings()['tailored_resumes']:
+            from .tailored_resumes import generate
+            row=generate(self.store,self.job)
+        else:
+            row=self.store.db.execute("SELECT * FROM documents WHERE kind='resume'").fetchone()
         if not row:raise Blocked('resume_not_in_package')
         return [{**dict(row),'field':self.resume_field()}]
 
