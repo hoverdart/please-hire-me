@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import secrets
 import re
+import shlex
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
@@ -81,10 +83,13 @@ def dashboard_url(root,port=8766):
     return f'http://127.0.0.1:{port}/#token={token}'
 
 
-def dashboard_startup_message(url,hide_token=False):
+def dashboard_startup_message(url,hide_token=False,root=None):
     if not hide_token:return f'Dashboard: {url}'
     origin=urlsplit(url)
-    return f'Dashboard is running at {origin.scheme}://{origin.netloc}/; use `.venv/bin/python -m hireme open-dashboard` on the Pi desktop to open it.'
+    command=[sys.executable,'-I','-m','hireme']
+    if root is not None:command.extend(['--data-dir',str(Path(root).expanduser().resolve())])
+    command.extend(['open-dashboard','--port',str(origin.port or 8766)])
+    return f'Dashboard is running at {origin.scheme}://{origin.netloc}/. Run: '+shlex.join(command)
 
 
 def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_token=False):
@@ -639,7 +644,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
             except Exception as e:return self.send(500,{'error':type(e).__name__})
     server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     url=f'http://127.0.0.1:{port}/#token={token}'
-    print(dashboard_startup_message(url,hide_token),flush=True)
+    print(dashboard_startup_message(url,hide_token,root),flush=True)
     if open_browser:
         import webbrowser
         try:

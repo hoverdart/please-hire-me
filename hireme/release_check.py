@@ -30,7 +30,7 @@ PROTECTED_TABLES = (
 OPERATIONAL_TABLES = (
     'employer_accounts', 'remote_draft_steps', 'adapter_verifications',
     'confirmed_history', 'workday_drafts', 'recruiting_feedback', 'recruiting_sync',
-    'prior_application_mail', 'prior_application_scans', 'prior_application_company_names',
+    'prior_application_mail', 'prior_application_scans', 'prior_application_company_names', 'prior_application_mail_companies',
 )
 
 

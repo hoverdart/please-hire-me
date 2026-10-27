@@ -20,9 +20,22 @@ from .util import Blocked, application_identity, company_key, company_normalizer
 
 MAX_MESSAGES = 25
 FRESH_SECONDS = 15 * 60
-QUERY = '-from:me {subject:application subject:applying subject:candidacy subject:assessment subject:interview subject:offer}'
+QUERY = '-from:me {"your application" "you applied" "you have applied" "thank you for applying" "thanks for applying"}'
 PRIOR = re.compile(r'\b(?:your application|you(?: have)? applied|thank you for applying|thanks for applying|received your application|reviewing your application)\b', re.I)
+APPLIED = re.compile(r'\b(?:you(?: have)? applied|thank you for applying|thanks for applying|(?:received|reviewing) your application|your application (?:has been|was) (?:received|submitted))\b',re.I)
+APPLICATION_INVITATION = re.compile(r'\b(?:start|begin|submit|complete|finish|create)\s+(?:your|an?)\s+application\b',re.I)
 ROLE = re.compile(r'\b(?:application\s+(?:for|to)|appl(?:ied|ying)\s+(?:for|to)|(?:position|role)\s+(?:of|as))\b', re.I)
+
+
+def _prior_evidence(text):
+    if not PRIOR.search(text):return False
+    for match in APPLIED.finditer(text):
+        before=re.split(r'[.!?;\n]',text[:match.start()])[-1]
+        if not re.search(r'\b(?:if|unless|whether|should|not|never|once|when)\b',before,re.I):return True
+    if APPLICATION_INVITATION.search(text):return False
+    if re.search(r'\b(?:if|when|once|after)\s+you(?:\s+have)?\s+(?:apply|applied|submit|submitted)\b'
+                 r'|\b(?:not|never)\s+(?:\w+\s+){0,3}(?:received|applied|submitted)\b',text,re.I):return False
+    return True
 
 
 def _normalized(value):
@@ -42,13 +55,16 @@ def _role_key(store, job):
 
 
 def _role_matches(title,text):
-    if len(title)<12 or len(title.split())<2:return False
-    for match in re.finditer(r'(?<!\w)'+re.escape(title)+r'(?!\w)',text):
-        before=text[:match.start()].rstrip();after=text[match.end():].lstrip()
+    if not title:return False
+    text=unicodedata.normalize('NFKC',text).casefold()
+    pattern=r'(?<![^\W_])'+r'[\W_]+'.join(re.escape(word) for word in title.split())+r'(?![^\W_])'
+    for match in re.finditer(pattern,text):
+        before=_normalized(text[:match.start()]);after=_normalized(text[match.end():])
         # A complete role phrase is required. "Software Engineer" cannot
         # consume "Senior Software Engineer" or "Software Engineer Intern".
-        prefix=(not before or re.search(r'\b(?:(?:application|appl(?:ied|ying))\s+(?:for|to)(?:\s+the)?|(?:position|role)\s+(?:of|as)|your application)$',before))
-        suffix=not after or bool(re.match(r'(?:position|role|at|application)\b',after))
+        prefix=(not before or re.search(r'\b(?:(?:application|appl(?:ied|ying))\s+(?:for|to)(?:\s+(?:the|our|a|an))?|(?:position|role)\s+(?:of|as)|your application)$',before))
+        boundary=bool(re.match(r'''^[\s)\]}"']*(?:[.!?;]|[,:]\s+(?:and|but|we|our|you|your|please|thank|thanks)\b)''',text[match.end():]))
+        suffix=not after or boundary or bool(re.match(r'(?:position|role|at|application)\b',after))
         if prefix and suffix:return True
     return False
 
@@ -59,8 +75,12 @@ def _company_keys(store, company):
     keys = {canonical, company_key(company)}
     for key, value in aliases.items():
         if normalize(key) == canonical: keys.update((company_key(key), company_key(value)))
-    for row in store.db.execute('SELECT company_key,email_company_key FROM prior_application_company_names'):
-        if keys & set(row):keys.update(row)
+    bindings=list(store.db.execute('SELECT company_key,email_company_key FROM prior_application_company_names'))
+    while True:
+        before=set(keys)
+        for row in bindings:
+            if keys & set(row):keys.update(row)
+        if keys==before:break
     return {key for key in keys if key}
 
 
@@ -136,23 +156,27 @@ def ingest(store, message, *, company=None):
     if AUTHENTICATION_MAIL.search(subject+'\n'+body) or re.match(r'\s*(?:re|fw|fwd):', subject, re.I): return False
     body = re.split(r'\n(?:On .{0,300}wrote:|[- ]*Original Message[- ]*)', body, maxsplit=1, flags=re.I)[0]
     body = '\n'.join(line for line in body.splitlines() if not line.lstrip().startswith('>'))
-    category = classify(subject, body)
-    if not PRIOR.search(subject+'\n'+body) or category == 'unclassified': return False
+    text=re.sub(r"n['’]t\b",' not',subject+'\n'+body,flags=re.I)
+    category = classify('',text)
+    # Recruiting-stage classification is deliberately strict. A receipt need
+    # not establish a later stage to provide evidence of an earlier application.
+    if not _prior_evidence(text) and not (PRIOR.search(text) and category in {'rejection','assessment','interview','offer'}):return False
     passages = [line.strip()[:2000] for line in body.splitlines() if ROLE.search(line)][:6]
-    text = _normalized(subject+'\n'+body)
+    text = _normalized(re.sub(r'https?://[^\s<>]+',' ',text))
     aliases=store.settings()['company_aliases'];normalize=company_normalizer(aliases)
-    candidates = [company] if company else [row[0] for row in store.db.execute('SELECT DISTINCT company FROM jobs')]
+    candidates = {row[0] for row in store.db.execute('SELECT DISTINCT company FROM jobs')}
+    if company:candidates.add(company)
     names=set();bindings=list(store.db.execute('SELECT company_key,email_company_key,name FROM prior_application_company_names'))
     for name in candidates:
         labels={name}
         for key,value in aliases.items():
             if normalize(key)==normalize(name):labels.update((key,value))
         labels.update(row['name'] for row in bindings if row['company_key'] in {company_key(name),normalize(name)})
-        names.update(company_key(label) for label in labels if len(company_key(label))>=3
+        names.update(company_key(label) for label in labels if len(company_key(label))>=2
                      and ' '+_normalized(label)+' ' in ' '+text+' ')
     # Keep a name actually present in the email, rather than a mutable alias
     # target. Later alias edits can supplement this original identity.
-    ck = max(names,key=lambda key:(len(key),key)) if len({normalize(name) for name in names})==1 else ''
+    ck = max(names,key=lambda key:(len(key),key)) if names and len({min(_company_keys(store,name)) for name in names})==1 else ''
     urls = re.findall(r'https://[^\s<>"\']+', body) + _urls(message.get('payload', {}))
     keys = sorted({_posting_key(url.rstrip('.,;:!?)')) for url in urls[:100] if url.startswith('https://')})
     domain = sender.rsplit('@', 1)[-1]
@@ -162,18 +186,30 @@ def ingest(store, message, *, company=None):
     excerpt = (passages[0] if passages else next((line.strip() for line in body.splitlines() if PRIOR.search(line)), subject))
     excerpt = re.sub(r'https://\S+', '[link]', excerpt)[:600]
     # URLs and account-like strings are unnecessary in the searchable passage.
-    role_text = '\n'.join(_normalized(re.sub(r'https://\S+|[\w.+-]+@[\w.-]+', ' ',part)) for part in [subject,*passages])[:12000]
+    # Keep punctuation so a sentence boundary after a complete role is not
+    # mistaken for a qualifier. URLs and addresses remain unnecessary here.
+    role_text = '\n'.join(re.sub(r'https://\S+|[\w.+-]+@[\w.-]+', ' ',part) for part in [subject,*passages])[:12000]
     with store.transaction():
         if owner_email(store) != owner: return False
+        # An explicit company search can repair inferred attribution. Never
+        # change an applicant's confirmed or dismissed review during a scan.
         if ck:
-            store.db.execute("UPDATE prior_application_mail SET company_key=?,revision=revision+1,updated=? WHERE owner_hash=? AND message_id=? AND company_key=''",
-                             (ck,now(),digest(owner),identity))
-        return bool(store.db.execute('''INSERT OR IGNORE INTO prior_application_mail
+            store.db.execute("""UPDATE prior_application_mail SET company_key=?,revision=revision+1,updated=?
+                WHERE owner_hash=? AND message_id=? AND state='pending' AND company_key!=?
+                  AND (? OR company_key='')""",(ck,now(),digest(owner),identity,ck,company is not None))
+        mid=digest([digest(owner),identity])
+        added=bool(store.db.execute('''INSERT OR IGNORE INTO prior_application_mail
             (id,owner_hash,message_id,received,sender,subject,excerpt,role_text,posting_keys,company_key,
              category,sender_verified,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (digest([digest(owner),identity]),digest(owner),identity,
+            (mid,digest(owner),identity,
              datetime.fromtimestamp(received,timezone.utc).isoformat(timespec='seconds'),sender[:320],subject,
              excerpt,role_text,json.dumps(keys),ck,category,int(verified),now(),now())).rowcount)
+        if store.db.execute('SELECT state FROM prior_application_mail WHERE id=?',(mid,)).fetchone()[0]=='pending':
+            store.db.execute('UPDATE prior_application_mail SET role_text=?,revision=revision+1,updated=? WHERE id=? AND role_text!=?',(role_text,now(),mid,role_text))
+            candidates_added=sum(store.db.execute('INSERT OR IGNORE INTO prior_application_mail_companies VALUES(?,?)',(mid,name)).rowcount for name in sorted(names))
+            if candidates_added and not added:
+                store.db.execute('UPDATE prior_application_mail SET revision=revision+1,updated=? WHERE id=?',(now(),mid))
+        return added
 
 
 def matches(store, job):
@@ -181,16 +217,18 @@ def matches(store, job):
     except Blocked: return []
     keys = _company_keys(store, job['company']); posting = _posting_key(job['url']); title = _normalized(job['title'])
     marks = ','.join('?' for _ in keys) or 'NULL'
-    rows = store.db.execute(f'''SELECT * FROM prior_application_mail WHERE owner_hash=? AND state!='dismissed'
-        AND (company_key IN ({marks}) OR instr(posting_keys,?)>0 OR job_id=? OR selected_posting_key=?)''',
-        (owner,*sorted(keys),posting,job['id'],posting))
+    rows = store.db.execute(f'''SELECT * FROM prior_application_mail WHERE (owner_hash=? OR state='confirmed') AND state!='dismissed'
+        AND (company_key IN ({marks}) OR instr(posting_keys,?)>0 OR job_id=? OR selected_posting_key=?
+             OR EXISTS(SELECT 1 FROM prior_application_mail_companies c WHERE c.mail_id=prior_application_mail.id AND c.company_key IN ({marks})))''',
+        (owner,*sorted(keys),posting,job['id'],posting,*sorted(keys)))
     result=[]
     for row in rows:
         if row['state']=='confirmed':
             reason = 'Reviewed email link' if (row['job_id']==job['id'] or row['selected_posting_key']==posting
                                                or row['selected_role_key'] in {digest([key,title]) for key in keys}) else None
         elif posting in json.loads(row['posting_keys']): reason = 'Exact posting link in application email'
-        elif any(_role_matches(title,line) for line in row['role_text'].splitlines()): reason = 'Company and exact role in application email'
+        elif any(_role_matches(title,line) for line in row['role_text'].splitlines()):
+            reason = 'Company and exact role in application email' if row['company_key'] in keys else 'Possible employer and exact role in application email'
         else: reason = None
         if reason: result.append({**dict(row),'match_reason':reason})
     return result
@@ -208,13 +246,16 @@ def _scope(store, company):
 
 def _query(store, company):
     if not company: return QUERY
-    labels = {company}
+    aliases=set();preferred=[]
     for key,value in store.settings()['company_aliases'].items():
-        if store.company(key)==store.company(company): labels.update((key,value))
+        if store.company(key)==store.company(company):
+            aliases.update((key,value))
+            if company_key(key)==company_key(company):preferred.append(value)
     keys=_company_keys(store,company)
-    labels.update(row['name'] for row in store.db.execute('SELECT company_key,email_company_key,name FROM prior_application_company_names')
-                  if row['company_key'] in keys or row['email_company_key'] in keys)
-    terms = ['"'+' '.join(re.findall(r'[^\W_]+',label))+'"' for label in sorted(labels)[:10]]
+    official={row['name'] for row in store.db.execute('SELECT company_key,email_company_key,name FROM prior_application_company_names')
+              if row['company_key'] in keys or row['email_company_key'] in keys}
+    labels=dict.fromkeys([company,*sorted(official),*sorted(preferred),*sorted(aliases)])
+    terms = ['"'+' '.join(re.findall(r'[^\W_]+',label))+'"' for label in list(labels)[:10]]
     return QUERY+' {'+' '.join(terms)+'}'
 
 
@@ -264,8 +305,8 @@ def scan(store, *, company=None, restart=False, client_factory=None):
             for identity in list(pending):
                 if time.monotonic()>=deadline: break
                 valid_owner()
-                existing=store.db.execute('SELECT company_key FROM prior_application_mail WHERE owner_hash=? AND message_id=?',(owner,identity)).fetchone()
-                if not existing or company and not existing['company_key']:
+                existing=store.db.execute('SELECT company_key,state FROM prior_application_mail WHERE owner_hash=? AND message_id=?',(owner,identity)).fetchone()
+                if not existing or existing['state']=='pending':
                     from googleapiclient.errors import HttpError
                     try: message=messages.get(userId='me',id=identity,format='full').execute()
                     except HttpError as error:
@@ -298,10 +339,24 @@ def require_recent_check(store,job):
 
 
 def preflight(store,job):
+    try:return _preflight(store,job)
+    except Blocked as error:
+        if error.reason in {'paused','cycle_timeout'}:raise
+        if not error.reason.startswith('prior_application_'):
+            error=Blocked('prior_application_mail_unavailable','Gmail history could not be checked. Reconnect or retry the scan; existing email holds are preserved.')
+        failures=getattr(store,'prior_mail_failures',None);checked=getattr(store,'prior_mail_checked',None)
+        if failures is not None and checked is not None and _scope(store,job['company']) in checked and error.reason!='prior_application_email':
+            failures[_scope(store,job['company'])]=(error.reason,error.detail)
+        raise error from None
+
+
+def _preflight(store,job):
     check_saved(store,job)
     if not store.settings()['gmail_prior_applications']: return
     checked=getattr(store,'prior_mail_checked',None);scope=_scope(store,job['company'])
     if checked is not None and scope in checked:
+        failure=(getattr(store,'prior_mail_failures',None) or {}).get(scope)
+        if failure:raise Blocked(*failure)
         require_recent_check(store,job);return
     if checked is not None and len(checked)>=getattr(store,'prior_mail_check_limit',store.settings()['max_attempts_per_cycle']):
         raise Blocked('prior_application_check_budget','This batch reached its company email-check limit. Saved scan progress will continue next cycle.')
@@ -316,6 +371,14 @@ def preflight(store,job):
     require_recent_check(store,job)
 
 
+def _evidence_companies(store,row):
+    names={candidate[0] for candidate in store.db.execute('SELECT company_key FROM prior_application_mail_companies WHERE mail_id=?',(row['id'],))}
+    if row['company_key']:names.add(row['company_key'])
+    keys=set()
+    for name in names:keys.update(_company_keys(store,name))
+    return keys
+
+
 def listing(store, *, offset=0):
     if type(offset) is not int or not 0<=offset<=1000000: raise ValueError('Choose a valid mail page')
     owner=_owner(store)
@@ -324,8 +387,9 @@ def listing(store, *, offset=0):
     records=[]
     for row in store.db.execute('SELECT * FROM prior_application_mail WHERE owner_hash=? ORDER BY received DESC,id LIMIT 25 OFFSET ?',(owner,offset)):
         candidates=[]
-        if row['company_key']:
-            keys=_company_keys(store,row['company_key']);marks=','.join('?' for _ in keys)
+        keys=_evidence_companies(store,row)
+        if keys:
+            marks=','.join('?' for _ in keys)
             candidates=[dict(job) for job in store.db.execute(f'''SELECT id,company,title,url FROM jobs WHERE company_key IN ({marks})
                 ORDER BY (id=?) DESC,prior_role_matches(title,?) DESC,updated DESC LIMIT 50''',
                 (*sorted(keys),row['job_id'] or '', row['role_text']))]
@@ -344,7 +408,7 @@ def review(store,data):
         job=None
         if data['state']=='confirmed':
             job=store.db.execute('SELECT * FROM jobs WHERE id=?',(data.get('job_id'),)).fetchone()
-            if not job or not row['company_key'] or row['company_key'] not in _company_keys(store,job['company']): raise ValueError('Choose a saved role at the matching company')
+            if not job or not _evidence_companies(store,row)&_company_keys(store,job['company']): raise ValueError('Choose a saved role at the matching company')
         store.db.execute('UPDATE prior_application_mail SET state=?,job_id=?,selected_posting_key=?,selected_role_key=?,revision=revision+1,updated=? WHERE id=?',
             (data['state'],job['id'] if job else None,_posting_key(job['url']) if job else None,_role_key(store,job) if job else None,now(),row['id']))
         store.event('prior_application_mail_reviewed',row['id'],{'state':data['state'],'job_id':job['id'] if job else None})

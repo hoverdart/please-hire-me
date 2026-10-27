@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS prior_application_mail (id TEXT PRIMARY KEY, owner_ha
  revision INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL,
  UNIQUE(owner_hash,message_id));
 CREATE INDEX IF NOT EXISTS prior_application_mail_company ON prior_application_mail(owner_hash,company_key,state);
+CREATE TABLE IF NOT EXISTS prior_application_mail_companies (mail_id TEXT NOT NULL, company_key TEXT NOT NULL,
+ PRIMARY KEY(mail_id,company_key));
 CREATE TABLE IF NOT EXISTS prior_application_scans (owner_hash TEXT NOT NULL, company_key TEXT NOT NULL,
  query TEXT NOT NULL, pending TEXT NOT NULL, next_page TEXT NOT NULL, started REAL NOT NULL,
  completed REAL, updated TEXT NOT NULL, PRIMARY KEY(owner_hash,company_key));

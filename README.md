@@ -6,7 +6,7 @@ I got tired of applying to the same kinds of jobs, day after day, and entering t
 
 So I built HireMeMaybe to help with the repetitive parts.
 
-It's a private job application workspace that runs on your computer or a Raspberry Pi. It helps you find openings, prepare answers and cover letters from information you've confirmed, submit supported applications, and keep track of what happened.
+It's a private job application workspace that runs where you choose: locally on macOS or Linux, in a supported Linux environment on Windows, or on an optional Raspberry Pi. Bring your own documents, approved context and model connection. It helps you find openings, prepare answers and cover letters from information you've confirmed, submit supported applications, and keep track of what happened.
 
 The direction is a complete job-search feedback loop: applications, their exact materials, recruiting responses and a clear next step in one place. The [roadmap](docs/feedback-loop.md) distinguishes what's implemented from the networking and strategy work still ahead.
 
@@ -44,6 +44,14 @@ Complete the setup checklist:
 
 Your documents, credentials and history live outside the checkout in `~/.local/share/please-hire-me/`. Setup can be resumed later. Choosing Pi in setup does not transfer your files to another machine.
 
+For a different private workspace, put the same absolute `--data-dir` before **every** subcommand, including the dashboard, Gmail and scheduling commands:
+
+```bash
+.venv/bin/python -m hireme --data-dir /absolute/path/to/private-workspace dashboard --open
+```
+
+A checkout is code; the private workspace is your applicant identity and history. Move between machines with a [history backup and restore](docs/guide.md#back-up-and-move-your-data), then reconnect credentials on the destination. Use one active worker per applicant.
+
 ## Try it without personal data
 
 After installing dependencies:
@@ -80,6 +88,7 @@ Use **Find a tool** or **Ctrl/⌘ K** to locate tasks in the workspace.
 | Add writing examples or project context | **Profile → Materials** |
 | Change search targets, limits, timing or model settings | **Settings → Search & automation** / **Connections** |
 | Back up history | Settings → Search & automation → **Your data and backups** |
+| Find applications made outside the app | Connections → **Past applications from email** |
 
 **Pause** stops work at cancellation checkpoints; a request already sent to an employer cannot be undone. Unknown outcomes and email-verification challenges stay held for review. Verify them with the employer before recording a result.
 
@@ -91,6 +100,31 @@ For setup problems:
 ```
 
 These checks send no model requests or applications. See the [user guide](docs/guide.md#troubleshooting) for dashboard restarts and recovery.
+
+## Run while you're away
+
+Once you've reviewed your facts, documents, prepared drafts and limits, you can enable automatic applications and install the saved schedule:
+
+```bash
+.venv/bin/python -m hireme doctor --verify-login
+.venv/bin/python -m hireme schedule install
+.venv/bin/python -m hireme resume
+.venv/bin/python -m hireme schedule status
+```
+
+These commands enable applications at your saved interval; they do not start an immediate batch. To run a batch now, use `.venv/bin/python -m hireme run`. Review its results in Applications. A blocked question or CAPTCHA stays held while the worker continues with other eligible jobs. An uncertain submission stays held for reconciliation.
+
+macOS uses a user LaunchAgent; Linux uses cron or an existing systemd worker timer. The computer must remain awake and the user session or Linux environment must be running. Scheduled work is separate from the dashboard: closing a browser tab does not stop the worker, and stopping the dashboard terminal does not remove its schedule. Use one scheduler per applicant; `daemon` is a foreground alternative, not an additional schedule.
+
+To pause applications, run `.venv/bin/python -m hireme pause`. To remove automatic runs, also run `.venv/bin/python -m hireme schedule uninstall`. [Scheduling and recovery](docs/guide.md#pause-schedule-and-recover) explains the controls and where to inspect results.
+
+## Check your application email
+
+Gmail is optional and requires its own OAuth connection under **Connections → Email automation**. Browser sign-in alone does not connect it. Enable reports, recruiting feedback, verification codes and past-application checks separately; see [Gmail setup](docs/guide.md#gmail-and-employer-accounts).
+
+With **Check Gmail for past applications** enabled, the worker checks an employer's historical email before applying. Exact posting links or a complete company and role match hold duplicates, including applications made outside HireMeMaybe. Matching preserves internship year, seniority and location when they appear in the role title. A generic company acknowledgement stays available for review rather than marking every role at that company as applied.
+
+Use **Past applications from email** to scan an employer or build a broader historical index. The first scan includes archived mail, and each page saves its position. Continue when more mail remains; if Gmail limits access, retry later from the saved position. Review the original message and select an exact saved role when needed. These email records remain separate from the worker's submission outcomes. Email text stays out of model prompts.
 
 ## What to expect
 

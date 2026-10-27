@@ -119,7 +119,7 @@
     select.value=message.job_id||'';label.append(select);review.append(label);
     const identity=el('p',undefined,'help wide feedback-attempt');identity.setAttribute('aria-live','polite');
     const describe=()=>{const job=message.candidates.find(item=>item.id===select.value);identity.textContent=job?`${job.company} · ${job.title} · ${job.url} · Job ID: ${job.id}`:'Choose the saved role this email refers to. Existing uncertain applications remain held.';};select.onchange=describe;describe();review.append(identity);
-    if(!message.candidates.length)review.append(el('p','No saved role at this company yet. Keep this email; a future company scan can match newly discovered roles.','help wide'));
+    if(!message.candidates.length)review.append(el('p','No matching saved role yet. Keep this email; scan again after adding the role or confirming a company alias. You can also record Applied manually on an exact job after checking the original email.','help wide'));
     const actions=el('div',undefined,'actions wide'),confirm=el('button','Record past application'),dismiss=el('button','Dismiss email match','secondary');
     confirm.type='submit';dismiss.type='button';actions.append(confirm,dismiss);review.append(actions);
     const response=el('p',undefined,'help wide');response.setAttribute('role','status');review.append(response);

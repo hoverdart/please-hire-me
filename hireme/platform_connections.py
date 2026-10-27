@@ -194,7 +194,7 @@ def start_connect(store, connection_id):
                         browser.page.wait_for_timeout(250)
                 session_issue(worker, connection_id, 'not_checked', 'Sign-in window closed. Check the connection to verify it.')
         except Exception:
-            session_issue(worker, connection_id, 'check_failed', 'Could not complete the sign-in window. Close other worker browsers or use the terminal connect command on the Pi desktop.')
+            session_issue(worker, connection_id, 'check_failed', 'Could not complete the sign-in window. Close other worker browsers or use the terminal connect command on the computer running this installation.')
         finally:
             worker.close()
     try:

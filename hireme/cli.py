@@ -195,7 +195,7 @@ def main(argv=None):
         elif args.command=='open-dashboard':
             import webbrowser
             from .server import dashboard_url
-            if not webbrowser.open(dashboard_url(store.root,args.port)):raise ValueError('Open the dashboard from a terminal in the Pi desktop session')
+            if not webbrowser.open(dashboard_url(store.root,args.port)):raise ValueError('Open the dashboard from a desktop terminal on the computer running this installation')
         elif args.command=='workday':
             from .workday import commission,reconcile
             result=(commission if args.action=='commission' else reconcile)(store,REPO,args.job_id)

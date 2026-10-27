@@ -377,3 +377,331 @@ def test_email_review_rejects_an_unrelated_company_with_the_same_role_title(stor
     row=prior.listing(store)['messages'][0]
     with pytest.raises(ValueError,match='matching company'):
         prior.review(store,{'id':row['id'],'revision':row['revision'],'state':'confirmed','job_id':other['id']})
+
+
+@pytest.mark.parametrize('receipt',[
+    'Thanks for applying for the {title} position at Optiver.',
+    'You applied for the {title} position at Optiver.',
+    'You have applied for the {title} position at Optiver.',
+    'We received your application for the {title} position at Optiver and will contact you if there is a fit.',
+    'We received your application for the {title} position at Optiver. Please complete the assessment. We invite you to an interview.',
+])
+def test_prior_receipt_does_not_require_an_unambiguous_recruiting_stage(store,optiver,receipt):
+    assert prior.ingest(store,mail(optiver,body=receipt.format(title=optiver['title'])))
+    assert prior.matches(store,optiver)
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+class ReachedBrowser:
+    def __init__(self,store):self.store=store
+    def __enter__(self):return self
+    def __exit__(self,*_):pass
+    def apply(self,job,live=True):
+        self.store.event('fixture_browser_reached',job['id'],{})
+        return 'prepared'
+
+
+@pytest.mark.parametrize('reason',['gmail_reconnect_required','gmail_not_connected','gmail_account_mismatch'])
+def test_worker_recovers_from_mail_connection_errors_without_a_permanent_review_hold(store,optiver,monkeypatch,reason):
+    from hireme.worker import cycle
+    store.update_settings({'gmail_prior_applications':True})
+    def unavailable(_):raise Blocked(reason,'PRIVATE_PROVIDER_DETAIL')
+    monkeypatch.setattr(prior,'GmailClient',unavailable)
+    result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    assert result['attempts']==0 and result['reasons']=={'prior_application_mail_unavailable':1}
+    row=store.db.execute('SELECT category,evidence FROM job_holds').fetchone()
+    assert row['category']=='limits' and 'PRIVATE_PROVIDER_DETAIL' not in row['evidence']
+    service=Mailbox(optiver);service.pages=[[]]
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    assert result['attempts']==1 and store.db.execute("SELECT 1 FROM events WHERE kind='fixture_browser_reached'").fetchone()
+
+
+def test_competing_dashboard_scan_holds_only_until_the_lock_is_released(store,optiver,monkeypatch):
+    from hireme.worker import cycle
+    from hireme.store import worker_lock
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[[]]
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    with worker_lock(store.root,'prior-mail'):
+        result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    assert result['attempts']==0 and result['reasons']=={'prior_application_mail_unavailable':1}
+    assert store.db.execute('SELECT category FROM job_holds').fetchone()[0]=='limits'
+    result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    assert result['attempts']==1
+
+
+def test_old_mail_refresh_hold_is_recheckable_but_never_releases_an_uncertain_attempt(store,optiver,package):
+    from hireme.job_holds import hold,ready,recheck
+    hold(store,optiver,'gmail_reconnect_required',stage='screening')
+    assert ready(store,optiver) and recheck(store,optiver['id'])['ready']
+    hold(store,optiver,'gmail_reconnect_required',stage='screening')
+    package={**package,'job_id':optiver['id'],'url':optiver['url']}
+    aid=store.prepare(optiver,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    assert not ready(store,optiver)
+    with pytest.raises(ValueError,match='existing submission outcome'):recheck(store,optiver['id'])
+    assert store.application_record(aid)['state']=='unknown'
+
+
+def test_url_vendor_and_board_slug_are_not_competing_employer_names(store,optiver,job,monkeypatch):
+    slug={**optiver,'company':'optiverus'};store.upsert_job(slug)
+    store.upsert_job({**job,'company':'Greenhouse'})
+    monkeypatch.setattr(prior,'public_company_name',lambda *a,**k:'Optiver')
+    prior.resolve_company(store,slug)
+    body=f'We received your application for the {optiver["title"]} position at Optiver.\nDetails: {optiver["url"]}'
+    assert prior.ingest(store,mail(optiver,body=body))
+    repost={**slug,'url':slug['url']+'0','id':digest('reposted-optiver')};store.upsert_job(repost)
+    assert prior.matches(store,repost)[0]['match_reason']=='Company and exact role in application email'
+    row=prior.listing(store)['messages'][0]
+    assert any(candidate['id']==repost['id'] for candidate in row['candidates'])
+
+
+def test_company_scan_repairs_legacy_inferred_employer_without_overwriting_reviews(store,optiver):
+    assert prior.ingest(store,mail(optiver))
+    store.db.execute("UPDATE prior_application_mail SET company_key='greenhouse'")
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[['mail-one']]
+    prior.scan(store,company='Optiver',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    assert service.reads and prior.matches(store,optiver)
+    row=prior.listing(store)['messages'][0]
+    prior.review(store,{'id':row['id'],'revision':row['revision'],'state':'confirmed','job_id':optiver['id']})
+    before=dict(store.db.execute('SELECT * FROM prior_application_mail').fetchone())
+    assert not prior.ingest(store,mail(optiver),company='Another company')
+    assert dict(store.db.execute('SELECT * FROM prior_application_mail').fetchone())==before
+
+
+def test_reviewed_prior_application_survives_a_primary_email_change_without_exposing_old_mail(store,optiver):
+    assert prior.ingest(store,mail(optiver))
+    row=prior.listing(store)['messages'][0]
+    prior.review(store,{'id':row['id'],'revision':row['revision'],'state':'confirmed','job_id':optiver['id']})
+    store.put_facts({'email':'new@candidate.invalid'})
+    with pytest.raises(Blocked,match='prior_application_email'):prior.check_saved(store,optiver)
+    assert prior.listing(store)['total']==0
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+def test_mail_budget_finishes_normally_and_a_failed_company_does_not_starve_fresh_roles(store,optiver,monkeypatch):
+    from hireme.worker import cycle
+    other={**optiver,'company':'NewCo','id':digest('new-company-role'),'url':'https://job-boards.greenhouse.io/newco/jobs/12345'}
+    store.upsert_job(other);store.update_settings({'gmail_prior_applications':True,'max_attempts_per_cycle':1})
+    monkeypatch.setattr('hireme.worker.eligible',lambda job,*args:(90 if job['id']==optiver['id'] else 60,{}))
+    monkeypatch.setattr(prior,'public_company_name',lambda job,**kwargs:None if job['id']==optiver['id'] else job['company'])
+    service=Mailbox(optiver);service.pages=[[]]
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert result['attempts']==0 and result['reasons']=={'prior_application_company_review':1,'prior_application_check_budget':1}
+    row=store.db.execute('SELECT id,status,detail FROM runs ORDER BY rowid DESC LIMIT 1').fetchone()
+    assert row['status']=='finished' and json.loads(row['detail'])['shortfall']==result['target']
+    assert store.db.execute('SELECT state FROM report_outbox WHERE id=?',(row['id'],)).fetchone()[0]=='disabled'
+    service.pages=[[]];service.lists.clear()
+    result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert result['attempts']==1 and '"NewCo"' in service.lists[0]['q']
+    assert store.db.execute("SELECT subject FROM events WHERE kind='fixture_browser_reached'").fetchone()[0]==other['id']
+    monkeypatch.setattr(prior,'public_company_name',lambda job,**kwargs:job['company'])
+    prior.scan(store,company='Optiver',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert store.db.execute("SELECT subject FROM events WHERE kind='fixture_browser_reached' ORDER BY seq DESC LIMIT 1").fetchone()[0]==optiver['id']
+
+
+def test_expanded_receipt_search_restarts_old_completed_cursors(store,optiver,monkeypatch):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    with monkeypatch.context() as old:
+        old.setattr(prior,'QUERY','-from:me {subject:application subject:applying subject:candidacy subject:assessment subject:interview subject:offer}')
+        prior.scan(store,company='Optiver',client_factory=factory)
+    service.pages=[['new-receipt']]
+    prior.scan(store,company='Optiver',client_factory=factory)
+    assert 'after:' not in service.lists[-1]['q'] and prior.matches(store,optiver)
+
+
+@pytest.mark.parametrize('body',[
+    'If you have applied for the {title} position at Optiver, we will review your application.',
+    'We have not received your application for the {title} position at Optiver.',
+    'Start your application for the {title} position at Optiver.',
+    "We haven't received your application for the {title} position at Optiver.",
+    "Your application for the {title} position at Optiver wasn't submitted.",
+    "You haven't applied for the {title} position at Optiver.",
+])
+def test_hypothetical_or_explicitly_missing_applications_are_not_receipts(store,optiver,body):
+    assert not prior.ingest(store,mail(optiver,body=body.format(title=optiver['title'])))
+    assert not prior.matches(store,optiver)
+
+
+@pytest.mark.parametrize('body',[
+    'Unfortunately, your application was not selected.',
+    'We regret to inform you that your application has not been successful.',
+    "Unfortunately, your application wasn't selected.",
+])
+def test_rejections_remain_prior_application_evidence(store,optiver,body):
+    assert prior.ingest(store,mail(optiver,subject=f'Your application for the {optiver["title"]} position at Optiver',body=body))
+    assert prior.matches(store,optiver)[0]['category']=='rejection'
+
+
+def test_uncertain_re_attribution_cannot_erase_an_existing_role_hold(store,optiver):
+    assert prior.ingest(store,mail(optiver))
+    body=f'We received your application for the {optiver["title"]} position.\nDetails: {optiver["url"]}'
+    assert not prior.ingest(store,mail(optiver,body=body),company='Optiver')
+    repost={**optiver,'id':digest('repost-with-new-id'),'url':optiver['url']+'0'};store.upsert_job(repost)
+    assert prior.matches(store,repost)
+
+
+def test_a_company_filter_cannot_override_two_employers_named_in_a_message(store,optiver,job):
+    store.upsert_job({**job,'company':'NewCo'})
+    assert prior.ingest(store,mail(optiver))
+    body=f'We received your application for the {optiver["title"]} position at Optiver. NewCo is also mentioned.'
+    assert not prior.ingest(store,mail(optiver,body=body),company='NewCo')
+    assert prior.matches(store,optiver)
+    assert store.db.execute('SELECT company_key FROM prior_application_mail').fetchone()[0]=='optiver'
+
+
+def test_incomplete_mail_scan_continues_before_continuously_fresh_lower_ranked_roles(store,optiver,monkeypatch):
+    from hireme.worker import cycle
+    other={**optiver,'company':'NewCo','id':digest('fresh-other-company'),'url':'https://job-boards.greenhouse.io/newco/jobs/12345'}
+    store.upsert_job(other);store.update_settings({'gmail_prior_applications':True,'max_attempts_per_cycle':1})
+    monkeypatch.setattr('hireme.worker.eligible',lambda job,*args:(90 if job['id']==optiver['id'] else 60,{}))
+    service=Mailbox(optiver);service.pages=[[],[]]
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    first=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert first['attempts']==0 and first['reasons']['prior_application_scan_incomplete']==1
+    assert store.db.execute('SELECT state FROM report_outbox ORDER BY rowid DESC LIMIT 1').fetchone()[0]=='suppressed'
+    second=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert second['attempts']==1 and service.lists[-1]['pageToken']=='1'
+    assert store.db.execute("SELECT subject FROM events WHERE kind='fixture_browser_reached'").fetchone()[0]==optiver['id']
+
+
+@pytest.mark.parametrize('incomplete',[False,True])
+def test_roles_at_one_company_share_the_actual_scan_failure_and_one_check_slot(store,optiver,monkeypatch,incomplete):
+    from hireme.worker import cycle
+    other={**optiver,'id':digest('same-company-other-role'),'url':optiver['url']+'0','title':'Different Software Intern Summer 2027'}
+    store.upsert_job(other);store.update_settings({'gmail_prior_applications':True})
+    calls=[];service=Mailbox(optiver);service.pages=[[],[]]
+    def client(_):
+        calls.append(1)
+        if not incomplete:raise Blocked('gmail_reconnect_required')
+        return SimpleNamespace(email='test@candidate.invalid',service=service)
+    monkeypatch.setattr(prior,'GmailClient',client)
+    result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    reason='prior_application_scan_incomplete' if incomplete else 'prior_application_mail_unavailable'
+    assert result['attempts']==0 and result['reasons']=={reason:2} and len(calls)==1
+
+
+def test_mail_failure_reports_attention_without_inventing_an_application_attempt(store,optiver,monkeypatch):
+    from hireme.worker import cycle
+    store.update_settings({'gmail_prior_applications':True,'gmail_reports':True})
+    monkeypatch.setattr('hireme.reports.flush_reports',lambda store:None)
+    def unavailable(_):raise Blocked('gmail_reconnect_required')
+    monkeypatch.setattr(prior,'GmailClient',unavailable)
+    result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    report=store.db.execute('SELECT state,body FROM report_outbox ORDER BY created DESC LIMIT 1').fetchone()
+    assert result['attempts']==0 and report['state']=='pending'
+    assert 'Email-history checks need attention' in report['body']
+    assert 'Attempts: 0' in report['body'] and 'Optiver' not in report['body']
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+@pytest.mark.parametrize('company,extra',[('Remote',''),('Current','Explore our current openings.'),('Ramp','Our team will ramp up next month.')])
+def test_incidental_employer_words_cannot_release_a_first_scan_duplicate(store,optiver,job,monkeypatch,company,extra):
+    from hireme.worker import cycle
+    target={**optiver,'title':'Software Engineer Intern (Remote)'};store.upsert_job(target)
+    other={**job,'company':company,'title':target['title']};store.upsert_job(other)
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(target);service.pages=[['receipt']]
+    def receipt(**kwargs):return Response(mail(target,identity=kwargs['id'],body=f'We received your application for the {target["title"]} position at Optiver. {extra}'))
+    service.get=receipt
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    result=cycle(store,Path('.'),discover=False,job_ids=[target['id']],browser_factory=ReachedBrowser)
+    assert result['attempts']==0 and result['reasons']['prior_application_email']==1
+    row=prior.listing(store)['messages'][0]
+    assert any(candidate['id']==target['id'] for candidate in row['candidates'])
+    prior.review(store,{'id':row['id'],'revision':row['revision'],'state':'confirmed','job_id':target['id']})
+    assert prior.matches(store,target) and not prior.matches(store,other)
+
+
+def test_two_employers_in_one_passage_stay_held_until_exact_role_review(store,optiver,job):
+    other={**job,'company':'NewCo','title':optiver['title']};store.upsert_job(other)
+    assert prior.ingest(store,mail(optiver,body=f'We received your application for the {optiver["title"]} position at Optiver and NewCo.'))
+    assert prior.matches(store,optiver) and prior.matches(store,other)
+    row=prior.listing(store)['messages'][0]
+    assert {candidate['id'] for candidate in row['candidates']}=={optiver['id'],other['id']}
+    prior.review(store,{'id':row['id'],'revision':row['revision'],'state':'confirmed','job_id':optiver['id']})
+    assert prior.matches(store,optiver) and not prior.matches(store,other)
+
+
+def test_waiting_priority_check_failure_does_not_abort_unrelated_fresh_work(store,optiver,monkeypatch):
+    from hireme.worker import cycle
+    from hireme.job_holds import hold
+    other={**optiver,'company':'NewCo','id':digest('other-after-status-error'),'url':'https://job-boards.greenhouse.io/newco/jobs/12345'}
+    store.upsert_job(other);store.update_settings({'gmail_prior_applications':True,'max_attempts_per_cycle':1})
+    hold(store,optiver,'prior_application_mail_unavailable',stage='screening')
+    original=prior.require_recent_check
+    def check(store,job):
+        if job['id']==optiver['id']:raise RuntimeError('CORRUPT_LOCAL_STATUS')
+        return original(store,job)
+    monkeypatch.setattr(prior,'require_recent_check',check)
+    service=Mailbox(other);service.pages=[[]]
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert result['attempts']==1
+    assert store.db.execute("SELECT subject FROM events WHERE kind='fixture_browser_reached'").fetchone()[0]==other['id']
+
+
+def test_backup_preserves_ambiguous_employer_holds_and_review_candidates(store,optiver,job,tmp_path):
+    from hireme.backup import create_backup,restore_backup
+    from hireme.store import Store
+    store.upsert_job({**job,'company':'Remote'})
+    target={**optiver,'title':'Software Engineer Intern (Remote)'};store.upsert_job(target)
+    assert prior.ingest(store,mail(target))
+    assert store.db.execute('SELECT company_key FROM prior_application_mail').fetchone()[0]==''
+    create_backup(store,tmp_path/'ambiguous.zip');restore_backup(tmp_path/'ambiguous.zip',tmp_path/'restored-ambiguous')
+    restored=Store(tmp_path/'restored-ambiguous')
+    try:
+        assert prior.matches(restored,target)
+        assert any(candidate['id']==target['id'] for candidate in prior.listing(restored)['messages'][0]['candidates'])
+        assert restored.db.execute('SELECT count(*) FROM prior_application_mail_companies').fetchone()[0]==2
+    finally:restored.close()
+
+
+@pytest.mark.parametrize('wording',[
+    'We received your application for {title}. Our team will review it shortly.',
+    "Thanks for applying for {title}, and we'll be in touch.",
+    'We received your application for our {title} position.',
+])
+@pytest.mark.parametrize('title',['Software Engineer Intern','Sr. Software Engineer Intern','SWE Intern','Intern'])
+def test_complete_roles_match_sentence_boundaries_articles_abbreviations_and_short_titles(store,optiver,title,wording):
+    target={**optiver,'title':title};store.upsert_job(target)
+    assert prior.ingest(store,mail(target,subject='Thank you for your interest in Optiver',body=wording.format(title=title)+'\nOptiver Recruiting'))
+    assert prior.matches(store,target)
+
+
+def test_punctuation_does_not_truncate_seniority_year_or_location_qualifiers(store,optiver):
+    body='We received your application for Software Engineer Intern, Summer 2027 - Chicago at Optiver. Our team will review it shortly.'
+    assert prior.ingest(store,mail(optiver,body=body))
+    assert prior.matches(store,optiver)
+    generic={**optiver,'id':digest('generic-intern-role'),'title':'Software Engineer Intern','url':optiver['url']+'0'}
+    store.upsert_job(generic)
+    assert not prior.matches(store,generic)
+
+
+def test_short_employer_name_remains_a_possible_prior_application(store,optiver):
+    target={**optiver,'company':'HP'};store.upsert_job(target)
+    assert prior.ingest(store,mail(target))
+    assert prior.matches(store,target)
+
+
+def test_full_text_receipt_query_does_not_depend_on_employer_subject_wording():
+    assert 'subject:' not in prior.QUERY
+    assert all('"'+phrase+'"' in prior.QUERY for phrase in ['your application','you applied','you have applied','thank you for applying','thanks for applying'])
+
+
+def test_alias_ceiling_never_discards_the_employer_being_checked(store):
+    store.update_settings({'company_aliases':{**{f'Alpha {i}':'Zeta Group' for i in range(20)},'Zeta':'Zeta Group'}})
+    query=prior._query(store,'Zeta')
+    assert '"Zeta"' in query and '"Zeta Group"' in query
+
+
+@pytest.mark.parametrize('body',[
+    'Your application was not successful.',
+    'We are not reviewing your application further.',
+])
+def test_an_unsuccessful_application_still_counts_when_its_stage_is_unclassified(store,optiver,body):
+    assert prior.ingest(store,mail(optiver,subject=f'Your application for the {optiver["title"]} position at Optiver',body=body))
+    assert prior.matches(store,optiver)

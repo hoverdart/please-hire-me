@@ -90,12 +90,17 @@ def queue_report(store, run_id):
             + ('\n\n'.join(outcomes) or 'No application outcomes recorded.'))
     if detail.get('reason'):
         body += '\n\nStopped because: ' + detail['reason']
+    mail_failures={reason:count for reason,count in detail.get('reasons',{}).items()
+                   if reason in {'prior_application_mail_unavailable','prior_application_company_review'}}
+    if mail_failures:
+        body+='\n\nEmail-history checks need attention:\n'
+        body+='\n'.join(f'{count} roles held: '+REASON_GUIDANCE[reason][1] for reason,count in mail_failures.items())
     body += FOOTER
     enabled = store.settings()['gmail_reports']
     # Idle schedules remain local history. Completed screening and paused runs
     # with no attempts add no application update to email. Failures/setup stops,
     # legacy runs without an explicit count, and any actual outcome still report.
-    idle=run['status'] in {'finished','paused'} and detail.get('attempts')==0 and not terminal and run['submitted']==0
+    idle=run['status'] in {'finished','paused'} and detail.get('attempts')==0 and not terminal and run['submitted']==0 and not mail_failures
     state='suppressed' if idle else 'pending' if enabled else 'disabled'
     with store.transaction():
         store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',

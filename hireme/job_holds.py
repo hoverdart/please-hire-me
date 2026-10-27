@@ -17,6 +17,19 @@ TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provide
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
 
 ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review'}
+LEGACY_MAIL_FAILURES={'gmail_reconnect_required','gmail_not_connected','gmail_account_mismatch','gmail_owner_missing','worker_busy'}
+
+
+def mail_screening_hold(row):
+    if row['reason'].startswith('prior_application_'):return row['reason']!='prior_application_email'
+    if row['reason'] not in LEGACY_MAIL_FAILURES:return False
+    try:return json.loads(row['evidence']).get('stage')=='screening'
+    except (ValueError,TypeError,AttributeError):return False
+
+
+def mail_check_failed(row):
+    return (row['reason'] in {'prior_application_mail_unavailable','prior_application_company_review'}
+            or row['reason'] in LEGACY_MAIL_FAILURES and mail_screening_hold(row))
 
 # Each exclusion is already a proven blocker. Other profile/preferences edits
 # cannot make that blocker pass and must not release it for another browser run.
@@ -43,7 +56,7 @@ ELIGIBILITY_INPUTS = {
 
 def category(reason):
     if reason=='prior_application_email':return 'mail'
-    if reason in {'prior_application_scan_incomplete','prior_application_mail_unavailable','prior_application_check_required','prior_application_check_budget','prior_application_company_review'}:return 'limits'
+    if reason.startswith('prior_application_'):return 'limits'
     if reason=='workday_schema_unreviewed':return 'unsupported'
     if reason=='workday_native_read_failed':return 'account'
     if reason.startswith('connection_') and reason != 'connection_identity_review':return 'connection'
@@ -148,6 +161,7 @@ def ready(store, job, at=None):
     if _uncertain_draft(store,job['id']):return False
     row=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
     if not row:return True
+    if mail_screening_hold(row):return True
     if row['reason']=='model_budget_exhausted' and model_available(store,at):return True
     if row['category']=='limits':return True # Existing policy checks the current day/company limits.
     if row['category']=='transient':
