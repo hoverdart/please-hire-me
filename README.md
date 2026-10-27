@@ -113,7 +113,7 @@ If you're trying it for your own search, the user guide is the next stop. If you
 
 - [User guide](docs/guide.md): documents, drafts, questions, models, scheduling, backups and Gmail.
 - [Raspberry Pi guide](docs/pi.md): setup, background services, restart and upgrades.
-- [Operations and encrypted backups](docs/operations.md): Pi health checks, off-device recovery and a Mac-owned monitor.
+- [Operations and encrypted backups](docs/operations.md): local health checks, off-device recovery and an optional Mac-owned Pi monitor.
 - [Privacy](PRIVACY.md) and [security reporting](SECURITY.md): where your information goes and how to report a problem privately.
 - [Documentation map](docs/README.md): architecture, platform connections and contributor references.
 - [Contributing](CONTRIBUTING.md): local tests, packaging checks and safe fixture development.

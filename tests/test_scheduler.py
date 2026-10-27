@@ -124,6 +124,32 @@ def test_cron_status_identifies_applicant_with_spaces_and_percent(store, tmp_pat
     assert result['installed'] and result['matches_applicant'] and result['interval_hours'] == 4
 
 
+@pytest.mark.parametrize('other_applicant', [False, True])
+def test_duplicate_cron_entries_are_all_checked_before_replacing_a_schedule(store, tmp_path, monkeypatch, other_applicant):
+    import shlex
+    monkeypatch.setattr('hireme.scheduler.sys.platform', 'linux')
+    monkeypatch.setattr('hireme.scheduler.shutil.which', lambda name: '/usr/bin/crontab' if name == 'crontab' else None)
+    roots = [store.root, tmp_path / 'another-applicant' if other_applicant else store.root]
+    lines = ['0 */6 * * * ' + shlex.join(['python', '-m', 'hireme', '--data-dir', str(root), 'run']) + ' # ' + LABEL for root in roots]
+    calls = []
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout='\n'.join(lines) + '\n', stderr='')
+    monkeypatch.setattr('hireme.scheduler.subprocess.run', run)
+    current = status(store)
+    assert current['installed_count'] == 2 and current['error']
+    assert current['matches_applicant'] is (not other_applicant)
+    if other_applicant:
+        from hireme.scheduler import uninstall
+        with pytest.raises(ValueError, match='another applicant'): install(store, tmp_path)
+        with pytest.raises(ValueError, match='another applicant'): uninstall(store=store)
+        assert all(args == ['crontab', '-l'] for args, _ in calls)
+    else:
+        assert install(store, tmp_path) == 'cron'
+        saved = [kwargs['input'] for args, kwargs in calls if args == ['crontab', '-']]
+        assert len(saved) == 1 and saved[0].count('# ' + LABEL) == 1
+
+
 def test_systemd_status_reads_interval_and_applicant_from_generated_units(store, tmp_path, monkeypatch):
     from hireme.pi import service_units
     monkeypatch.setattr('hireme.scheduler.sys.platform', 'linux')

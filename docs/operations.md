@@ -1,17 +1,22 @@
-# Operating a Pi installation
+# Operating a self-hosted installation
 
-Use one primary worker for an applicant. Keep other installations paused with scheduling disabled. The [Pi guide](pi.md) covers service setup; the [release runbook](final-release-runbook.md) covers upgrades and rollback.
+Use one primary worker for an applicant on their chosen macOS, Linux, WSL2 or Raspberry Pi machine. Keep other installations paused with scheduling disabled. The [user guide](guide.md) covers context, connections and local scheduling; the [Pi guide](pi.md) covers optional Pi services. The [release runbook](final-release-runbook.md) covers upgrades and rollback.
 
 ## Check health
 
-On the Pi:
+On the machine running the app, start with:
 
 ```bash
-cd ~/please-hire-me
+.venv/bin/python -m hireme doctor --verify-login
+```
+
+This checks the browser, applicant setup and model login without requiring a background service or scheduler. For an installation with automatic scheduling and off-device backup monitoring, also run:
+
+```bash
 .venv/bin/python -m hireme health --json
 ```
 
-This checks storage, the latest cycle, report delivery, model subscription login, saved integration configuration, dashboard service, scheduler ownership and the latest off-device backup acknowledgement. It sends no applications, messages or model requests. It does not read Gmail messages or prove current Gmail API access. Use `hireme gmail check` separately for that access check.
+Health checks storage, the latest cycle, report delivery, model subscription login, saved integration configuration, the dashboard, scheduler ownership and the latest off-device backup acknowledgement. Local macOS/Linux dashboards are checked over loopback against the installed app's static shell; systemd installations check their dashboard unit. Use `health --port PORT` for a local dashboard on a custom port. No applicant API is opened by this dashboard check. Health sends no applications, messages or model requests. It does not read Gmail messages or prove current Gmail API access. Use `hireme gmail check` separately for that access check.
 
 A paused cycle is healthy when it is expected. Unknown outcomes, pending verification and intentionally held historical reports stay visible in the counts; they do not authorize retries. A stalled or overdue cycle, missing scheduler, expired model login, overdue report or low storage needs attention.
 
@@ -23,7 +28,7 @@ Pi firmware diagnostics distinguish an active power/thermal fault from a recorde
 
 Health is a small query-only read of the current SQLite/WAL state. It is separate from the full snapshot, integrity and history checks in `release-check`.
 
-## Encrypted backups and monitoring on a Mac
+## Optional encrypted Pi backups and monitoring on a Mac
 
 The receiving Mac polls Pi health every 15 minutes and takes a consistent history backup every six hours. It encrypts the stream with age, decrypts it in private temporary storage and performs a full restore, including SQLite integrity and document-reference checks. Only then does it publish the archive and acknowledge success to the Pi.
 

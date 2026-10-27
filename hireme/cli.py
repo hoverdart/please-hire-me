@@ -35,6 +35,7 @@ def main(argv=None):
     p.add_argument('--json',action='store_true',help='Output JSON (the default)')
     p=sub.add_parser('health',help='Check operational health without application writes or inference')
     p.add_argument('--record',action='store_true');p.add_argument('--json',action='store_true')
+    p.add_argument('--port',type=dashboard_port,default=8766,help='Local dashboard port (default: 8766)')
     sub.add_parser('remote-ops',help='Restricted SSH operations for the backup monitor')
     p=sub.add_parser('backup-agent',help='Monitor a Pi and retain verified encrypted backups on this Mac')
     p.add_argument('action',choices=['run','install']);p.add_argument('config',type=Path)
@@ -90,7 +91,7 @@ def main(argv=None):
             return 2
     if args.command=='health':
         from .health import check_health,record_health
-        result=check_health(args.data_dir)
+        result=check_health(args.data_dir,dashboard_port=args.port)
         if args.record:record_health(args.data_dir,result)
         print(json.dumps(result,indent=2,sort_keys=True))
         return 0 if result['ready'] else 1

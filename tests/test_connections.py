@@ -75,3 +75,12 @@ def test_api_mode_fixed_endpoint_no_redirect_and_no_tools(store,monkeypatch):
 def test_bad_limits_and_model_rejected(store):
     for changes in ({'max_model_requests_per_day':0},{'max_attempts_per_cycle':51},{'provider_model':'bad\nmodel'},{'provider':'unknown'}):
         with pytest.raises(ValueError):store.update_settings(changes)
+
+
+@pytest.mark.parametrize('payload', [None, [], 'unexpected', 42, True, {'loggedIn': True, 'authMethod': 'api-key'}])
+def test_unexpected_cli_login_response_is_actionable_and_does_not_break_setup(store, monkeypatch, payload):
+    monkeypatch.setattr('hireme.connections.shutil.which', lambda _: '/fixture/claude')
+    monkeypatch.setattr('hireme.connections.subprocess.run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(payload)))
+    result = status(store, verify=True)
+    assert result['ready'] is False and result['message']
+    assert store.db.execute('SELECT COUNT(*) FROM model_requests').fetchone()[0] == 0

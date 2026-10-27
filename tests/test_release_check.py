@@ -168,6 +168,52 @@ def test_historical_document_is_checked_after_current_document_withdrawn(store, 
     assert report['application_states'] == {'unknown': 1}
 
 
+@pytest.mark.parametrize('phase', ['before', 'after', 'verified'])
+def test_release_check_accepts_recorded_screenshots_without_changing_history(store, job, package, local_checks, phase):
+    aid = store.prepare(job, package)
+    store.begin_submit(aid)
+    name = aid + '-' + phase + '.jpg'
+    directory = store.root / 'screenshots'
+    directory.mkdir()
+    (directory / name).write_bytes(b'synthetic screenshot')
+    store.finish(aid, 'unknown', screenshot=name)
+    before = inventory(store.root)
+    report = release_check.check_release(store.root, Path('.'))
+    assert report['ready'] and report['documents']['screenshots_checked'] == 1
+    assert report['application_states'] == {'unknown': 1}
+    assert inventory(store.root) == before
+
+
+@pytest.mark.parametrize('damage', ['missing', 'symlink', 'directory', 'wrong_extension', 'traversal'])
+def test_release_check_rejects_unsafe_or_missing_screenshots(store, job, package, local_checks, damage):
+    aid = store.prepare(job, package)
+    store.begin_submit(aid)
+    name = aid + '-after.jpg'
+    directory = store.root / 'screenshots'
+    directory.mkdir()
+    if damage == 'symlink':
+        target = store.root / 'original.jpg'
+        target.write_bytes(b'synthetic screenshot')
+        (directory / name).symlink_to(target)
+    elif damage == 'directory':
+        directory.rmdir()
+        target = store.root / 'other-screenshots'
+        target.mkdir()
+        (target / name).write_bytes(b'synthetic screenshot')
+        directory.symlink_to(target, target_is_directory=True)
+    elif damage == 'wrong_extension':
+        name = aid + '-afterXjpg'
+        (directory / name).write_bytes(b'synthetic screenshot')
+    elif damage == 'traversal':
+        name = '../' + name
+        (directory / name).write_bytes(b'synthetic screenshot')
+    store.finish(aid, 'unknown', screenshot=name)
+    report = release_check.check_release(store.root, Path('.'))
+    assert not report['ready']
+    assert 'documents_missing_or_changed' in report['failure_codes']
+    assert store.db.execute('SELECT state FROM applications').fetchone()[0] == 'unknown'
+
+
 def test_duplicate_or_wrong_owner_schedulers_fail_closed(store, monkeypatch):
     from hireme import scheduler
     monkeypatch.setattr(release_check.shutil, 'which', lambda _: '/fixture/tool')
@@ -182,6 +228,22 @@ def test_duplicate_or_wrong_owner_schedulers_fail_closed(store, monkeypatch):
     finally:
         view.close()
     assert result['installed_count'] == 2 and not result['matches_applicant'] and not result['ready']
+
+
+def test_duplicate_cron_schedules_fail_release_gate_even_for_the_same_applicant(store, monkeypatch):
+    import shlex
+    from hireme import scheduler
+    monkeypatch.setattr('hireme.scheduler.sys.platform', 'linux')
+    monkeypatch.setattr(release_check.shutil, 'which', lambda name: '/usr/bin/crontab' if name == 'crontab' else None)
+    command = shlex.join(['python', '-m', 'hireme', '--data-dir', str(store.root), 'run'])
+    line = '0 */6 * * * ' + command + ' # ' + scheduler.LABEL + '\n'
+    monkeypatch.setattr(release_check.subprocess, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout=line * 2, stderr=''))
+    view = release_check.ReadOnlyLedger(store.root)
+    try:
+        result = release_check._scheduler(view)
+    finally:
+        view.close()
+    assert result['installed_count'] == 2 and result['matches_applicant'] and not result['ready']
 
 
 def test_scheduler_status_never_creates_a_missing_daemon_lock(store, monkeypatch):

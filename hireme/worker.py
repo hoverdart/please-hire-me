@@ -14,6 +14,15 @@ from .store import worker_lock
 from .job_holds import ready, hold, clear, safe_state as safe_job_state
 
 
+def _recorded_outcome(store, job_id, fallback):
+    # An adapter can fail after persisting an employer response. Cleanup and
+    # cancellation errors must not replace that response in counts or reports.
+    row = store.db.execute('SELECT state FROM applications WHERE job_id=?', (job_id,)).fetchone()
+    state = row[0] if row else None
+    if state == 'submitting': return 'unknown'
+    return state if state in {'confirmed', 'not_submitted', 'unknown', 'awaiting_verification'} else fallback
+
+
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
     with worker_lock(store.root):
         store.recover()
@@ -103,32 +112,27 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 store.db.execute('UPDATE jobs SET status=? WHERE id=? AND id NOT IN (SELECT job_id FROM job_decisions)',(outcome,job['id']))
                                 if outcome=='confirmed' or not live and outcome=='prepared':count+=1
                             except Blocked as e:
-                                # A post-click exception can leave a durable unknown
-                                # or verification-pending outcome. Reports must keep
-                                # that outcome instead of inviting another application.
-                                state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
-                                outcome=state[0] if state and state[0] in ('unknown','submitting','awaiting_verification') else 'blocked'
-                                if outcome=='submitting':outcome='unknown'
+                                outcome=_recorded_outcome(store,job['id'],'blocked')
                                 if outcome!='blocked':outcomes[outcome]=outcomes.get(outcome,0)+1
+                                if live and outcome=='confirmed':count+=1
                                 store.event('application_finished',job['id'],{'run_id':rid,'outcome':outcome,'reason':e.reason,'detail':e.detail})
                                 if e.reason=='model_budget_exhausted' and safe_job_state(store,job['id']):
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail)
                                 if e.reason in ('paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'):raise
                                 reasons[e.reason]=reasons.get(e.reason,0)+1
-                                # Unknown outcomes must retain their distinct state.
-                                state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
-                                if not state or state[0] not in ('unknown','submitting','awaiting_verification'):
+                                if safe_job_state(store,job['id']):
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail)
                             except Exception as e:
-                                store.checkpoint()
                                 # Browser call logs can contain filled values, signed
                                 # URLs and credentials. Persist the failure category,
                                 # never arbitrary exception text (also used in mail).
-                                state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
-                                outcome=state[0] if state and state[0] in ('unknown','submitting','awaiting_verification') else 'error'
-                                if outcome=='submitting':outcome='unknown'
+                                outcome=_recorded_outcome(store,job['id'],'error')
                                 if outcome!='error':outcomes[outcome]=outcomes.get(outcome,0)+1
+                                if live and outcome=='confirmed':count+=1
                                 store.event('application_finished',job['id'],{'run_id':rid,'outcome':outcome,'error':type(e).__name__})
+                                # Record the known outcome before cancellation can
+                                # stop this run, including a pause during readback.
+                                store.checkpoint()
                                 reasons['browser_error']=reasons.get('browser_error',0)+1
                                 if safe_job_state(store,job['id']):
                                     store.block(job['id'],'browser_error',type(e).__name__);hold(store,job,'browser_error',type(e).__name__)
@@ -140,7 +144,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             store.recover()
             status='paused' if isinstance(e,Blocked) and e.reason=='paused' else 'blocked'
             reason=str(e) if isinstance(e,Blocked) else type(e).__name__
-            store.db.execute("UPDATE runs SET finished=?,status=?,submitted=?,detail=? WHERE id=?",(now(),status,count if live else 0,json.dumps({'confirmed':count if live else 0,'prepared':count if not live else 0,'attempts':attempts,'reason':reason,'mode':'live' if live else 'prepare','discovered':discovered_count,'eligible':eligible_count}),rid))
+            store.db.execute("UPDATE runs SET finished=?,status=?,submitted=?,detail=? WHERE id=?",(now(),status,count if live else 0,json.dumps({'confirmed':count if live else 0,'prepared':count if not live else 0,'attempts':attempts,'outcomes':outcomes,'reason':reason,'mode':'live' if live else 'prepare','discovered':discovered_count,'eligible':eligible_count}),rid))
             raise
         finally:
             store.run_generation=None

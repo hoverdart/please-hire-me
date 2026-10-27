@@ -134,14 +134,23 @@ def status(store=None,cron_only=False):
                 return {'installed':True,'matches_applicant':False,'kind':'systemd','error':'The saved service could not be read.'}
     if not shutil.which('crontab'):return {'installed':False}
     r=_query_schedule(['crontab','-l'])
+    records=[]
     for line in r.stdout.splitlines():
         if not line.endswith('# '+LABEL):continue
         try:
             fields=shlex.split(line.replace(r'\%','%'))
             interval=int(fields[1][2:]) if fields[1].startswith('*/') else None
-            return _details(fields[5:],store,interval,kind='cron')
+            records.append(_details(fields[5:],store,interval,kind='cron'))
         except (ValueError,IndexError):
-            return {'installed':True,'matches_applicant':False,'kind':'cron','error':'The saved cron entry could not be read.'}
+            records.append({'installed':True,'matches_applicant':False,'kind':'cron','error':'The saved cron entry could not be read.'})
+    if records:
+        result={**records[0],'installed_count':len(records)}
+        if len(records)>1:
+            # Inspect every entry before allowing installation/uninstallation.
+            # A second applicant's history must not be hidden by the first row.
+            result['matches_applicant']=all(record.get('matches_applicant') is True for record in records) if store is not None else None
+            result['error']='Multiple worker cron entries are installed. Reapply the schedule from its original applicant instance.'
+        return result
     return {'installed':False}
 
 

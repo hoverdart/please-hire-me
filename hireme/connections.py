@@ -42,7 +42,7 @@ def status(store,verify=False):
         try:
             r=subprocess.run(args,capture_output=True,text=True,timeout=10,env=cli_env())
             if provider=='claude-cli':
-                data=json.loads(r.stdout);ready=not r.returncode and data.get('loggedIn') and data.get('authMethod')=='claude.ai' and not data.get('apiKeySource') and data.get('subscriptionType') in ('pro','max','team','enterprise')
+                data=json.loads(r.stdout);ready=not r.returncode and isinstance(data,dict) and data.get('loggedIn') is True and data.get('authMethod')=='claude.ai' and not data.get('apiKeySource') and data.get('subscriptionType') in ('pro','max','team','enterprise')
             else:ready=not r.returncode and 'chatgpt' in (r.stdout+r.stderr).casefold()
             result['ready']=bool(ready);result['message']='Subscription login verified.' if ready else 'Sign into a subscription account in your terminal; API login is a separate provider choice.'
         except (OSError,ValueError,subprocess.TimeoutExpired):result.update(ready=False,message='Could not verify CLI login.')

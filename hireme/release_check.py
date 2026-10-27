@@ -214,13 +214,14 @@ def _scheduler(view):
         if primary.get('kind') == 'systemd' and shutil.which('crontab'):
             records.append(scheduler.status(view, cron_only=True))
         installed = [record for record in records if record.get('installed')]
+        installed_count = sum(record.get('installed_count', 1) for record in installed)
         owned = all(record.get('matches_applicant') is True for record in installed)
         result = {
-            'installed_count': len(installed), 'matches_applicant': owned,
+            'installed_count': installed_count, 'matches_applicant': owned,
             'kind': primary.get('kind'), 'interval_hours': primary.get('interval_hours'),
             'enabled': primary.get('enabled'), 'active': None,
             'daemon_running': daemon_running,
-            'ready': (not daemon_running and len(installed) <= 1 and owned
+            'ready': (not daemon_running and installed_count <= 1 and owned
                       and not any(record.get('error') for record in records)),
         }
         if primary.get('kind') == 'systemd':

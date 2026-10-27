@@ -30,6 +30,51 @@ def test_health_reads_current_wal_without_changing_applicant_rows(store,monkeypa
     assert 'Test Person' not in json.dumps(result) and 'candidate.invalid' not in json.dumps(result)
 
 
+@pytest.mark.parametrize('platform', ['darwin', 'linux'])
+@pytest.mark.parametrize('correct_app', [True, False])
+def test_local_health_checks_running_dashboard_without_systemd(store, monkeypatch, platform, correct_app):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from hireme import health
+    health_ready(store, monkeypatch)
+    monkeypatch.setattr('sys.platform', platform)
+    monkeypatch.setattr('hireme.release_check._scheduler', lambda _: {
+        'ready': True, 'installed_count': 1, 'enabled': True, 'active': True,
+        'kind': 'launchd' if platform == 'darwin' else 'cron',
+    })
+    monkeypatch.setattr(health.subprocess, 'run', lambda *a, **kw: pytest.fail('Local health must not require systemd'))
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def do_GET(self):
+            assert self.path == '/' and self.headers.get('X-Hireme-Token') is None
+            body=(Path(health.__file__).parent/'static/index.html').read_bytes() if correct_app else b'Another app'
+            self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers()
+            self.wfile.write(body)
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        result=health.check_health(store.root,verify_login=False,dashboard_port=server.server_port)
+    finally:
+        server.shutdown();server.server_close();thread.join(timeout=5)
+    assert result['dashboard_active'] is correct_app and result['ready'] is correct_app
+    assert result['failures']==([] if correct_app else ['dashboard_unavailable'])
+
+
+def test_systemd_health_checks_the_installed_dashboard_service(store, monkeypatch):
+    from hireme import health
+    health_ready(store, monkeypatch)
+    monkeypatch.setattr('hireme.release_check._scheduler', lambda _: {
+        'ready': True, 'installed_count': 1, 'enabled': True, 'active': True, 'kind': 'systemd',
+    })
+    calls=[]
+    def run(args, **kwargs):
+        calls.append(args);return SimpleNamespace(returncode=0,stdout='active\n')
+    monkeypatch.setattr(health.subprocess,'run',run)
+    monkeypatch.setattr(health,'_dashboard_available',lambda _:pytest.fail('Service-managed dashboards use their unit'))
+    assert health.check_health(store.root,verify_login=False)['ready']
+    assert calls==[['systemctl','--user','is-active','please-hire-me-dashboard.service']]
+
+
 def test_health_reports_storage_and_backup_failure_without_initializing_missing_root(tmp_path,monkeypatch):
     from hireme.health import check_health
     missing=tmp_path/'missing'

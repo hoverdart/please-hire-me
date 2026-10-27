@@ -98,7 +98,7 @@ def test_report_does_not_include_other_runs_job_links(store,job):
     assert job['url'] not in body
 
 
-@pytest.mark.parametrize('state', ['unknown', 'awaiting_verification', 'submitting'])
+@pytest.mark.parametrize('state', ['unknown', 'awaiting_verification', 'submitting', 'confirmed', 'not_submitted'])
 @pytest.mark.parametrize('error', [Blocked('submission_unknown'), RuntimeError('private browser details')])
 def test_post_click_error_keeps_durable_outcome_and_never_invites_reapplication(store,job,package,state,error):
     class Browser:
@@ -117,14 +117,67 @@ def test_post_click_error_keeps_durable_outcome_and_never_invites_reapplication(
     expected='unknown' if state=='submitting' else state
     event=store.db.execute("SELECT detail FROM events WHERE kind='application_finished' ORDER BY seq DESC LIMIT 1").fetchone()
     assert json.loads(event[0])['outcome']==expected
-    assert result['outcomes']=={expected:1} and result['confirmed']==0
+    assert result['outcomes']=={expected:1} and result['confirmed']==int(state=='confirmed')
     body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
-    assert 'Other outcomes — review before retrying' in body
+    assert ('Applied successfully' if state=='confirmed' else 'Other outcomes — review before retrying') in body
     assert 'Blocked — review or apply manually' not in body
-    assert ('Submission outcome is uncertain.' if expected=='unknown' else 'Email verification is pending.') in body
+    if expected in {'unknown','awaiting_verification'}:
+        assert ('Submission outcome is uncertain.' if expected=='unknown' else 'Email verification is pending.') in body
+    assert f'Confirmed submissions: {int(state=="confirmed")}' in body
     assert 'private browser details' not in body
     cycle(store,Path('.'),discover=False,browser_factory=Browser,job_ids=[job['id']])
     assert Browser.calls==1
+
+
+@pytest.mark.parametrize('state', ['confirmed', 'not_submitted', 'unknown', 'awaiting_verification', 'submitting'])
+@pytest.mark.parametrize('error', [Blocked('paused'), RuntimeError('private browser details')])
+def test_pause_during_post_click_error_preserves_outcome_and_batch_count(store, job, package, state, error):
+    class Browser:
+        def __init__(self, s): self.store = s
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def apply(self, item, live=True):
+            aid = self.store.prepare(item, package)
+            self.store.begin_submit(aid)
+            if state != 'submitting': self.store.finish(aid, state, 'Fixture outcome')
+            self.store.update_settings({'live_enabled': False})
+            raise error
+
+    with pytest.raises(Blocked, match='paused'):
+        cycle(store, Path('.'), discover=False, browser_factory=Browser)
+    expected = 'unknown' if state == 'submitting' else state
+    run = store.db.execute('SELECT * FROM runs').fetchone()
+    assert run['status'] == 'paused' and run['submitted'] == int(state == 'confirmed')
+    assert json.loads(run['detail'])['confirmed'] == int(state == 'confirmed')
+    assert json.loads(run['detail'])['outcomes'] == {expected: 1}
+    assert store.db.execute('SELECT state FROM applications').fetchone()[0] == expected
+    event = store.db.execute("SELECT detail FROM events WHERE kind='application_finished' ORDER BY seq DESC LIMIT 1").fetchone()
+    assert event and json.loads(event[0])['outcome'] == expected
+    body = store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert f'Confirmed submissions: {int(state == "confirmed")}' in body
+    assert job['url'] in body and 'private browser details' not in body
+    assert not store.settings()['live_enabled']
+
+
+@pytest.mark.parametrize('error', [Blocked('submission_unknown'), RuntimeError('cleanup failed')])
+def test_post_confirmation_error_still_stops_at_the_batch_submission_limit(store, job, package, error):
+    from hireme.util import digest
+    second = {**job, 'id': digest('second-company'), 'company': 'Another Company', 'url': job['url'] + '-second'}
+    store.upsert_job(second)
+    visited = []
+    class Browser:
+        def __init__(self, s): self.store = s
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def apply(self, item, live=True):
+            visited.append(item['id'])
+            aid = self.store.prepare(item, {**package, 'job_id': item['id'], 'url': item['url']})
+            self.store.begin_submit(aid);self.store.finish(aid, 'confirmed', 'Fixture receipt')
+            raise error
+    result = cycle(store, Path('.'), discover=False, limit=1, browser_factory=Browser)
+    assert len(visited) == 1 and result['confirmed'] == 1 and result['shortfall'] == 0
+    assert result['outcomes'] == {'confirmed': 1}
+    assert store.db.execute('SELECT submitted FROM runs').fetchone()[0] == 1
 
 
 def test_blocked_questions_are_listed_one_per_line_with_reasons(store,job):
