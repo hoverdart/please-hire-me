@@ -46,6 +46,8 @@ Every live Ashby application uses one exact final request. An optional human-ver
 
 ## Release channels
 
+**Past applications from email** is a separate opt-in duplicate check. Its initial owner-bound scan has no date cutoff, including archived mail. Exact posting links or company/role passages hold matching jobs without creating submission records; general company messages require review. Saved holds survive disabling scanning or disconnecting Gmail. Bounded company scans run before live browser work, and final intent requires a check completed within 15 minutes. English-language receipt matching, mailbox access and employer-specific wording remain verification limits; no match does not establish that an application never happened.
+
 The release candidate is suitable for evaluating the self-hosted workflow with the capability limits above. It is a prerelease, not a claim of unattended operation or universal ATS support. Stable publication requires every gate below. Workday and optional native platforms stay independently gated; their presence in the interface does not make them supported for automatic submission.
 
 ## Release gates

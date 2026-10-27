@@ -790,6 +790,13 @@ const toolDestinations = [
     target: "#recruiting-feedback-panel",
   },
   {
+    label: "Check past applications in Gmail",
+    description: "Find application emails, including applications made outside this app.",
+    aliases: "already applied duplicate email inbox Optiver history receipt",
+    view: "connections",
+    target: "#prior-applications-panel",
+  },
+  {
     label: "Recruiting Insights",
     description: "Compare reviewed responses by role, company, source and resume PDF.",
     aliases: "analytics funnel interviews offers response rate outcomes",
@@ -3526,6 +3533,7 @@ function render() {
   renderMaterials();
   renderMail();
   window.recruitingFeedback?.render(state);
+  window.priorApplicationMail?.render(state);
   window.recruitingInsights?.render(state);
   window.historyImport?.render(state);
   renderDocumentStatus();
@@ -4633,6 +4641,8 @@ $("#mail-settings-form").onsubmit = async (event) => {
     await api("/api/settings", {
       gmail_reports: form.elements.gmail_reports.checked,
       gmail_verification: form.elements.gmail_verification.checked,
+      gmail_feedback: form.elements.gmail_feedback.checked,
+      gmail_prior_applications: form.elements.gmail_prior_applications.checked,
     });
     saved(form);
     blurForm(form);

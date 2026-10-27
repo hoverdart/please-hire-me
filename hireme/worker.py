@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 import time
 import uuid
 from datetime import datetime
@@ -33,7 +34,9 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         rid=uuid.uuid4().hex; s=store.settings(); count=0; attempts=0; reasons={}; outcomes={}; start=time.monotonic();discovered_count=None;eligible_count=None
         store.run_deadline=start+s['cycle_timeout_seconds']
         store.active_run_id=rid
+        store.prior_mail_checked=set()
         max_attempts=min(max_attempts or s['max_attempts_per_cycle'],s['max_attempts_per_cycle'])
+        store.prior_mail_check_limit=max_attempts
         store.db.execute("INSERT INTO runs(id,started,status,detail) VALUES(?,?,'running',?)",(rid,now(),json.dumps({'mode':'live' if live else 'prepare'})))
         try:
             from .workday_commission_state import bind_run
@@ -96,14 +99,24 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                         from .platform_browser import ConnectedBrowser
                         factory=ConnectedBrowser
                     else:factory=browser_factory
-                    with factory(store) as browser:
+                    with ExitStack() as browser_stack:
+                        browser=None
                         for _,job in sorted(ranked,key=lambda x:x[0],reverse=True):
                             if count>=target or (max_attempts is not None and attempts>=max_attempts):break
                             store.checkpoint()
+                            attempt_started=False
+                            stage='screening'
                             try:
                                 store.check_job_decision(job['id'])
                                 store._check_budget(job,store.settings())
+                                if live:
+                                    stage='mail'
+                                    from .prior_applications import preflight
+                                    preflight(store,job)
+                                stage='browser_start'
+                                if browser is None:browser=browser_stack.enter_context(factory(store))
                                 attempts+=1
+                                attempt_started=True
                                 store.event('application_started',job['id'],{'run_id':rid,'attempt':attempts,'company':job['company'],'title':job['title']})
                                 outcome=browser.apply(job,live=live)
                                 clear(store,job['id'])
@@ -112,6 +125,12 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 store.db.execute('UPDATE jobs SET status=? WHERE id=? AND id NOT IN (SELECT job_id FROM job_decisions)',(outcome,job['id']))
                                 if outcome=='confirmed' or not live and outcome=='prepared':count+=1
                             except Blocked as e:
+                                if not attempt_started:
+                                    reasons[e.reason]=reasons.get(e.reason,0)+1
+                                    if e.reason in ('paused','cycle_timeout','prior_application_check_budget'):raise
+                                    store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail,'screening')
+                                    store.event('job_screening_blocked',job['id'],{'run_id':rid,'outcome':'blocked','reason':e.reason,'detail':e.detail})
+                                    continue
                                 outcome=_recorded_outcome(store,job['id'],'blocked')
                                 if outcome!='blocked':outcomes[outcome]=outcomes.get(outcome,0)+1
                                 if live and outcome=='confirmed':count+=1
@@ -123,6 +142,13 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 if safe_job_state(store,job['id']):
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail)
                             except Exception as e:
+                                if not attempt_started:
+                                    store.checkpoint()
+                                    reason='prior_application_mail_unavailable' if stage=='mail' else 'browser_error'
+                                    reasons[reason]=reasons.get(reason,0)+1
+                                    store.block(job['id'],reason,type(e).__name__);hold(store,job,reason,stage='screening')
+                                    store.event('job_screening_blocked',job['id'],{'run_id':rid,'outcome':'blocked','reason':reason,'error':type(e).__name__})
+                                    continue
                                 # Browser call logs can contain filled values, signed
                                 # URLs and credentials. Persist the failure category,
                                 # never arbitrary exception text (also used in mail).
@@ -151,6 +177,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             store.preparation_generation=None
             store.run_deadline=None
             store.active_run_id=None
+            store.prior_mail_checked=None
             try:
                 from .reports import queue_report,flush_reports
                 queue_report(store,rid)

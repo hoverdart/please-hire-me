@@ -11,6 +11,7 @@ Each applicant runs a private local instance. The default workspace is `~/.local
 | Supported applications | The intended employer and its reviewed application service receive the approved answers and documents when live work is authorized. |
 | Gmail verification and feedback | The connected owner's mailbox is queried for the enabled feature. Message previews and reviewed links stay in the private workspace. Inbox text is not sent to a model; feedback does not fetch links or attachments. |
 | Batch reports | Application summaries are sent through the connected Gmail account to that same owner. |
+| Past applications from email | Opt-in scans read historical application mail, including archived messages. Bounded application passages, previews, message references and posting-identity hashes stay privately in the ledger and backups. Exact-role matches hold duplicate applications without inventing a confirmed worker submission. Scanning sends no messages, fetches no links or attachments, and supplies no email text to a model. |
 | Encrypted off-device backups | The configured Mac receives the history snapshot over SSH and retains an age-encrypted archive after a verified restore. |
 
 ## Credentials and local access

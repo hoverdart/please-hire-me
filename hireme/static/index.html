@@ -240,6 +240,7 @@
             <p class="help">Reviewed email milestones, separate from submission confirmation.</p>
             <dl id="recruiting-stages" class="cycle-funnel"></dl>
             <button type="button" id="open-recruiting-feedback" class="secondary">Review recruiting feedback</button>
+            <button type="button" id="open-prior-applications" class="secondary">Check previous applications</button>
           </section>
           <details id="recruiting-insights-panel" class="section">
             <summary>Recruiting Insights</summary>
@@ -1294,12 +1295,28 @@
               after each batch, including paused and failed batches.</label
             ><label class="confirmation"
               ><input name="gmail_feedback" type="checkbox" /> Find recruiting feedback in Gmail after scheduled batches and when I choose Sync. Store matching message previews privately for my review; never send email contents to a model.</label
+            ><label class="confirmation"
+              ><input name="gmail_prior_applications" type="checkbox" /> Check Gmail for past applications before applying, including applications made outside this app. Matching roles stay held for review.</label
             ><button type="submit">Save email preferences</button>
             <p class="help">
               Codes stay out of Claude prompts and logs. Unsupported
               verification steps remain held for manual handling.
             </p>
           </form>
+          <details id="prior-applications-panel" class="section">
+            <summary>Past applications from email</summary>
+            <p class="help">Find earlier acknowledgements and recruiting updates, even when the application is missing from this app. The first scan includes archived mail with no date cutoff. Matching uses posting links or the company and exact role in an application passage. General company emails need your review.</p>
+            <form id="prior-scan-form" class="actions">
+              <label>Company (optional)<input id="prior-company" name="company" maxlength="200" placeholder="For example, Optiver" /></label>
+              <button id="prior-scan" type="submit">Scan application mail</button>
+              <button id="prior-reload" type="button" class="secondary">Refresh email history</button>
+              <button id="prior-restart" type="button" class="secondary">Restart full scan</button>
+            </form>
+            <p id="prior-status" class="help" role="status"></p>
+            <p class="help">Each scan reads a bounded page. Scan again to continue. Saved matches keep blocking duplicate applications if you disconnect Gmail or turn off scanning. Reviewing email does not change an existing submission outcome. No email is sent, and no links, attachments or email text go to a model.</p>
+            <div id="prior-list" aria-live="polite"></div>
+            <div class="actions"><button id="prior-previous" type="button" class="secondary">Previous emails</button><span id="prior-page" class="help" role="status"></span><button id="prior-next" type="button" class="secondary">Next emails</button></div>
+          </details>
           <details id="recruiting-feedback-panel" class="section">
             <summary>Recruiting feedback</summary>
             <p class="help">Review application acknowledgements, assessments, interviews, rejections and offers. Each message needs your confirmation and a matching application attempt. Reviewing email never changes whether an application was submitted or permits an uncertain attempt to retry.</p>

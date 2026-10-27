@@ -42,6 +42,8 @@ ELIGIBILITY_INPUTS = {
 }
 
 def category(reason):
+    if reason=='prior_application_email':return 'mail'
+    if reason in {'prior_application_scan_incomplete','prior_application_mail_unavailable','prior_application_check_required','prior_application_check_budget','prior_application_company_review'}:return 'limits'
     if reason=='workday_schema_unreviewed':return 'unsupported'
     if reason=='workday_native_read_failed':return 'account'
     if reason.startswith('connection_') and reason != 'connection_identity_review':return 'connection'
@@ -56,6 +58,9 @@ def category(reason):
     return 'review'
 
 def dependency(store, job, kind, reason=None):
+    if kind=='mail':
+        from .prior_applications import matches
+        return digest([(row['id'],row['revision'],row['state'],row['match_reason']) for row in matches(store,job)])
     saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
     posting=json.loads(saved['payload']) if saved else job
     if reason=='remote_draft_uncertain':
@@ -178,6 +183,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
     retries=previous['retry_count']+1 if previous and previous['dependency']==fingerprint else 0
     retry_at=(at or time.time())+(1800 if retries==0 else 7200) if kind=='transient' and retries<2 else None
     guidance={'eligibility':'Change relevant preferences or wait for a posting update.',
+        'mail':'Review Past applications in Settings → Connections. Check the original email before applying again.',
         'connection':'Open Connections to restore sign-in or validate the affected platform flow. Enabling a setting alone cannot validate access.',
         'information':'Confirm the missing answer in Your facts or the question queue.',
         'mapping':'Review the exact employer choices. A corrected answer or mapping update releases this hold.',
@@ -188,7 +194,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
         'limits':'Wait for existing company or daily limits to clear.',
         'review':'Review this failure before allowing another attempt.'}
     if reason=='model_budget_exhausted':guidance[kind]='Approve the unanswered fields, or wait for the next model allowance. Request limits remain unchanged.'
-    if reason in REASON_GUIDANCE and (reason.startswith('workday_') or reason in {'remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
+    if reason in REASON_GUIDANCE and (reason.startswith(('workday_','prior_application_')) or reason in {'remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
         guidance[kind]=REASON_GUIDANCE[reason][1]
     # References and field labels only: no answer values, passwords, or OTPs.
     evidence={'stage':stage,'category':kind,'field':str(detail)[:300] if reason in FACT_REASONS|MAPPING_REASONS else '',

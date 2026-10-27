@@ -94,3 +94,64 @@
   window.recruitingFeedback={open,render};
   if(state)render(state);
 })();
+
+(() => {
+  const panel=document.getElementById('prior-applications-panel'),list=document.getElementById('prior-list');
+  const status=document.getElementById('prior-status'),form=document.getElementById('prior-scan-form');
+  const scan=document.getElementById('prior-scan'),reload=document.getElementById('prior-reload');
+  const restart=document.getElementById('prior-restart');
+  const previous=document.getElementById('prior-previous'),next=document.getElementById('prior-next');
+  let snapshot=null,busy=false,offset=0,result=null;
+  function announce(text,error=false){status.textContent=text;status.setAttribute('role',error?'alert':'status');}
+  function controls(){
+    scan.disabled=busy||!snapshot||snapshot.demo||!snapshot.settings.gmail_prior_applications||!snapshot.gmail.connected;
+    restart.disabled=scan.disabled;form.elements.company.disabled=busy;
+    reload.disabled=busy;previous.disabled=busy||offset===0;next.disabled=busy||!result||offset+25>=result.total;
+  }
+  function card(message){
+    const article=el('article',undefined,'artifact-row feedback-row');
+    article.append(el('h3',message.subject||'Past application email'),el('p',`${message.sender} · ${date(message.received)} · ${message.state}`,'help'),el('p',message.excerpt));
+    article.append(el('p',message.sender_verified?'Gmail reports an aligned sender signature. Review the original email and role before recording it.':'Sender authentication was not verified. Inspect the original email before recording it.','help'));
+    const original=el('a','Open original in Gmail');original.href=`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(snapshot.gmail.email||'')}#all/${encodeURIComponent(message.message_id)}`;original.target='_blank';original.rel='noopener noreferrer';article.append(original);
+    const review=el('form',undefined,'form-grid'),label=el('label','Matching saved role'),select=el('select');
+    select.name='job_id';const placeholder=el('option','Choose the exact role');placeholder.value='';select.append(placeholder);
+    for(const job of message.candidates){const option=el('option',`${job.company} · ${job.title}`);option.value=job.id;select.append(option);}
+    select.value=message.job_id||'';label.append(select);review.append(label);
+    const identity=el('p',undefined,'help wide feedback-attempt');identity.setAttribute('aria-live','polite');
+    const describe=()=>{const job=message.candidates.find(item=>item.id===select.value);identity.textContent=job?`${job.company} · ${job.title} · ${job.url} · Job ID: ${job.id}`:'Choose the saved role this email refers to. Existing uncertain applications remain held.';};select.onchange=describe;describe();review.append(identity);
+    if(!message.candidates.length)review.append(el('p','No saved role at this company yet. Keep this email; a future company scan can match newly discovered roles.','help wide'));
+    const actions=el('div',undefined,'actions wide'),confirm=el('button','Record past application'),dismiss=el('button','Dismiss email match','secondary');
+    confirm.type='submit';dismiss.type='button';actions.append(confirm,dismiss);review.append(actions);
+    const response=el('p',undefined,'help wide');response.setAttribute('role','status');review.append(response);
+    async function save(state){
+      if(snapshot.demo||review.dataset.saving==='true')return;
+      if(state==='confirmed'&&!select.value){response.textContent='Choose the exact company and role before recording a past application.';response.setAttribute('role','alert');return;}
+      review.dataset.saving='true';for(const input of review.elements)input.disabled=true;
+      try{await api('/api/prior-applications/review',{id:message.id,revision:message.revision,state,job_id:select.value||null});announce(state==='confirmed'?'Past application recorded. The matching role will not be applied to again.':'Email match dismissed. Existing submission and uncertainty protections are unchanged.');await load(true);}
+      catch(error){response.textContent=error.message;response.setAttribute('role','alert');}
+      finally{review.dataset.saving='false';for(const input of review.elements)input.disabled=!!snapshot.demo;}
+    }
+    review.onsubmit=event=>{event.preventDefault();save('confirmed');};dismiss.onclick=()=>save('dismissed');
+    for(const input of review.elements)input.disabled=!!snapshot.demo;
+    article.append(review);return article;
+  }
+  async function load(preserve=false){
+    if(busy||!snapshot)return;busy=true;controls();list.setAttribute('aria-busy','true');
+    try{result=await api(`/api/prior-applications?offset=${offset}`);list.replaceChildren();for(const message of result.messages)list.append(card(message));
+      if(!result.messages.length)list.append(el('p','No past application emails saved on this page. Enable checking Gmail for past applications, then scan a company or your application mail.','help'));
+      document.getElementById('prior-page').textContent=result.total?`${offset+1}–${Math.min(offset+25,result.total)} of ${result.total} emails`:'No emails';
+      if(!preserve)announce(`${result.total} application emails saved. Role-specific matches hold duplicate applications; company-only messages need review.`);
+    }catch(error){announce(error.message,true);}finally{busy=false;list.removeAttribute('aria-busy');controls();}
+  }
+  async function scanMail(restartHistory=false){
+    if(scan.disabled)return;busy=true;controls();announce('Scanning application mail. No email is sent.');
+    try{const answer=await api('/api/prior-applications/scan',{company:form.elements.company.value.trim(),restart:restartHistory});announce(`${answer.processed} emails checked; ${answer.added} new application emails saved.${answer.more_available?' More mail remains. Scan again to continue.':' This scan is complete.'}`);busy=false;offset=0;await load(true);}
+    catch(error){announce(error.message,true);}finally{busy=false;controls();}
+  }
+  form.onsubmit=event=>{event.preventDefault();scanMail();};restart.onclick=()=>scanMail(true);
+  reload.onclick=()=>load();previous.onclick=()=>{offset=Math.max(0,offset-25);load();};next.onclick=()=>{offset+=25;load();};
+  panel.ontoggle=()=>{if(panel.open)load();};
+  document.getElementById('open-prior-applications').onclick=()=>{show('connections');panel.open=true;panel.querySelector('summary').focus();panel.scrollIntoView({block:'start',behavior:'auto'});};
+  window.priorApplicationMail={render(value){const first=!snapshot;snapshot=value;controls();if(first&&panel.open)load();}};
+  if(state)window.priorApplicationMail.render(state);
+})();

@@ -221,6 +221,9 @@ def restore_backup(archive_path: Path, destination: Path):
             restored.update_settings({'live_enabled':False});restored.recover();restored.export_config()
             restored.db.execute("UPDATE platform_connections SET enabled=0,discovery_enabled=0,native_apply_enabled=0,session_state='not_connected',detail='Sign in and validate this connection on the restored worker machine.'")
             restored.db.execute('DELETE FROM platform_documents')
+            # A restored mailbox index preserves duplicate evidence, but its
+            # source machine's recent connectivity cannot authorize new work.
+            restored.db.execute('UPDATE prior_application_scans SET completed=NULL')
         finally:restored.close()
         if destination.exists():raise ValueError('Restore destination appeared concurrently')
         os.rename(staging,destination)

@@ -1110,6 +1110,8 @@ class Browser:
             previous=self.store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
             if previous and previous[0]!='prepared':raise Blocked('duplicate_or_uncertain','This requisition already has a recorded attempt')
             self.store._check_budget(job,self.store.settings())
+            from .prior_applications import preflight
+            preflight(self.store,job)
         self.current_host=job['host']
         from .ashby_drafts import AshbyDraft
         self.ashby_draft=AshbyDraft(self.store,job) if self.current_host=='jobs.ashbyhq.com' and not self.test_url else None

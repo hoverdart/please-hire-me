@@ -18,7 +18,7 @@ SETTINGS = ('live_enabled', 'onboarding_complete', 'roles', 'seniority', 'locati
             'interview_companies', 'company_aliases', 'max_per_company',
             'company_cooldown_days', 'max_per_day', 'timezone', 'headless',
             'human_verification_wait_seconds', 'remote_drafts', 'employer_accounts',
-            'contextual_preferences', 'signed_in_portals', 'tailored_writing', 'cover_letters')
+            'contextual_preferences', 'signed_in_portals', 'tailored_writing', 'cover_letters', 'gmail_prior_applications')
 
 
 def source_fingerprint(store):
@@ -77,4 +77,7 @@ class ApprovalBoundary:
         eligible(self.job,current,self.store.facts())
         self.store._check_budget(self.job,current,
             application_id=self.application_id if application_id is None else application_id)
+        if self.require_live:
+            from .prior_applications import require_recent_check
+            require_recent_check(self.store,self.job)
         return True

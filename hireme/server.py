@@ -262,6 +262,12 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     query=parse_qs(urlsplit(self.path).query)
                     try:return self.send(200,listing(store,state=query.get('state',['pending'])[0],offset=int(query.get('offset',['0'])[0])))
                     except (ValueError,Blocked) as error:return self.send(400,{'error':str(error)})
+                if path=='/api/prior-applications':
+                    if demo:return self.send(200,{'messages':[],'total':0,'offset':0,'limit':25})
+                    from .prior_applications import listing
+                    query=parse_qs(urlsplit(self.path).query)
+                    try:return self.send(200,listing(store,offset=int(query.get('offset',['0'])[0])))
+                    except (ValueError,Blocked) as error:return self.send(400,{'error':str(error)})
                 if path.startswith('/api/job-feedback/'):
                     from .recruiting_feedback import for_job
                     return self.send(200,{'messages':for_job(store,unquote(path[len('/api/job-feedback/'):]))})
@@ -447,6 +453,13 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     if path=='/api/recruiting-feedback/sync':
                         from .recruiting_feedback import sync
                         return self.send(200,sync(store))
+                    if path=='/api/prior-applications/scan':
+                        from .prior_applications import scan
+                        if not isinstance(data,dict) or set(data)-{'company','restart'}:raise ValueError('Choose a company or scan all application mail')
+                        return self.send(200,scan(store,company=data.get('company') or None,restart=data.get('restart',False)))
+                    if path=='/api/prior-applications/review':
+                        from .prior_applications import review
+                        return self.send(200,review(store,data))
                     if path=='/api/recruiting-feedback/review':
                         from .recruiting_feedback import review
                         return self.send(200,review(store,data))

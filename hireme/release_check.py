@@ -30,6 +30,7 @@ PROTECTED_TABLES = (
 OPERATIONAL_TABLES = (
     'employer_accounts', 'remote_draft_steps', 'adapter_verifications',
     'confirmed_history', 'workday_drafts', 'recruiting_feedback', 'recruiting_sync',
+    'prior_application_mail', 'prior_application_scans', 'prior_application_company_names',
 )
 
 
@@ -275,7 +276,7 @@ def _integrations(view, settings):
     token = integrations / 'gmail-token.json'
     gmail_bound = (bool(owner_email) and account.get('email') == owner_email.casefold()
                    and token.is_file() and not token.is_symlink())
-    gmail_enabled = any(settings[key] for key in ('gmail_reports', 'gmail_verification', 'gmail_feedback'))
+    gmail_enabled = any(settings[key] for key in ('gmail_reports', 'gmail_verification', 'gmail_feedback', 'gmail_prior_applications'))
     return {
         'ready': model_configured and (not gmail_enabled or gmail_bound),
         'model': {'provider': provider, 'configured': model_configured, 'login_and_connectivity': 'not_checked'},
