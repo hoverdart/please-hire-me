@@ -333,3 +333,23 @@ def test_restart_scans_old_mail_again_without_resurrecting_a_dismissed_match(sto
     assert 'after:' not in service.lists[-1]['q']
     assert store.db.execute("SELECT COUNT(*) FROM prior_application_mail WHERE state='dismissed'").fetchone()[0]==1
     assert prior.listing(store)['total']==2
+
+
+def test_unknown_company_identity_never_matches_an_unbound_role_at_another_employer(store,optiver):
+    store.db.execute('DELETE FROM jobs')
+    assert prior.ingest(store,mail(optiver))
+    other={**optiver,'id':digest('unknown-company'),'company':'東京','url':optiver['url']+'-other'}
+    store.upsert_job(other)
+    assert not prior.matches(store,other)
+
+
+def test_punctuation_only_company_does_not_inspect_unrelated_public_boards(store,optiver,monkeypatch):
+    monkeypatch.setattr(prior,'public_company_name',lambda *a,**kw:pytest.fail('An empty company key widened the public search'))
+    prior._resolve_company_search(store,'!!!')
+
+
+def test_invalid_company_filter_cannot_widen_the_mailbox_scan(store,optiver):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver)
+    with pytest.raises(ValueError):
+        prior.scan(store,company='!!!',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    assert not service.lists

@@ -61,7 +61,7 @@ def _company_keys(store, company):
         if normalize(key) == canonical: keys.update((company_key(key), company_key(value)))
     for row in store.db.execute('SELECT company_key,email_company_key FROM prior_application_company_names'):
         if keys & set(row):keys.update(row)
-    return keys
+    return {key for key in keys if key}
 
 
 def public_company_name(job,checkpoint=None,deadline=None):
@@ -86,7 +86,7 @@ def resolve_company(store,job):
 
 
 def _resolve_company_search(store,company):
-    if not company:return
+    if not company or not company_key(company):return
     # Prefixes only choose public boards to inspect. They never establish a
     # company match; the returned official employer name supplies that binding.
     rows=store.db.execute("""SELECT payload FROM jobs WHERE company_key LIKE ?
@@ -180,7 +180,7 @@ def matches(store, job):
     try: owner = _owner(store)
     except Blocked: return []
     keys = _company_keys(store, job['company']); posting = _posting_key(job['url']); title = _normalized(job['title'])
-    marks = ','.join('?' for _ in keys)
+    marks = ','.join('?' for _ in keys) or 'NULL'
     rows = store.db.execute(f'''SELECT * FROM prior_application_mail WHERE owner_hash=? AND state!='dismissed'
         AND (company_key IN ({marks}) OR instr(posting_keys,?)>0 OR job_id=? OR selected_posting_key=?)''',
         (owner,*sorted(keys),posting,job['id'],posting))
@@ -221,7 +221,7 @@ def _query(store, company):
 def scan(store, *, company=None, restart=False, client_factory=None):
     """One resumable page. The first scan has no date cutoff, including archived mail."""
     from .store import worker_lock
-    if company is not None and (not isinstance(company,str) or not 1<=len(company.strip())<=200): raise ValueError('Choose a company name up to 200 characters')
+    if company is not None and (not isinstance(company,str) or not 1<=len(company.strip())<=200 or not company_key(company)): raise ValueError('Choose a company name with letters or digits, up to 200 characters')
     if type(restart) is not bool: raise ValueError('Choose whether to restart the scan')
     if not store.settings()['gmail_prior_applications']: raise Blocked('gmail_prior_applications_disabled','Enable checking Gmail for past applications in Email automation first.')
     with worker_lock(store.root,'prior-mail'):
