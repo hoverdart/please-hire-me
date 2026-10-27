@@ -58,7 +58,10 @@ jobs:
       - name: Install age for encrypted backup verification (macOS)
         if: runner.os == 'macOS'
         run: HOMEBREW_NO_AUTO_UPDATE=1 brew install age
-      - run: python -m pytest -q
+      - name: Check macOS workspace interactions first
+        if: runner.os == 'macOS'
+        run: python -m pytest -x -vv --tb=short -o faulthandler_timeout=60 tests/test_basic_context_ui.py tests/test_connected_workspace_ui.py
+      - run: python -m pytest -x -vv --tb=short -o faulthandler_timeout=60
       - name: Retain synthetic dashboard failure evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
