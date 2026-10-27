@@ -60,8 +60,8 @@ jobs:
         run: HOMEBREW_NO_AUTO_UPDATE=1 brew install age
       - name: Check macOS workspace interactions first
         if: runner.os == 'macOS'
-        run: python -m pytest -x -vv --tb=short -o faulthandler_timeout=60 tests/test_basic_context_ui.py tests/test_connected_workspace_ui.py
-      - run: python -m pytest -x -vv --tb=short -o faulthandler_timeout=60
+        run: python scripts/run_ci_tests.py --timeout-seconds 300 tests/test_basic_context_ui.py tests/test_connected_workspace_ui.py
+      - run: python scripts/run_ci_tests.py
       - name: Retain synthetic dashboard failure evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
