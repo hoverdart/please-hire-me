@@ -406,6 +406,17 @@ class Browser:
                     except Blocked:pass
                     self.denied_write=True
                     self.denied_request={'host':host,'path':p.path,'method':route.request.method}
+                    if isinstance(data,dict):
+                        # Retain only known operation names and a query digest;
+                        # variables, tokens and arbitrary client strings stay private.
+                        operation=data.get('operationName')
+                        if isinstance(operation,str) and operation in {'ApiSubmitSingleApplicationFormAction','ApiSubmitMultipleFormsAction',
+                                'ApiSetFormValue','ApiCreateFileUploadHandle','ApiSetFormValueToFile',
+                                'ApiSubmitCandidateTextingConsent'}:
+                            self.denied_request['operation']=operation
+                        query=data.get('query')
+                        if isinstance(query,str) and len(query)<=50000:
+                            self.denied_request['query_sha256']=hashlib.sha256(re.sub(r'\s+','',query).encode()).hexdigest()
                     self._record_post_submit_denial()
                     return route.abort()
             if self.attempted and self.native_submission and not hcaptcha and host not in {'www.google.com','www.recaptcha.net','recaptcha.google.com'}:
@@ -605,15 +616,18 @@ class Browser:
 
     def _record_post_submit_denial(self):
         final_grant=self.ashby_submission or self.native_submission
-        if (self.denied_write and self.attempted and final_grant and final_grant.used
+        if (self.denied_write and self.attempted and final_grant
                 and not self.post_submit_denial_recorded):
-            self.store.event('post_submit_write_blocked',self.aid,self.denied_request or {})
+            detail=dict(self.denied_request or {})
+            if not final_grant.used:detail['final_transport_used']=False
+            self.store.event('post_submit_write_blocked',self.aid,detail)
             self.post_submit_denial_recorded=True
 
     def _guard(self,job,allow_verification=False):
         if not self.attempted:self.store.checkpoint()
         final_grant=self.ashby_submission or self.native_submission
         if self.denied_write and not (self.attempted and final_grant and final_grant.used):
+            self._record_post_submit_denial()
             raise Blocked("unapproved_draft_write","Unrecognized pre-submit request blocked: "+json.dumps(self.denied_request or {},sort_keys=True))
         # A blocked follow-up mutation never gains authority, but it must not
         # erase the native result of the one final request already transmitted.
