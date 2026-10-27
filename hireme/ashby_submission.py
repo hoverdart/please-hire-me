@@ -16,7 +16,7 @@ from .util import Blocked, digest
 
 
 # Reviewed public client operations, including their read-only fragments.
-VERSION = 2
+VERSION = 3
 SINGLE_QUERY='d864727b5ae0be0e85510892f568d41013b931c09cd6cc4996763dc12873aa7a'
 MULTIPLE_QUERY='15686c0685d88037f73c7c7000e0714455bc118c808c56af965ee6c32042f376'
 COMMON={'organizationHostedJobsPageName','jobPostingId','recaptchaToken','sourceAttributionCode',

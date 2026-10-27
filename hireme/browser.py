@@ -1023,6 +1023,30 @@ class Browser:
             if f['type']!='textarea' and '\n' in value:raise Blocked('invalid_single_line_answer',f['label'])
             el.fill(value)
 
+    def _fill_ashby_answer(self,answer):
+        """Commit each approved field before the next native autosave starts."""
+        from .ashby_drafts import same
+        draft=self.ashby_draft;field=answer['field']
+        # The separate consent control shares Phone's official field identity,
+        # but needs its own consent acknowledgement rather than Phone's save.
+        keys=[] if field.get('ashby_texting_consent') else [key for key in draft.grants if field.get('ashby_entry_id')==key[0]+'_'+key[1]]
+        key=keys[0] if len(keys)==1 else None
+        if key and key in draft.saved and same(draft.forms[key[0]]['values'].get(key[1]),draft.grants[key]['value']):
+            # The official response already acknowledged this exact approved
+            # value. Re-entering it can race React's blur/debounce autosaves.
+            return
+        self._fill(answer)
+        if not key and not field.get('ashby_texting_consent'):return
+        self._control(field).blur()
+        deadline=time.monotonic()+20
+        def acknowledged():
+            if key:return key in draft.saved and not draft.pending
+            return draft.texting is not None and draft.texting.complete and not draft.pending
+        while not acknowledged() and not draft.failed and time.monotonic()<deadline:
+            self.store.checkpoint();self.page.wait_for_timeout(100)
+        if draft.failed or not acknowledged():
+            raise Blocked('ashby_draft_save_failed','The employer has not acknowledged the approved field; no final submission was attempted')
+
     @staticmethod
     def _filled_number_fields(before,after,answers):
         """Ignore only a blank numeric default mirrored from our verified entry."""
@@ -1306,11 +1330,8 @@ class Browser:
             for a in answers:
                 self.store.checkpoint()
                 self.store.event('field_filling',job['id'],{'label':a['field']['label']})
-                if live and self.ashby_draft and a['field']['type'] in {'text','textarea','email','tel','url','number','date'}:
-                    # Re-enter restored browser values so React commits them to
-                    # the current server draft rather than trusting DOM state.
-                    self._control(a['field']).fill('')
-                self._fill(a)
+                if live and self.ashby_draft:self._fill_ashby_answer(a)
+                else:self._fill(a)
             if live and self.lever_resume:self.lever_resume.clear_unapproved_company(fields,answers,job['id'])
             try:self._verify(answers,documents,fields)
             except Blocked as error:
