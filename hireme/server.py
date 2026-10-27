@@ -7,6 +7,7 @@ import shlex
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+from socketserver import TCPServer
 from pathlib import Path
 from urllib.parse import parse_qs,urlsplit,unquote
 
@@ -18,6 +19,14 @@ MAX_BODY=21*1024*1024
 REQUEST_TIMEOUT=30
 UPLOAD_PATHS={'/api/resume','/api/transcript','/api/gmail-client','/api/material-upload',
               '/api/posting-import-preview','/api/posting-import'}
+
+
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer resolves even a numeric loopback address. A stalled system
+        # resolver must not prevent access to the private local workspace.
+        TCPServer.server_bind(self)
+        self.server_name,self.server_port=self.server_address[:2]
 
 
 class HistoryConflict(ValueError):
@@ -642,7 +651,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
             except (ValueError,KeyError,TypeError) as e:return self.send(400,{'error':str(e)})
             except Blocked as e:return self.send(409,{'error':str(e)})
             except Exception as e:return self.send(500,{'error':type(e).__name__})
-    server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
+    server=LoopbackHTTPServer(('127.0.0.1',port),Handler)
     url=f'http://127.0.0.1:{port}/#token={token}'
     print(dashboard_startup_message(url,hide_token,root),flush=True)
     if open_browser:
