@@ -1,6 +1,7 @@
 name: Local invariants
 on:
   push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: '17 9 * * 1'
