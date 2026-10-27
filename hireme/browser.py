@@ -95,6 +95,7 @@ SNAPSHOT=r"""selector => {
   let required=el.required||el.getAttribute('aria-required')==='true'||/[\*✱]/.test(question);
   const ashbyHeading=el.closest('fieldset')?.querySelector('.ashby-application-form-question-title')||el.closest('.ashby-application-form-field-entry')?.querySelector('.ashby-application-form-question-title');
   required=required||!!ashbyHeading?.className.includes('_required_');
+  let uploadHeading=false;
   if(type==='file'){
    const upload=el.closest('.file-upload');
    if(upload){
@@ -103,15 +104,16 @@ SNAPSHOT=r"""selector => {
     // upload group names the actual requested document, including custom files.
     const ids=(upload.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean);
     const headings=ids.map(id=>document.getElementById(id));
-    if(upload.getAttribute('role')==='group' && upload.querySelectorAll('input[type=file]').length===1 &&
-       headings.length && headings.every(n=>n&&upload.contains(n))){
-     const heading=headings.map(labelText).join(' ').trim();if(heading)question=heading;
+    if((!question || /^attach[\s*✱:]*$/i.test(question)) && upload.getAttribute('role')==='group' &&
+       upload.querySelectorAll('input[type=file]').length===1 &&
+       headings.length && headings.every(n=>n&&upload.contains(n)&&!n.contains(el))){
+     const heading=headings.map(labelText).join(' ').trim();if(heading){question=heading;uploadHeading=true;}
     }
    }
    const identity=(el.id+' '+el.name).toLowerCase();
-   if(/transcript/.test(identity))question='Transcript';
-   else if(/resume|\bcv\b/.test(identity))question='Resume/CV';
-   else if(/cover.?letter/.test(identity))question='Cover letter';
+   if(/transcript/.test(identity)){question='Transcript';uploadHeading=false;}
+   else if(/resume|\bcv\b/.test(identity)){question='Resume/CV';uploadHeading=false;}
+   else if(/cover.?letter/.test(identity)){question='Cover letter';uploadHeading=false;}
   }
   const ashbyGroup=type==='checkbox' ? el.closest('fieldset.ashby-application-form-input-checkbox-group') : null;
   const leverGroup=type==='checkbox' ? el.closest('.application-question') : null;
@@ -135,7 +137,7 @@ SNAPSHOT=r"""selector => {
   const entrySelector='.education--form,.employment--form,.employment-form,.experience--form,[data-automation-id="educationSection"],[data-automation-id="education"],[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]';
   const entry=el.closest(entrySelector);
   const entryPeers=entry ? Array.from(document.querySelectorAll(entrySelector)).filter(x=>x.getClientRects().length&&x.tagName===entry.tagName&&(entry.getAttribute('data-automation-id') ? x.getAttribute('data-automation-id')===entry.getAttribute('data-automation-id') : x.className===entry.className)) : [];
-  out.push({index,indices,...(leverLocation?{lever_location:true}:{}),...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
+  out.push({index,indices,...(leverLocation?{lever_location:true}:{}),...(uploadHeading?{upload_heading:true}:{}),...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
    ...((type==='radio'&&el.closest('.ashby-application-form-texting-consent-description')
         || ['checkbox','radio','checkbox-group'].includes(type)&&/^jobs(?:\.eu)?\.lever\.co$/i.test(location.hostname))
        ?{option_values:indices.map(i=>controls[i].value)}:{}),
@@ -174,6 +176,23 @@ def submission_receipt(text,before=''):
         not re.search(r"thanks again for applying[!.]",before,re.I)))
 # Model outcomes that may succeed on a later attempt, unlike missing applicant information.
 PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output','writing_unsupported')
+
+
+_DOCUMENT_REQUEST=re.compile(
+    r'(?:(?:please\s+)?(?:upload|attach|provide|submit)\s+)?'
+    r'(?:(?:a|an|the|your|copy|of|most\s+recent|latest|current|official|unofficial|academic|college|university)\s+)*'
+    r'(?:transcripts?|resumes?(?:\s*(?:/|or)\s*cvs?)?|cvs?(?:\s*(?:/|or)\s*resumes?)?|cover[\s_-]*letters?)'
+    r'(?:\s*\((?:pdf|pdf only|required)\))?',re.I)
+
+
+def _document_kind(field):
+    label=' '.join(field['label'].split()).strip(' *✱:')
+    kinds=[kind for kind,pattern in (('transcript',r'\btranscripts?\b'),('resume',r'\b(?:resumes?|cvs?)\b'),('cover_letter',r'\bcover.?letters?\b'))
+           if re.search(pattern,label,re.I)]
+    # A mention in another request is not permission to disclose that document.
+    if len(kinds)!=1 or not _DOCUMENT_REQUEST.fullmatch(label):return None
+    if field.get('upload_heading') and not field['required']:return None
+    return kinds[0]
 
 
 def _model_dependent(field, reason):
@@ -1253,9 +1272,7 @@ class Browser:
                     if f['required']:raise Blocked('unlabeled_required_field')
                     continue
                 if f['type']=='file':
-                    kinds=[kind for kind,pattern in (('transcript',r'\btranscript\b'),('resume',r'\b(?:resume|cv)\b'),('cover_letter',r'\bcover.?letter\b'))
-                           if re.search(pattern,f['label'],re.I)]
-                    kind=kinds[0] if len(kinds)==1 else None
+                    kind=_document_kind(f)
                     doc=self.store.db.execute('SELECT * FROM documents WHERE kind=?',(kind,)).fetchone()
                     if kind=='resume' and self.store.settings()['tailored_resumes']:
                         from .tailored_resumes import generate as generate_resume

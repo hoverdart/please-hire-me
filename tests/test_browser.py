@@ -534,21 +534,22 @@ def test_visible_captcha_prevents_submit_intent(store,ats,src,opacity):
 
 
 @pytest.mark.parametrize('group_label',[False,True])
-def test_required_transcript_blocks_until_imported_then_attaches(store,ats,tmp_path,group_label):
+@pytest.mark.parametrize('title',['Transcript','Transcripts','Please upload your unofficial transcripts','Please upload a copy of your transcript'])
+def test_required_transcript_blocks_until_imported_then_attaches(store,ats,tmp_path,group_label,title):
     import hashlib
     from pypdf import PdfWriter
     from hireme.onboarding import import_resume
     job=local_job(store,ats)
     upload=('<div class="file-upload" role="group" aria-labelledby="transcript-label" aria-required="true">'
-            '<div id="transcript-label">Transcript*</div><div><label for="question_123">Attach</label>'
-            '<input id="question_123" type="file" name="question_123"></div></div>') if group_label else '<label>Transcript<input type="file" name="transcript" required></label>'
+            '<div id="transcript-label">'+title+'*</div><div><label for="question_123">Attach</label>'
+            '<input id="question_123" type="file" name="question_123"></div></div>') if group_label else '<label>'+title+'<input type="file" name="question_123" required></label>'
     html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',upload+'</form>')
     def serve_form(route):
         if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
         else:route.fallback()
     with Browser(store,test_url=ats[0]) as b:
         b.page.route(ats[0]+'/**',serve_form)
-        with pytest.raises(Blocked,match='Transcript'):b.apply(job)
+        with pytest.raises(Blocked,match='(?i)transcript'):b.apply(job)
     assert not ats[1]
     transcript=tmp_path/'transcript.pdf';writer=PdfWriter();writer.add_blank_page(width=612,height=792)
     with transcript.open('wb') as f:writer.write(f)
@@ -838,11 +839,19 @@ def test_custom_upload_uses_its_own_group_heading_and_required_state(store,ats):
 
 @pytest.mark.parametrize('request_title',['Resume and transcript','Resume and cover letter'])
 def test_combined_document_request_does_not_upload_one_document_instead(store,ats,tmp_path,request_title):
+    import hashlib
     from pypdf import PdfWriter
     from hireme.onboarding import import_resume
     path=tmp_path/'transcript.pdf';pdf=PdfWriter();pdf.add_blank_page(width=612,height=792)
     with path.open('wb') as output:pdf.write(output)
     import_resume(store,path,'transcript')
+    letter=PdfWriter();letter.add_blank_page(width=612,height=792);letter.add_metadata({'/Title':'Synthetic cover letter'})
+    letter_path=tmp_path/'letter.pdf'
+    with letter_path.open('wb') as output:letter.write(output)
+    data=letter_path.read_bytes();checksum=hashlib.sha256(data).hexdigest();filename=checksum+'.pdf'
+    (store.root/'documents'/filename).write_bytes(data)
+    store.db.execute('INSERT INTO documents(kind,hash,filename) VALUES(?,?,?)',('cover_letter',checksum,filename))
+    assert {r[0] for r in store.db.execute('SELECT kind FROM documents')}>={'resume','transcript','cover_letter'}
     html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',
         '<label>'+request_title+'<input type="file" name="question_42" required></label></form>')
     with Browser(store,test_url=ats[0]) as b:
@@ -852,17 +861,66 @@ def test_combined_document_request_does_not_upload_one_document_instead(store,at
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
-@pytest.mark.parametrize('mode',['missing','external','empty','multiple_inputs'])
+@pytest.mark.parametrize('mode',['missing','external','empty','multiple_inputs','enclosing'])
 def test_upload_heading_must_belong_to_one_unambiguous_file_group(store,ats,mode):
     title='<div id="request">Transcript</div>'
     outside=title if mode=='external' else ''
     inside=title if mode not in {'missing','external','empty'} else '<div id="request"></div>' if mode=='empty' else ''
     extra='<label for="question_43">Attach</label><input id="question_43" type="file">' if mode=='multiple_inputs' else ''
     with Browser(store,test_url=ats[0]) as b:
-        b.page.set_content(outside+'<div class="file-upload" role="group" aria-labelledby="request" aria-required="true">'+inside+
+        if mode=='enclosing':inside='';outside=''
+        b.page.set_content(outside+'<div '+('id="request" ' if mode=='enclosing' else '')+'class="file-upload" role="group" aria-labelledby="request" aria-required="true">'+inside+
                            '<label for="question_42">Attach</label><input id="question_42" type="file">'+extra+'</div>')
         fields=b._snapshot()
+    assert len(fields)==(2 if mode=='multiple_inputs' else 1)
     assert all(f['label']=='Attach' and f['required'] for f in fields)
+
+
+@pytest.mark.parametrize('group_label',[False,True])
+@pytest.mark.parametrize('title,kind',[('Transcripts','transcript'),('Resumes','resume'),('CVs','resume'),('Cover letters','cover_letter')])
+def test_plural_document_requests_keep_their_kind(store,ats,group_label,title,kind):
+    from hireme.browser import _document_kind
+    with Browser(store,test_url=ats[0]) as b:
+        html='<label for="question_42">'+('Attach' if group_label else title)+'</label><input id="question_42" type="file" required>'
+        if group_label:html='<div class="file-upload" role="group" aria-labelledby="heading"><div id="heading">'+title+'</div>'+html+'</div>'
+        b.page.set_content(html);fields=b._snapshot()
+    assert len(fields)==1 and _document_kind(fields[0])==kind
+
+
+@pytest.mark.parametrize('title,required',[
+    ('Transcript',False),
+    ('Writing sample (we will request your transcript later)',True),
+    ('Proof of work authorization. Do not upload your resume.',True),
+    ('Transcript not required',True),
+])
+def test_custom_upload_does_not_choose_optional_or_incidentally_mentioned_documents(store,ats,title,required):
+    from hireme.browser import _document_kind
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('<div class="file-upload" role="group" aria-labelledby="heading" aria-required="'+str(required).lower()+'">'
+                           '<div id="heading">'+title+'</div><label for="question_42">Attach</label><input id="question_42" type="file"></div>')
+        fields=b._snapshot()
+    assert len(fields)==1 and fields[0]['label']==title and fields[0]['upload_heading']
+    assert _document_kind(fields[0]) is None
+
+
+def test_optional_custom_transcript_does_not_disclose_an_available_document(store,ats,tmp_path):
+    from pypdf import PdfWriter
+    from hireme.onboarding import import_resume
+    path=tmp_path/'transcript.pdf';pdf=PdfWriter();pdf.add_blank_page(width=612,height=792);pdf.add_metadata({'/Title':'Synthetic academic record'})
+    with path.open('wb') as output:pdf.write(output)
+    imported=import_resume(store,path,'transcript')
+    assert b'Synthetic academic record' in path.read_bytes()
+    assert imported['hash']!=store.db.execute("SELECT hash FROM documents WHERE kind='resume'").fetchone()[0]
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',
+        '<div class="file-upload" role="group" aria-labelledby="transcript-label"><div id="transcript-label">Transcript</div>'
+        '<label for="question_42">Attach</label><input id="question_42" name="question_42" type="file"></div></form>')
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html) if route.request.method=='GET' else route.fallback())
+        assert b.apply(local_job(store,ats))=='confirmed'
+    package=json.loads(store.db.execute('SELECT package FROM applications').fetchone()[0])
+    assert not any(d['kind']=='transcript' for d in package['documents'])
+    assert imported['hash'].encode() not in ats[1][0]
+    assert b'Synthetic academic record' not in ats[1][0]
 
 
 @pytest.mark.parametrize('ats',[True],indirect=True)
