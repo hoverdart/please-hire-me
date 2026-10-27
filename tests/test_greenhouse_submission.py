@@ -21,9 +21,11 @@ def field(index, name, label, *, kind='text', options=None, section=None):
     return value
 
 
-def setup_native(store, *, extra_questions=None, extra_fields=None, documents=None):
-    url = 'https://job-boards.greenhouse.io/acme/jobs/123'
-    job = {'id': digest(url), 'url': url, 'host': 'job-boards.greenhouse.io', 'company': 'Acme',
+def setup_native(store, *, extra_questions=None, extra_fields=None, documents=None, region='us'):
+    canonical = 'boards.eu.greenhouse.io' if region == 'eu' else 'boards.greenhouse.io'
+    host = 'job-' + canonical
+    url = 'https://' + host + '/acme/jobs/123'
+    job = {'id': digest(url), 'url': url, 'host': host, 'company': 'Acme',
            'title': 'Software Engineer Intern Summer 2027', 'location': 'San Francisco, United States',
            'description': 'Build Python software.', 'source': 'fixture'}
     store.upsert_job(job)
@@ -45,18 +47,20 @@ def setup_native(store, *, extra_questions=None, extra_fields=None, documents=No
     assert all(package['answers'])
     aid = store.prepare(job, package)
     route = {'urlToken': 'acme', 'jobPostId': '123',
-             'submitPath': 'https://boards.greenhouse.io/acme/jobs/123',
+             'submitPath': 'https://' + canonical + '/acme/jobs/123',
              'confirmationPath': '/acme/jobs/123/confirmation',
              'jobPost': {'public_url': url, 'fingerprint': 'a' * 40, 'questions': questions}}
     state = {'url': url, 'timezone': 'America/Los_Angeles', 'loaders': {
         'root': {'internal': False, 'preview': False, 'urlToken': 'acme',
-                 'ENV': {'JBEN_URL': 'https://boards.greenhouse.io'}}, ROUTE: route}}
+                 'ENV': {'JBEN_URL': 'https://' + canonical}}, ROUTE: route}}
     browser = SimpleNamespace(store=store, current_host=job['host'], page=SimpleNamespace(url=url, evaluate=lambda _: state),
                               greenhouse_uploads={}, greenhouse_upload_fields={}, greenhouse_native_options={},
                               uploaded_files=set(), upload_payloads={}, write_boundary=None, attempted=False)
     for document in documents:
         name = document['field']['ref']['id']
-        config = {'url': 'https://grnhse-prod-jben-us-east-1.s3.us-east-1.amazonaws.com',
+        upload_host = ('grnhse-prod-jben-eu-west-1.s3.eu-west-1.amazonaws.com' if region == 'eu'
+                       else 'grnhse-prod-jben-us-east-1.s3.us-east-1.amazonaws.com')
+        config = {'url': 'https://' + upload_host,
                   'key': 'applications/resume.pdf', 'fields': {'policy': 'verified-policy'}}
         browser.greenhouse_upload_fields[name] = config
         browser.greenhouse_uploads[name] = {'hash': document['hash'], 'filename': document['filename'],
@@ -76,6 +80,60 @@ def setup_native(store, *, extra_questions=None, extra_fields=None, documents=No
         application[name + '_url_filename'] = document['filename']
     data = {'job_application': application, 'fingerprint': 'a' * 40, 'g-recaptcha-enterprise-token': 'native-token'}
     return browser, job, package, aid, state, data
+
+
+@pytest.mark.parametrize('region', ['us', 'eu'])
+@pytest.mark.parametrize('public_host', ['canonical', 'renderer'])
+@pytest.mark.parametrize('query', ['', '?gh_jid=123'])
+def test_public_posting_identity_accepts_only_same_region_host_alias_and_matching_tracking_id(store, region, public_host, query):
+    browser, job, package, aid, state, _ = setup_native(store, region=region)
+    canonical = 'boards.eu.greenhouse.io' if region == 'eu' else 'boards.greenhouse.io'
+    host = canonical if public_host == 'canonical' else job['host']
+    state['loaders'][ROUTE]['jobPost']['public_url'] = 'https://' + host + '/acme/jobs/123' + query
+    grant = GreenhouseSubmission(browser, job, package, aid)
+    assert grant.submit_url == 'https://' + canonical + '/acme/jobs/123'
+    assert not grant.used
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('url', [
+    'https://boards.eu.greenhouse.io/acme/jobs/123?gh_jid=123',
+    'https://job-boards.eu.greenhouse.io/acme/jobs/123',
+    'https://unreviewed.example.invalid/acme/jobs/123?gh_jid=123',
+    'http://boards.greenhouse.io/acme/jobs/123?gh_jid=123',
+    'https://user@boards.greenhouse.io/acme/jobs/123?gh_jid=123',
+    'https://boards.greenhouse.io/acme/jobs/123?gh_jid=123#other',
+    'https://boards.greenhouse.io/other/jobs/123?gh_jid=123',
+    'https://boards.greenhouse.io/acme/jobs/456?gh_jid=123',
+    'https://boards.greenhouse.io/acme/jobs/123?gh_jid=456',
+    'https://boards.greenhouse.io/acme/jobs/123?gh_jid=',
+    'https://boards.greenhouse.io/acme/jobs/123?gh_jid=123&gh_jid=123',
+    'https://boards.greenhouse.io/acme/jobs/123?gh_jid=123&destination=other',
+])
+def test_public_posting_alias_rejects_changed_destination_identity_and_extra_parameters(store, url):
+    browser, job, package, aid, state, _ = setup_native(store)
+    state['loaders'][ROUTE]['jobPost']['public_url'] = url
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('state', ['prepared', 'unknown', 'awaiting_verification', 'confirmed'])
+def test_adapter_update_releases_only_the_pre_submit_encoding_hold(store, job, package, monkeypatch, state):
+    from hireme import job_holds
+    aid = store.prepare(job, package)
+    if state != 'prepared':
+        store.begin_submit(aid)
+        store.finish(aid, state)
+    version = job_holds.ADAPTER_VERSION
+    monkeypatch.setattr(job_holds, 'ADAPTER_VERSION', version - 1)
+    job_holds.hold(store, job, 'unsupported_form')
+    assert not job_holds.ready(store, job)
+    intents = store.db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0]
+    monkeypatch.setattr(job_holds, 'ADAPTER_VERSION', version)
+    assert job_holds.ready(store, job) is (state == 'prepared')
+    assert store.db.execute('SELECT state FROM applications WHERE id=?', (aid,)).fetchone()[0] == state
+    assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0] == intents
 
 
 def request(data, *, url='https://boards.greenhouse.io/acme/jobs/123', method='POST', raw=None):
