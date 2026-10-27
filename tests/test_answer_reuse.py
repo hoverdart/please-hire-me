@@ -314,9 +314,32 @@ def test_batch_option_only_labels_use_confirmed_locality_and_discovery(store,job
         resolve(store,job['host'],field('; '.join(options),'radio',options),context={**job,'source':'user'})
 
 
-def test_no_ai_application_question_still_requires_human(store,job):
+@pytest.mark.parametrize('instruction',[
+    'please type answer without AI',
+    'please share your own thoughts rather than using AI-generated answers',
+    'instead of using AI-assisted responses, write your own answer',
+    'please refrain from using artificial intelligence generated responses',
+])
+def test_no_ai_application_question_still_requires_human(store,job,instruction):
     with pytest.raises(Blocked,match='human_work_sample'):
-        resolve(store,job['host'],field("Tell me about the most exciting project you've built (please type answer without AI)"))
+        resolve(store,job['host'],field("Tell me about the most exciting project you've built ("+instruction+")"))
+
+
+@pytest.mark.parametrize('text,restricted',[
+    ('Please use your own experiences rather than using AI-generated answers.',True),
+    ('Please use your own experiences rather\nthan using AI\u2011generated answers.',True),
+    ('Respond in your own words instead of AI-assisted submissions.',True),
+    ('Please avoid submitting artificial intelligence generated applications.',True),
+    ('Refrain from providing AI-generated responses.',True),
+    ('Build tools that detect AI-generated answers.',False),
+    ('Prefer a compiler rather than using AI-generated code.',False),
+    ('We encourage AI-assisted applications.',False),
+    ('Our team may use artificial intelligence with this application.',False),
+    ('We do not use AI to infer your emotions or sensitive traits.',False),
+])
+def test_applicant_writing_instructions_remain_distinct_from_ai_job_or_privacy_prose(text,restricted):
+    from hireme.answers import page_requires_manual_work
+    assert page_requires_manual_work(text)==restricted
 
 
 def test_relocation_need_uses_current_location_not_willingness(store,job):

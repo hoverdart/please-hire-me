@@ -33,13 +33,18 @@ RULES = [
     (r"^notice period\*?$", "notice_period"),
 ]
 RESTRICTED_WORK = r"do not use (?:ai|artificial intelligence)|don.t use ai|without (?:ai|artificial intelligence)|graded (?:test|work|assessment)|solve this|coding challenge"
+AI_WRITING = (r"(?:ai|artificial\s+intelligence)(?:[-\s\u2010-\u2015]+(?:generated|assisted))?\s+"
+              r"(?:applications?|answers?|responses?|submissions?)\b")
+APPLICANT_AI_AVOIDANCE = (r"\b(?:rather\s+than|instead\s+of)\s+(?:(?:using|submitting|providing)\s+)?"+AI_WRITING
+                          +r"|\b(?:avoid|refrain\s+from)\s+(?:(?:using|submitting|providing)\s+)?"+AI_WRITING)
 # Question labels remain deliberately strict. Posting prose can describe
 # proving that software works without asking the applicant for a proof.
-REFUSE = re.compile(RESTRICTED_WORK+r"|prove that",re.I)
+REFUSE = re.compile(RESTRICTED_WORK+'|'+APPLICANT_AI_AVOIDANCE+r"|prove that",re.I)
 PROOF_INSTRUCTION = (r"(?:^|[\n.!?:;]\s*)(?:[-*•]\s*)?(?:(?:please|can you|could you)\s+)?"
                      r"(?:using [^.!?\n]{1,100},\s*)?prove that\b"
                      r"|\b(?:please|your task is to|you (?:must|are asked to|are required to))\s+prove that\b")
 PAGE_REFUSE = re.compile(RESTRICTED_WORK
+                        +'|'+APPLICANT_AI_AVOIDANCE
                         +r"|\b(?:must not|should not|may not|cannot|can.t|not to) use (?:ai|artificial intelligence)\b"
                         +r"|\b(?:do not|don.t) (?:allow|permit) (?:the use of )?(?:ai|artificial intelligence)(?:[- ](?:generated|assisted))?\b"
                         +r"|\b(?:ai|artificial intelligence)[- ](?:generated|assisted) (?:applications?|answers?|responses?|submissions?) (?:are|is) (?:not allowed|prohibited|forbidden)\b"
