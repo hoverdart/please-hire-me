@@ -105,6 +105,7 @@ SNAPSHOT=r"""selector => {
     const ids=(upload.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean);
     const headings=ids.map(id=>document.getElementById(id));
     if((!question || /^attach[\s*✱:]*$/i.test(question)) && upload.getAttribute('role')==='group' &&
+       upload.checkVisibility({opacityProperty:true,visibilityProperty:true}) && !upload.closest('[hidden],[aria-hidden="true"],[inert]') &&
        upload.querySelectorAll('input[type=file]').length===1 &&
        headings.length && headings.every(n=>n&&upload.contains(n)&&!n.contains(el))){
      const heading=headings.map(labelText).join(' ').trim();if(heading){question=heading;uploadHeading=true;}

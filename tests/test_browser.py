@@ -887,6 +887,20 @@ def test_plural_document_requests_keep_their_kind(store,ats,group_label,title,ki
     assert len(fields)==1 and _document_kind(fields[0])==kind
 
 
+@pytest.mark.parametrize('hidden',['style="display:none"','style="visibility:hidden"','style="opacity:0"','hidden','aria-hidden="true"','inert'])
+def test_hidden_upload_group_does_not_authorize_document_selection(store,ats,hidden):
+    from hireme.browser import _document_kind
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('<section '+hidden+'><div class="file-upload" role="group" aria-labelledby="heading" aria-required="true">'
+                           '<div id="heading">Transcript</div><label for="question_42">Attach</label><input id="question_42" type="file"></div></section>')
+        fields=b._snapshot()
+    if hidden=='aria-hidden="true"':
+        assert fields==[]  # Existing snapshot filtering excludes these controls entirely.
+        return
+    assert len(fields)==1 and fields[0]['label']=='Attach' and fields[0]['required']
+    assert _document_kind(fields[0]) is None
+
+
 @pytest.mark.parametrize('title,required',[
     ('Transcript',False),
     ('Writing sample (we will request your transcript later)',True),
