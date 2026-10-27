@@ -41,10 +41,10 @@ def run_command(command,timeout_seconds,grace_seconds=5):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--timeout-seconds',type=float,default=1800)
+    parser.add_argument('--timeout-seconds',type=float,default=2700)
     parser.add_argument('pytest_args',nargs='*')
     args=parser.parse_args()
-    if not 0<args.timeout_seconds<=1800:parser.error('Use a test deadline between 0 and 1800 seconds.')
+    if not 0<args.timeout_seconds<=2700:parser.error('Use a test deadline between 0 and 2700 seconds.')
     if os.name!='posix':parser.error('This CI runner supports macOS and Linux.')
     # A signal handler avoids a watchdog thread for every individual test.
     bootstrap=('import faulthandler,os,signal,sys,pytest; '

@@ -27,7 +27,7 @@ jobs:
       - run: python -m pip_audit -r requirements/development.lock --disable-pip --no-deps
   test:
     if: github.event_name != 'schedule'
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

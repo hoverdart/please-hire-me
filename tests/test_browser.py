@@ -59,6 +59,12 @@ def local_job(store,ats):
     store.upsert_job(j);return j
 
 
+def _wait_fixture_submission(browser):
+    # The fixture replaces the form after receiving its POST response.
+    browser.page.locator('form#application').wait_for(state='detached',timeout=10000)
+    return browser.page.locator('body').inner_text()
+
+
 @pytest.mark.parametrize('text',[
     'Thanks again for applying!',
     'Our Talent team will carefully review your qualifications and experience.',
@@ -117,17 +123,25 @@ def test_receipt_already_present_before_submission_is_not_new_evidence():
 ])
 def test_generic_or_preexisting_receipt_keeps_submission_unknown_and_prevents_retry(store,ats,monkeypatch,receipt,preexisting):
     original=(Path(__file__).parent/'fixtures/application.html').read_text()
-    html=original.replace("'Thank you for applying. Your application has been received.'",json.dumps(receipt))
+    anchor='e.preventDefault();let f='
+    assert original.count(anchor)==1
+    html=original.replace(anchor,
+        'e.preventDefault();await new Promise(resolve=>setTimeout(resolve,750));let f=')
+    html=html.replace("'Thank you for applying. Your application has been received.'",json.dumps(receipt))
     if preexisting:html=html.replace('<form', '<p>'+receipt+'</p><form',1)
+    observed=[]
     with Browser(store,test_url=ats[0]) as b:
         b.page.route(ats[0]+'/**',lambda r:r.fulfill(status=200,content_type='text/html',body=html) if r.request.method=='GET' else r.fallback())
         # Exercise post-click classification without spending the 45-second
         # production receipt timeout on a deliberately ambiguous fixture.
-        monkeypatch.setattr(b,'_wait_submission_outcome',lambda *args,**kwargs:b.page.locator('body').inner_text())
+        def outcome(*args,**kwargs):
+            text=_wait_fixture_submission(b);observed.append(text);return text
+        monkeypatch.setattr(b,'_wait_submission_outcome',outcome)
         job=local_job(store,ats)
         assert b.apply(job)=='unknown'
         with pytest.raises(Blocked):b.apply(job)
     assert len(ats[1])==1
+    assert observed==[receipt]
     assert store.db.execute('SELECT state FROM applications').fetchone()[0]=='unknown'
 
 
@@ -1469,8 +1483,11 @@ def test_unstable_or_replaced_controls_never_reach_submit(store,ats,unstable,cha
 @pytest.mark.parametrize('capture_fails',[False,True])
 def test_post_submit_blocker_retains_reason_without_exception_data_or_retry(store,ats,monkeypatch,capture_fails):
     job=local_job(store,ats)
+    observed=[]
     with Browser(store,test_url=ats[0]) as b:
-        def blocked(*args,**kwargs):raise Blocked('captcha_blocked','https://private.invalid/?secret=do-not-log')
+        def blocked(*args,**kwargs):
+            observed.append(_wait_fixture_submission(b))
+            raise Blocked('captcha_blocked','https://private.invalid/?secret=do-not-log')
         monkeypatch.setattr(b,'_wait_submission_outcome',blocked)
         if capture_fails:
             capture=b.page.screenshot
@@ -1488,6 +1505,7 @@ def test_post_submit_blocker_retains_reason_without_exception_data_or_retry(stor
     assert event=={'stage':'outcome_wait','type':'Blocked','reason':'captcha_blocked'}
     assert 'private.invalid' not in app['confirmation']+json.dumps(event)
     assert len(ats[1])==1
+    assert observed==['Thank you for applying. Your application has been received.']
 
 
 @pytest.mark.parametrize('description',[
