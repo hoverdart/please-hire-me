@@ -126,6 +126,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 if outcome=='confirmed' or not live and outcome=='prepared':count+=1
                             except Blocked as e:
                                 if not attempt_started:
+                                    if stage=='browser_start':raise
                                     reasons[e.reason]=reasons.get(e.reason,0)+1
                                     if e.reason in ('paused','cycle_timeout','prior_application_check_budget'):raise
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail,'screening')
@@ -143,6 +144,10 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail)
                             except Exception as e:
                                 if not attempt_started:
+                                    # Startup is a batch failure, not a per-job
+                                    # browser outcome. Preserve its original
+                                    # propagation and sanitized run reporting.
+                                    if stage=='browser_start':raise
                                     store.checkpoint()
                                     reason='prior_application_mail_unavailable' if stage=='mail' else 'browser_error'
                                     reasons[reason]=reasons.get(reason,0)+1

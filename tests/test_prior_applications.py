@@ -353,3 +353,16 @@ def test_invalid_company_filter_cannot_widen_the_mailbox_scan(store,optiver):
     with pytest.raises(ValueError):
         prior.scan(store,company='!!!',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
     assert not service.lists
+
+
+def test_browser_startup_blocker_stops_the_batch_without_a_phantom_attempt(store,optiver):
+    from hireme.worker import cycle
+    class Browser:
+        def __init__(self,_):pass
+        def __enter__(self):raise Blocked('browser_unavailable')
+        def __exit__(self,*_):pass
+    with pytest.raises(Blocked,match='browser_unavailable'):
+        cycle(store,Path('.'),discover=False,live=False,job_ids=[optiver['id']],browser_factory=Browser)
+    run=store.db.execute('SELECT status,detail FROM runs').fetchone()
+    assert run['status']=='blocked' and json.loads(run['detail'])['attempts']==0
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='application_started'").fetchone()
