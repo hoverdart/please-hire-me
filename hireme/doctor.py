@@ -19,7 +19,7 @@ def diagnose(store, verify=False, *, checks=None):
     provider = checks['provider']
     # Installed does not mean authenticated; a normal doctor checks installation only.
     items.append({'name': 'Model connection', 'ready': provider['ready'], 'detail': provider['message'],
-                  'action': '' if provider['ready'] else 'Open Model connection in the dashboard to configure your provider.'})
+                  'action': '' if provider['ready'] else 'Open Settings → Connections in the dashboard to configure your model.'})
     missing = checks['missing']
     items.append({'name': 'Applicant setup', 'ready': not missing,
                   'detail': 'Required documents and facts are saved.' if not missing else 'Still needed: ' + ', '.join(FACTS.get(key, key) for key in missing),
@@ -37,7 +37,7 @@ def diagnose(store, verify=False, *, checks=None):
 
 
 def format_report(result):
-    lines = ['Application desk · setup check', '']
+    lines = ['HireMeMaybe · setup check', '']
     for item in result['checks']:
         lines.append(f"{'OK' if item['ready'] else 'NEEDS SETUP'}  {item['name']}: {item['detail']}")
         if item['action']: lines.append('  Next: ' + item['action'])

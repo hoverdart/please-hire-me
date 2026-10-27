@@ -1,6 +1,6 @@
 # Release status
 
-The configured version is **0.5.0rc3**, a public release candidate for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
+The configured version is **0.5.0rc4**, a public release candidate for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
 
 ## Capability boundaries
 
@@ -40,9 +40,13 @@ Every live Ashby application uses one exact final request. An optional human-ver
 
 **Gmail and reports** have separate connection and delivery evidence. Saved OAuth configuration is distinct from `gmail check`, which verifies current API access without reading or sending messages. Batch reports preserve unknown and verification-pending outcomes after browser errors. Recovery uses each interrupted run's own durable attempts. Idle completed/paused cycles with no attempts or new outcomes stay local; failures and meaningful updates remain reportable. A queued report is not delivered mail.
 
-**Recruiting feedback** reads a bounded Gmail page when enabled, after live-mode batches (including paused batches) or on explicit sync. It retains matching message previews privately and suggests acknowledgement, assessment, interview, rejection or offer categories. The applicant confirms a category and exact prior attempt. Latest reviewed milestones appear in Today and each job's history context; original submission states stay unchanged. Sender authentication metadata is context for review, not independent employer-identity proof. Messages and attachments are never used as model prompts; attachments and links are not fetched. Live mailbox validation remains outstanding.
+**Recruiting feedback** reads a bounded Gmail page when enabled, after live-mode batches (including paused batches) or on explicit sync. It retains matching message previews privately and suggests acknowledgement, assessment, interview, rejection or offer categories. The applicant confirms a category and exact prior attempt. Latest reviewed milestones appear in Applications and each job's history context; original submission states stay unchanged. Sender authentication metadata is context for review, not independent employer-identity proof. Messages and attachments are never used as model prompts; attachments and links are not fetched. Live mailbox validation remains outstanding.
 
 **Tailored resumes** require explicit opt-in and confirmed structured employment with descriptions. Selection retains up to four complete original lines per employer/role, ordered by posting relevance, with confirmed education, contact details and skills. No generative rewriting or extra model request is involved. The layout supports at most two pages; unsupported fonts or excess content remain held. Changed sources, settings or posting details invalidate execution authority, while historical PDF revisions remain downloadable. The generic supported browser flow uses these PDFs; independently gated platform and Workday controllers retain their own document paths.
+
+## Release channels
+
+The release candidate is suitable for evaluating the self-hosted workflow with the capability limits above. It is a prerelease, not a claim of unattended operation or universal ATS support. Stable publication requires every gate below. Workday and optional native platforms stay independently gated; their presence in the interface does not make them supported for automatic submission.
 
 ## Release gates
 

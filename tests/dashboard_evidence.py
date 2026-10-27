@@ -15,6 +15,15 @@ def open_fixture_dashboard(page, base):
     assert initial.value.status == 200
 
 
+def open_view(page, name):
+    """Navigate through the visible primary and contextual navigation."""
+    primary = 'profile' if name == 'materials' else 'settings' if name in ('connections', 'setup') else name
+    page.locator(f'.rail [data-view={primary}]').click()
+    if name != primary:
+        page.locator(f'.section-nav [data-view={name}]').click()
+
+
+
 @contextmanager
 def dashboard_evidence(label):
     """Capture before Playwright closes; retain the original failure and timeout."""

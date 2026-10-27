@@ -28,7 +28,7 @@ def _read_member(archive, name):
     try:
         return archive.read(name)
     except (RuntimeError, NotImplementedError, OSError, zlib.error):
-        raise ValueError('Cannot read this backup ZIP. Choose the original history backup downloaded from Application desk.') from None
+        raise ValueError('Cannot read this backup ZIP. Choose the original history backup downloaded from HireMeMaybe.') from None
 
 
 def _manifest(data):
@@ -44,7 +44,7 @@ def _manifest(data):
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         raise ValueError('Backup manifest cannot be read') from None
     if not isinstance(manifest, dict) or type(manifest.get('version')) is not int or manifest['version'] != 1 or not isinstance(manifest.get('files'), dict):
-        raise ValueError('Unsupported backup manifest. Choose a history backup created by Application desk.')
+        raise ValueError('Unsupported backup manifest. Choose a history backup created by HireMeMaybe.')
     for name,info in manifest['files'].items():
         maximum=MAX_LEDGER if name=='ledger.sqlite3' else MAX_MEMBER
         if not isinstance(info, dict) or type(info.get('bytes')) is not int or not 0 <= info['bytes'] <= maximum or not isinstance(info.get('sha256'), str) or not re.fullmatch(r'[a-f0-9]{64}', info['sha256']):
@@ -206,7 +206,7 @@ def restore_backup(archive_path: Path, destination: Path):
                             if count>info['bytes']:raise ValueError('Backup checksum mismatch')
                             checksum.update(chunk);output.write(chunk)
                 except (RuntimeError,NotImplementedError,OSError,zlib.error,zipfile.BadZipFile):
-                    raise ValueError('Cannot read this backup ZIP. Choose the original history backup downloaded from Application desk.') from None
+                    raise ValueError('Cannot read this backup ZIP. Choose the original history backup downloaded from HireMeMaybe.') from None
                 if count!=info['bytes'] or checksum.hexdigest()!=info['sha256']:
                     raise ValueError('Backup checksum mismatch')
         if not (staging/'ledger.sqlite3').is_file():raise ValueError('Backup has no ledger')

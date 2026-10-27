@@ -1,3 +1,4 @@
+from tests.dashboard_evidence import open_view
 """Stalled dashboard reads recover without discarding edits or retrying writes."""
 import multiprocessing
 import socket
@@ -20,7 +21,7 @@ def test_stalled_read_releases_refresh_and_preserves_draft(tmp_path, width):
             page.clock.install()
             page.goto(base + '/#token=fixture-capability')
             expect(page.locator('#worker-state')).to_have_text('Setup needed')
-            page.locator('[data-view=profile]').click()
+            open_view(page, 'profile')
             draft = page.locator('#facts-form [name=full_name]')
             draft.fill('Unsaved applicant draft'); draft.focus()
             page.evaluate('''() => {

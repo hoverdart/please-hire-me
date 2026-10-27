@@ -11,5 +11,5 @@ if [[ "${HIREME_PI:-0}" != "1" ]]; then
 else
   .venv/bin/python -m hireme pi configure
 fi
-printf '\nOpen the printed dashboard URL. Import your resume, confirm facts once, and enable automatic applications.\n'
+printf '\nOpen the printed dashboard URL. Open Setup, import your resume and confirm your facts. Finish paused and review prepared drafts before enabling submissions.\n'
 exec .venv/bin/python -m hireme dashboard --open

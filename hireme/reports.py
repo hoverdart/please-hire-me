@@ -13,9 +13,9 @@ from .util import now
 FOOTER = ('\n\nQuestions that keep coming up can be answered once for every employer: Your facts → Add context in your own words.\n'
           'Open the job links above on your phone to review or apply. Confirmed submissions are already applied. '
           'For uncertain submissions, check with the employer before applying again.\n'
-          'After applying yourself, return to Application desk on the Pi, find the job, and choose Applied manually. '
+          'After applying yourself, return to HireMeMaybe, find the job, and choose Applied manually. '
           'This records your application and stops automatic retries. Jobs with uncertain submission records need reconciliation first.\n'
-          'Open Application desk on the Pi: http://127.0.0.1:8766 (through Raspberry Pi Connect).\n')
+          'Open HireMeMaybe on the computer running the worker using your saved dashboard link.\n')
 
 
 def _short(text, limit=140):

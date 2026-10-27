@@ -1,3 +1,4 @@
+from tests.dashboard_evidence import open_view
 import json
 import multiprocessing
 import socket
@@ -18,7 +19,7 @@ def test_basic_context_save_reload_and_refresh_preserves_unsaved_edits(store,wid
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':900});errors=[]
             page.on('pageerror',lambda e:errors.append(str(e)))
-            page.goto(base+'/#token=fixture-capability');page.locator('[data-view=profile]').click()
+            page.goto(base+'/#token=fixture-capability');open_view(page, 'profile')
             form=page.locator('#basic-context-form');text=form.locator('textarea')
             expect(form).to_be_visible()
             text.fill('I build manufacturing software at a startup and study computer science.')
@@ -28,7 +29,7 @@ def test_basic_context_save_reload_and_refresh_preserves_unsaved_edits(store,wid
             expect(page.locator('#notice')).to_contain_text('Basic context saved')
             expect(page.locator('#basic-context-status')).to_contain_text('Saved and approved')
             assert basic_context(store)['confirmed']
-            page.reload();page.locator('[data-view=profile]').click()
+            page.reload();open_view(page, 'profile')
             expect(text).to_have_value(basic_context(store)['text'])
             text.fill('I have a new unsaved factual context draft at the moment.')
             text.blur();page.evaluate('refresh()')

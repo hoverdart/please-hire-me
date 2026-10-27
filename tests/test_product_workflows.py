@@ -1,3 +1,4 @@
+from tests.dashboard_evidence import open_view
 """Synthetic end-to-end product evidence; no employer, inbox or model connections."""
 import multiprocessing
 import json
@@ -48,7 +49,7 @@ def test_feedback_initialization_does_not_depend_on_snapshot_script_order(store,
             deadline=time.monotonic()+5
             while not pending and time.monotonic()<deadline:page.wait_for_timeout(10)
             assert len(pending)==1
-            page.locator('[data-view=connections]').first.click()
+            open_view(page, 'connections')
             if open_before_release:page.locator('#recruiting-feedback-panel > summary').click()
             pending[0].continue_()
             # Releasing either startup dependency must work without another poll.
@@ -86,7 +87,7 @@ def test_tailored_resume_and_recruiting_review_workflow(store,job,package,tmp_pa
             assert page.locator('#application-outcomes dd').all_text_contents()[2]=='1'
             screenshots=Path('output/autoapply-comparison');screenshots.mkdir(parents=True,exist_ok=True)
             page.screenshot(path=str(screenshots/f'today-{width}.png'),full_page=True)
-            page.locator('[data-view=opportunities]').first.click()
+            open_view(page, 'opportunities')
             assert page.request.get(base+'/api/application-journey/'+application).status==403
             evidence=page.locator(f'#jobs details[data-evidence-id="{application}"]')
             evidence.locator(':scope > summary').click()
@@ -106,7 +107,7 @@ def test_tailored_resume_and_recruiting_review_workflow(store,job,package,tmp_pa
             record.get_by_role('button',name='Review unresolved submissions').click()
             expect(page.locator('#questions')).to_be_visible()
             expect(page.locator('#job-dialog')).not_to_have_attribute('open','')
-            page.locator('[data-view=opportunities]').first.click()
+            open_view(page, 'opportunities')
             evidence.locator(':scope > summary').click()
             page.locator('#jobs [data-job-detail]').first.click() if page.locator('#jobs [data-job-detail]').count() else page.get_by_role('button',name='View details').first.click()
             page.locator('#job-writing-panel > summary').click()
@@ -128,7 +129,7 @@ def test_tailored_resume_and_recruiting_review_workflow(store,job,package,tmp_pa
             page.screenshot(path=str(screenshots/f'materials-{width}.png'),full_page=True)
             page.locator('#job-writing-panel').screenshot(path=str(screenshots/f'materials-detail-{width}.png'))
             if width==320:page.locator('#close-job-dialog').click() if page.locator('#close-job-dialog').count() else page.keyboard.press('Escape')
-            page.locator('[data-view=connections]').first.click()
+            open_view(page, 'connections')
             page.locator('#recruiting-feedback-panel > summary').click()
             expect(page.locator('#feedback-list')).to_contain_text('Interview invitation')
             card=page.locator('#feedback-list article').first
@@ -143,7 +144,7 @@ def test_tailored_resume_and_recruiting_review_workflow(store,job,package,tmp_pa
             page.locator('#recruiting-feedback-panel').screenshot(path=str(screenshots/f'feedback-detail-{width}.png'))
             page.locator('#feedback-sync').click()
             expect(page.locator('#feedback-status')).to_contain_text('1 new messages saved')
-            page.locator('[data-view=opportunities]').first.click()
+            open_view(page, 'opportunities')
             if evidence.evaluate('(node)=>node.open'):evidence.locator(':scope > summary').click()
             evidence.locator(':scope > summary').click()
             evidence.get_by_role('button',name='Open application record',exact=True).click()

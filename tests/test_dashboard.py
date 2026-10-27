@@ -1,3 +1,4 @@
+from tests.dashboard_evidence import open_view
 import json
 import multiprocessing
 import socket
@@ -263,7 +264,7 @@ def test_dashboard_prepares_reviewable_drafts_while_staying_paused(store,job):
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':320,'height':844});errors=[]
             page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(base+'/#token=fixture-capability')
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'opportunities')
             page.locator('#prepare-panel > summary').click()
             expect(page.locator('#prepare')).to_be_disabled()
             expect(page.locator('#prepare-help')).to_contain_text('Pause automatic submissions')
@@ -384,7 +385,7 @@ def test_question_pages_keep_old_employer_context_and_protect_unsaved_answers(st
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=questions]').click()
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'questions')
             expect(page.locator('#question-list form')).to_have_count(25)
             expect(page.locator('#question-page')).to_contain_text('1–25 of 533')
             snapshot = page.request.get(base + '/api/state', headers={'X-Hireme-Token': 'fixture-capability'}).json()
@@ -438,7 +439,7 @@ def test_question_review_shows_employer_wording_and_safe_policy_links_before_ans
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width':width, 'height':1000}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=questions]').click()
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'questions')
             question = page.locator('#question-list article')
             expect(question).to_have_count(1)
             expect(question).to_be_visible()
@@ -474,7 +475,7 @@ def test_question_review_saves_multiple_checked_choices_without_losing_a_draft(s
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':1000});errors=[]
             page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(base+'/#token=fixture-capability');page.locator('[data-view=questions]').click()
+            page.goto(base+'/#token=fixture-capability');open_view(page, 'questions')
             form=page.locator('#question-list form')
             expect(form.get_by_role('checkbox')).to_have_count(4)
             assert not form.evaluate('(form)=>form.checkValidity()')
@@ -518,7 +519,7 @@ def test_unresolved_outcome_pages_preserve_old_context_and_require_explicit_veri
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=questions]').click()
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'questions')
             expect(page.locator('#uncertain form')).to_have_count(25)
             expect(page.locator('#outcome-page')).to_contain_text('1–25 of 511')
             expect(page.locator('#uncertain')).to_contain_text('Café 100%_ Labs')
@@ -571,7 +572,7 @@ def test_outcome_evidence_loads_only_on_request_retries_and_preserves_reading_fo
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []; requests = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.on('request', lambda request: requests.append(request.url) if '/api/application/' in request.url else None)
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=questions]').click()
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'questions')
             expect(page.locator('#uncertain form')).to_have_count(1)
             assert not requests
             page.route('**/api/application/' + aid, lambda route: route.fulfill(status=503, json={'error': 'Synthetic evidence failure'}))
@@ -612,7 +613,7 @@ def test_compact_holds_preview_opens_complete_ledger_and_keeps_controls_stable(s
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=questions]').click()
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'opportunities'); open_view(page, 'questions')
             expect(page.locator('#blocked-scope')).to_contain_text('Showing 12 of 501')
             expect(page.locator('#blocked-jobs .opportunity-details')).to_have_count(12)
             button = page.locator('#blocked-jobs .opportunity-details').first
@@ -620,7 +621,7 @@ def test_compact_holds_preview_opens_complete_ledger_and_keeps_controls_stable(s
             button.focus(); page.evaluate('refresh()')
             expect(button).to_be_focused(); expect(button).to_have_attribute('data-fixture-stable', 'yes')
             page.locator('#view-all-holds').click()
-            expect(page.locator('#heading')).to_have_text('Today’s applications')
+            expect(page.locator('#heading')).to_have_text('Jobs')
             expect(page.locator('#status-filter')).to_have_value('blocked')
             expect(page.locator('#ledger-page-label')).to_contain_text('1–50 of 501')
             page.locator('#job-search').fill('Acme')
@@ -650,7 +651,7 @@ def test_model_request_budget_counts_all_providers_without_replacing_connection_
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=connections]').click()
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'connections')
             expect(page.locator('#model-request-usage')).to_contain_text('2 of 2 requests used today · 0 remaining · Daily cap reached')
             expect(page.locator('#model-request-reset')).to_contain_text(store.settings()['timezone'])
             expect(page.locator('#model-token-usage')).to_contain_text('Claude subscription / sonnet: 1 requests · 1 successful · 0 failed. 1,234 input tokens · 34 output tokens')
@@ -702,6 +703,7 @@ def test_complete_batch_history_pages_searches_old_notes_and_retries(store,initi
             expect(page.locator('#runs')).not_to_contain_text('2 submitted')
             assert not history_requests
             assert page.request.get(base + '/api/runs').status == 403
+            open_view(page, 'applications')
             page.locator('#run-history-panel > summary').click()
             expect(page.locator('#run-history .run-row')).to_have_count(25)
             expect(page.locator('#run-history-page')).to_contain_text('1–25 of 62')
@@ -741,7 +743,7 @@ def test_complete_source_health_search_pages_retry_and_mobile_layout(store):
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []; requests = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.on('request', lambda request: requests.append(request.url) if '/api/sources' in request.url else None)
-            page.goto(base + '/#token=fixture-capability')
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'opportunities')
             expect(page.locator('#jobs')).to_contain_text('Your next chapter starts here')
             assert not requests and page.request.get(base + '/api/sources').status == 403
             page.locator('#source-health-panel > summary').click()
@@ -791,10 +793,10 @@ def test_saved_posting_dialog_checks_current_saved_preferences_without_writes(st
             observe(page)
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.on('request',lambda request:checks.append(request.url) if '/api/posting-check/' in request.url else None)
-            open_fixture_dashboard(page,base)
-            page.locator('[data-view="settings"]').click()
+            open_fixture_dashboard(page,base); open_view(page, 'opportunities')
+            open_view(page, 'settings')
             page.locator('#settings-form [name="locations"]').fill('London')
-            page.locator('[data-view="today"]').click()
+            open_view(page, 'opportunities')
             page.locator('#jobs .opportunity-details').first.click()
             assert not checks
             assert page.request.get(base+'/api/posting-check/'+job['id']).status==403
@@ -813,7 +815,7 @@ def test_saved_posting_dialog_checks_current_saved_preferences_without_writes(st
             assert not store.settings()['live_enabled']
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             page.keyboard.press('Escape')
-            page.locator('[data-view="settings"]').click()
+            open_view(page, 'settings')
             expect(page.locator('#settings-form [name="locations"]')).to_have_value('London')
             assert not errors
             browser.close()
@@ -839,7 +841,7 @@ def test_dashboard_detects_missing_resume_and_reimport_preserves_fact_drafts(sto
             with page.expect_response(lambda response:response.url.split('?',1)[0]==base+'/api/state' and response.status==200,timeout=30000):
                 page.goto(base+'/#token=fixture-capability')
             expect(page.locator('#run')).to_be_enabled()
-            page.locator('[data-view="profile"]').click()
+            open_view(page, 'profile')
             page.locator('#facts-form [name="full_name"]').fill('Unsaved synthetic name')
             (store.root/'documents'/old).unlink();page.evaluate('refresh()')
             expect(page.locator('#resume-state')).to_contain_text('saved resume file is unavailable')
@@ -879,7 +881,7 @@ def test_dashboard_capability_csrf_host_and_xss(tmp_path):
             try:
                 with urllib.request.urlopen(base) as r:
                     assert "frame-ancestors 'none'" in r.headers['Content-Security-Policy'];assert r.headers['Referrer-Policy']=='no-referrer'
-                    html=r.read().decode();assert 'application desk' in html.lower()
+                    html=r.read().decode();assert 'hirememaybe' in html.lower()
                 break
             except OSError:time.sleep(.1)
         for headers in ({},{'Host':'attacker.invalid'},{'X-Hireme-Token':'wrong','Origin':'https://attacker.invalid'}):
@@ -924,7 +926,7 @@ def test_transcript_upload_replace_invalid_and_responsive_ui(tmp_path):
             browser=p.chromium.launch();page=browser.new_page();errors=[]
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.goto(base+'/#token=fixture-capability')
-            page.locator('[data-view="profile"]').click()
+            open_view(page, 'profile')
             expect(page.locator('#transcript-state')).to_contain_text('No transcript imported')
             page.locator('#transcript-upload').set_input_files(str(transcript))
             expect(page.locator('#transcript-state')).to_contain_text('Transcript imported')
@@ -941,7 +943,7 @@ def test_transcript_upload_replace_invalid_and_responsive_ui(tmp_path):
             expect(page.locator('#notice')).to_contain_text('Transcript saved')
             updated=store.db.execute("SELECT hash FROM documents WHERE kind='transcript'").fetchone()[0]
             assert updated!=original
-            page.locator('[data-view="settings"]').click()
+            open_view(page, 'settings')
             expect(page.locator('[name="cycle_timeout_seconds"]')).to_have_value('0.5')
             expect(page.locator('[name="employer_accounts"]')).not_to_be_checked()
             page.set_viewport_size({'width':390,'height':844})
@@ -971,7 +973,7 @@ def test_transcript_upload_replace_invalid_and_responsive_ui(tmp_path):
             expect(page.locator('#notice')).to_contain_text('Search preferences saved')
             assert store.settings()['cycle_timeout_seconds'] == 150
             assert not store.settings()['live_enabled']
-            page.locator('[data-view="profile"]').click()
+            open_view(page, 'profile')
             page.locator('#facts-form [name="full_name"]').fill('Unsaved synthetic name')
             from hireme.store import worker_lock
             with worker_lock(root):
@@ -993,7 +995,7 @@ def test_transcript_upload_replace_invalid_and_responsive_ui(tmp_path):
             key=vault.begin_creation('https://careers.example.com','Synthetic employer')
             vault.finish_creation(key,confirmed=False)
             page.reload()
-            page.locator('[data-view="questions"]').click()
+            open_view(page, 'questions')
             evidence=page.get_by_label('Account confirmation evidence for Synthetic employer')
             expect(evidence).to_be_visible()
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
@@ -1003,7 +1005,7 @@ def test_transcript_upload_replace_invalid_and_responsive_ui(tmp_path):
             page.get_by_role('button',name='Confirm verified account',exact=True).click()
             expect(page.locator('#notice')).to_contain_text('Account confirmed')
             assert store.db.execute('SELECT state FROM employer_accounts WHERE id=?',(key,)).fetchone()[0]=='confirmed'
-            page.locator('[data-view="profile"]').click()
+            open_view(page, 'profile')
             for width,height,name in [(1440,1000,'desktop'),(390,844,'mobile')]:
                 page.set_viewport_size({'width':width,'height':height})
                 page.locator('#transcript-state').scroll_into_view_if_needed()
@@ -1114,7 +1116,7 @@ def test_material_upload_review_and_context_preferences(tmp_path):
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':1280,'height':900});errors=[]
             page.on('pageerror',lambda e:errors.append(str(e)))
             page.goto(base+'/#token=fixture-capability')
-            page.locator('[data-view="materials"]').click()
+            open_view(page, 'materials')
             page.locator('#material-upload-form input[type=file]').set_input_files({'name':'research-notes.txt','mimeType':'text/plain','buffer':b'I built Python services for an operational workflow and tested their behavior.'})
             page.locator('#material-upload-form button').click()
             expect(page.locator('#material-list')).to_contain_text('Needs review')
@@ -1154,7 +1156,7 @@ def test_material_upload_review_and_context_preferences(tmp_path):
             page.screenshot(path='/tmp/hireme-materials-desktop.png',full_page=True)
             page.set_viewport_size({'width':390,'height':844});page.screenshot(path='/tmp/hireme-materials-mobile.png',full_page=True)
             assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
-            page.locator('[data-view="settings"]').click()
+            open_view(page, 'settings')
             page.locator('[name=tailored_writing]').check();page.locator('[name=contextual_preferences]').check()
             page.locator('#settings-form button[type=submit]').click()
             expect(page.locator('#notice')).to_contain_text('Search preferences saved')
@@ -1271,7 +1273,7 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
             browser = p.chromium.launch()
             page = browser.new_page(viewport={'width': 1440, 'height': 1000})
             errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability')
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'opportunities')
             expect(page.locator('#metric-submitted')).to_have_text('1')
             expect(page.locator('#metric-attention')).to_have_text('1')
             expect(page.locator('#metric-opportunities')).to_have_text('3')
@@ -1303,15 +1305,17 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
             page.set_viewport_size({'width': 390, 'height': 844})
             page.screenshot(path=str(captures / 'overview-mobile.png'), full_page=True)
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            open_view(page, 'today')
             page.locator('#review-queue').click()
             expect(page.locator('#heading')).to_have_text('A few things need you')
             expect(page.locator('#question-list')).to_contain_text('Which work location')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             expect(page.get_by_role('group', name='Your pace')).to_be_visible()
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             page.screenshot(path=str(captures / 'preferences-mobile.png'), full_page=True)
-            page.locator('[data-view=connections]').click()
+            open_view(page, 'connections')
+            page.locator('#optional-connections > summary').click()
             handshake=page.locator('[data-connection-id=handshake]')
             expect(handshake.locator('.state')).to_have_text('Could not check sign-in')
             handshake.get_by_text('Connect from the Pi or terminal',exact=True).click()
@@ -1358,7 +1362,7 @@ def test_demo_is_read_only_and_export_requires_auth(tmp_path):
             assert b'Cedar Labs' in response.read()
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page()
-            page.goto(base + '/#token=fixture-capability')
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'opportunities')
             expect(page.locator('#demo-banner')).to_be_visible()
             expect(page.locator('#metric-submitted')).to_have_text('2')
             expect(page.locator('#runs')).to_contain_text('2 sources checked · 1 unavailable')
@@ -1381,7 +1385,7 @@ def test_demo_is_read_only_and_export_requires_auth(tmp_path):
             expect(page.locator('#status-filter')).to_have_value('discovered')
             expect(page.locator('#ledger-count')).to_have_text('2')
             expect(page.get_by_role('button',name='Remove view: Ready to evaluate',exact=True)).to_be_disabled()
-            page.locator('[data-view=setup]').click()
+            open_view(page, 'setup')
             page.locator('#setup-diagnostics').evaluate('(element)=>element.open=true')
             page.locator('#check-setup').click()
             expect(page.locator('.diagnostic-check')).to_have_count(6)
@@ -1427,7 +1431,7 @@ def test_preferences_save_unlimited_company_limits_without_resuming(store):
             browser=playwright.chromium.launch();page=browser.new_page(viewport={'width':1440,'height':1000})
             page.goto(base+'/#token=fixture-capability')
             page.wait_for_function('() => state !== null && refreshing === null')
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             count=page.locator('#settings-form [name=max_per_company]')
             cooldown=page.locator('#settings-form [name=company_cooldown_days]')
             expect(count).to_have_value('2');expect(cooldown).to_have_value('90')
@@ -1442,7 +1446,7 @@ def test_preferences_save_unlimited_company_limits_without_resuming(store):
             page.screenshot(path='/tmp/hireme-unlimited-companies-desktop.png')
             page.set_viewport_size({'width':390,'height':844});page.reload()
             page.wait_for_function('() => state !== null && refreshing === null')
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             expect(count).to_have_value('0');expect(cooldown).to_have_value('0')
             assert_layout_fits_viewport(page)
             count.scroll_into_view_if_needed()
@@ -1467,7 +1471,7 @@ def test_dashboard_applies_saved_schedule_without_resuming_and_protects_drafts(s
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 390, 'height': 844})
             page.goto(base + '/#token=fixture-capability')
             expect(page.locator('#worker-state')).to_have_text('Submissions paused')
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             expect(page.locator('#schedule-state')).to_contain_text('Installed interval: 6 hours')
             page.locator('#settings-form [name=schedule_hours]').fill('3')
             expect(page.locator('#apply-schedule')).to_be_disabled()
@@ -1500,12 +1504,12 @@ def test_unsaved_forms_survive_refresh_and_invalid_aliases_are_actionable(tmp_pa
             browser = p.chromium.launch(); page = browser.new_page(); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(base + '/#token=fixture-capability')
-            page.locator('[data-view=profile]').click()
+            open_view(page, 'profile')
             field = page.locator('#facts-form [name=full_name]')
             field.fill('Unsaved Candidate'); field.blur()
             page.evaluate('refresh()')
             expect(field).to_have_value('Unsaved Candidate')
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             locations = page.locator('#settings-form [name=locations]')
             locations.fill('Unsaved location'); locations.blur()
             page.evaluate('refresh()')
@@ -1540,7 +1544,7 @@ def test_company_name_editor_preserves_drafts_and_round_trips_json(tmp_path):
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 800}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=settings]').click()
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'settings')
             expect(page.locator('[data-alias-other]')).to_have_value('Acme Inc')
             expect(page.locator('[data-alias-main]')).to_have_value('Acme')
             expect(page.locator('#alias-json-field')).to_be_hidden()
@@ -1588,7 +1592,7 @@ def test_essential_facts_optional_toggle_and_provider_fields(tmp_path):
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 390, 'height': 844})
             page.goto(base + '/#token=fixture-capability')
-            page.locator('[data-view=profile]').click()
+            open_view(page, 'profile')
             expect(page.locator('#facts-form input[name][required]:visible, #facts-form textarea[name][required]:visible')).to_have_count(12)
             expect(page.locator('#facts-form [name=preferred_name]')).to_be_hidden()
             page.locator('#show-optional-facts').check()
@@ -1602,7 +1606,7 @@ def test_essential_facts_optional_toggle_and_provider_fields(tmp_path):
             page.locator('#show-optional-facts').check()
             expect(page.locator('#facts-form [name=preferred_name]')).to_have_value('Saved in my draft')
             expect(page.locator('[data-draft-for=facts-form]')).to_contain_text('Unsaved changes')
-            page.locator('[data-view=connections]').click()
+            open_view(page, 'connections')
             expect(page.locator('#provider-key-field')).to_be_hidden()
             page.locator('#provider-form [name=model_effort]').select_option('high')
             page.locator('#provider-form [name=model_escalation]').check()
@@ -1643,14 +1647,14 @@ def test_clearing_optional_fact_stops_reuse_and_survives_reload(store):
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page()
             page.goto(base + '/#token=fixture-capability')
-            page.locator('[data-view=profile]').click(); page.locator('#show-optional-facts').check()
+            open_view(page, 'profile'); page.locator('#show-optional-facts').check()
             field = page.locator('#facts-form [name=preferred_name]')
             expect(field).to_have_value('Previous nickname'); field.fill('')
             page.locator('#confirm-facts').check()
             page.get_by_role('button', name='Save confirmed facts', exact=True).click()
             expect(page.locator('#notice')).to_contain_text('Cleared values will no longer be reused')
             assert 'preferred_name' not in store.facts() and store.settings()['live_enabled']
-            page.reload(); page.locator('[data-view=profile]').click(); page.locator('#show-optional-facts').check()
+            page.reload(); open_view(page, 'profile'); page.locator('#show-optional-facts').check()
             expect(field).to_have_value('')
             assert store.facts(False)['preferred_name']['source'] == 'revoked'
             browser.close()
@@ -1671,7 +1675,7 @@ def test_opportunity_dialog_and_approved_wording_edits(store, job):
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 390, 'height': 844})
             errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability')
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'opportunities')
             details = page.locator('#jobs .opportunity-details').first; details.click()
             expect(page.get_by_role('dialog')).to_be_visible()
             expect(page.locator('#job-dialog-title')).to_have_text(job['title'])
@@ -1684,7 +1688,7 @@ def test_opportunity_dialog_and_approved_wording_edits(store, job):
             expect(page.locator('#close-job-dialog')).to_be_in_viewport()
             page.keyboard.press('Escape')
             expect(page.get_by_role('dialog')).to_be_hidden(); expect(details).to_be_focused()
-            page.locator('[data-view=profile]').click()
+            open_view(page, 'profile')
             page.locator('#templates summary').click()
             text = page.locator('#templates textarea')
             text.fill('I built a TypeScript service and measured every deployment.')
@@ -1726,7 +1730,7 @@ def test_dashboard_backup_download_restores_paused_and_excludes_credentials(stor
                 assert error.code == 400 and b'Wait for the active batch' in error.read()
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page()
-            page.goto(base + '/#token=fixture-capability'); page.locator('[data-view=settings]').click()
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'settings')
             expect(page.locator('#download-backup')).to_be_enabled()
             with page.expect_download() as download:
                 page.locator('#download-backup').click()
@@ -1779,7 +1783,7 @@ def test_full_ledger_search_and_pagination_preserve_old_evidence(store,tmp_path)
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability')
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'opportunities')
             expect(page.locator('#jobs tbody tr')).to_have_count(50)
             expect(page.locator('#ledger-page-label')).to_contain_text('1–50 of 521')
             pending=[];page_requests=[]
@@ -1848,7 +1852,7 @@ def test_dashboard_recovers_crashed_worker_and_refuses_live_recovery(store, job,
             expect(page.locator('#pause')).to_have_text('Resume')
             assert not store.settings()['live_enabled']
             assert store.db.execute('SELECT state FROM applications WHERE id=?', (application,)).fetchone()[0] == 'unknown'
-            page.locator('[data-view=questions]').click()
+            open_view(page, 'questions')
             expect(page.locator('#uncertain')).to_contain_text('Acme')
             browser.close()
     finally: process.terminate(); process.join(5)
@@ -1870,7 +1874,7 @@ def test_saved_answers_review_withdrawal_and_restricted_browser_storage(store, j
             page.add_init_script("Object.defineProperty(window, 'sessionStorage', {get() {throw new DOMException('Storage denied', 'SecurityError')}})")
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(base + '/#token=fixture-capability')
-            page.locator('[data-view=profile]').click()
+            open_view(page, 'profile')
             page.locator('#saved-answers-panel > summary').click()
             assert not errors, errors
             expect(page.locator('#answers-page')).to_contain_text('1–1 of 1')
@@ -1907,20 +1911,20 @@ def test_company_shortcut_preserves_preference_drafts_and_shows_dialog_errors(st
         with sync_playwright() as p:
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability')
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'opportunities')
             expect(page.locator('#jobs .opportunity-details')).to_have_count(1)
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             page.locator('#settings-form [name=locations]').fill('San Francisco')
-            page.locator('[data-view=today]').click()
+            open_view(page, 'opportunities')
             page.locator('#jobs .opportunity-details').click()
             expect(page.locator('#skip-job-company')).to_be_disabled()
             expect(page.locator('#skip-company-help')).to_contain_text('Save your pending preferences')
             page.keyboard.press('Escape')
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             expect(page.locator('#settings-form [name=locations]')).to_have_value('San Francisco')
             page.locator('#settings-form button[type=submit]').click()
             expect(page.locator('#notice')).to_contain_text('Search preferences saved')
-            page.locator('[data-view=today]').click()
+            open_view(page, 'opportunities')
             page.locator('#jobs .opportunity-details').click()
             page.route('**/api/company-skip', lambda route: route.fulfill(status=400, json={'error': 'Synthetic failure; try again'}))
             page.locator('#skip-job-company').click()
@@ -1979,7 +1983,7 @@ def test_record_evidence_loads_on_demand_retries_and_stays_open_after_refresh(st
             page.on('request', lambda request: requests.append(request.url) if '/api/application/' in request.url else None)
             page.on('request', lambda request: images.append(request.url) if '/api/screenshot/' in request.url else None)
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(base + '/#token=fixture-capability')
+            page.goto(base + '/#token=fixture-capability'); open_view(page, 'opportunities')
             summary = page.locator('#jobs').get_by_text('Answers & evidence', exact=True)
             expect(summary).to_be_visible()
             assert not requests
@@ -2064,7 +2068,7 @@ def test_account_queue_pages_old_holds_and_preserves_verification_drafts(store):
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844}); errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(base + '/#token=fixture-capability')
-            page.locator('[data-view=questions]').click()
+            open_view(page, 'questions')
             expect(page.locator('#account-page')).to_contain_text('1–25 of 31')
             expect(page.locator('#employer-accounts form')).to_have_count(25)
             page.route('**/api/accounts*', lambda route: route.fulfill(status=503, json={'error': 'Synthetic account-history outage'}))
@@ -2111,7 +2115,7 @@ def test_source_library_pages_preserve_edits_and_recover_from_failed_page_load(s
         with sync_playwright() as p:
             browser=p.chromium.launch(); page=browser.new_page(viewport={'width':320,'height':844})
             page.goto(base+'/#token=fixture-capability')
-            page.locator('[data-view=materials]').click()
+            open_view(page, 'materials')
             expect(page.locator('#material-list article')).to_have_count(20)
             excerpt=page.locator('#material-list textarea').first
             original=excerpt.input_value(); excerpt.fill('Synthetic unsaved excerpt that must survive paging.')
@@ -2171,7 +2175,7 @@ def test_recorded_pdf_download_auth_binding_and_local_retry(store,job,package):
             assert response.headers['content-disposition']=='attachment; filename="resume.pdf"'
             changed=page.request.get(base+f"/api/application-document/{aid}/0/"+'b'*64,headers={'X-Hireme-Token':'fixture-capability'})
             assert changed.status==400
-            page.goto(base+'/#token=fixture-capability')
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'opportunities')
             page.locator('#jobs details[data-evidence-id]').first.evaluate('(element)=>element.open=true')
             button=page.get_by_role('button',name='Download recorded resume',exact=True)
             expect(button).to_be_visible()
@@ -2183,7 +2187,7 @@ def test_recorded_pdf_download_auth_binding_and_local_retry(store,job,package):
             expect(button).to_be_enabled(); expect(button).to_be_focused()
             page.unroute('**/api/application-document/**')
             page.route('**/api/application-document/**',lambda route:route.abort())
-            button.click(); expect(page.locator('.recorded-document [role=alert]')).to_contain_text('Cannot reach your application desk')
+            button.click(); expect(page.locator('.recorded-document [role=alert]')).to_contain_text('Cannot reach HireMeMaybe')
             expect(button).to_be_enabled(); expect(button).to_be_focused()
             page.unroute('**/api/application-document/**')
             with page.expect_download() as retry: button.click()
@@ -2209,7 +2213,7 @@ def test_selected_resume_and_transcript_downloads_preserve_fact_drafts_and_follo
             browser=p.chromium.launch(); page=browser.new_page(viewport={'width':320,'height':844},accept_downloads=True)
             assert page.request.get(base+f"/api/selected-document/resume/{doc['hash']}").status==403
             page.goto(base+'/#token=fixture-capability')
-            page.locator('[data-view=profile]').click()
+            open_view(page, 'profile')
             draft=page.locator('#facts-form [name=first_name]'); draft.fill('Synthetic unsaved name')
             for kind in ('resume','transcript'):
                 button=page.get_by_role('button',name='Download selected '+kind,exact=True)
@@ -2220,7 +2224,7 @@ def test_selected_resume_and_transcript_downloads_preserve_fact_drafts_and_follo
             assert store.snapshot()==before and store.db.total_changes==changes
             page.route('**/api/selected-document/resume/**',lambda route:route.abort())
             page.locator('#download-selected-resume').click()
-            expect(page.locator('#selected-resume-feedback')).to_contain_text('Cannot reach your application desk')
+            expect(page.locator('#selected-resume-feedback')).to_contain_text('Cannot reach HireMeMaybe')
             expect(page.locator('#download-selected-resume')).to_be_enabled()
             page.unroute('**/api/selected-document/resume/**')
             page.locator('#withdraw-transcript').click()
@@ -2253,7 +2257,7 @@ def test_dashboard_encrypted_password_transfer_auth_pause_retry_and_secret_clean
             live=page.request.post(base+'/api/account-vault-export',data={'passphrase':phrase,'confirmation':phrase},headers={'X-Hireme-Token':'fixture-capability'})
             assert live.status==400 and 'Pause' in live.text() and phrase not in live.text()
             store.update_settings({'live_enabled':False})
-            page.goto(base+'/#token=fixture-capability'); page.locator('[data-view=questions]').click()
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'questions')
             page.locator('#account-transfer-panel').evaluate('(element)=>element.open=true')
             export=page.locator('#account-export-form')
             export.locator('[name=passphrase]').fill(phrase); export.locator('[name=confirmation]').fill('different synthetic transfer phrase')
@@ -2267,7 +2271,7 @@ def test_dashboard_encrypted_password_transfer_auth_pause_retry_and_secret_clean
             expect(page.locator('#pause')).to_be_disabled(); expect(page.locator('#prepare')).to_be_disabled()
             expect(export.locator('[name=passphrase]')).to_be_disabled()
             pending[0].abort()
-            expect(page.locator('#account-export-feedback')).to_contain_text('Cannot reach your application desk')
+            expect(page.locator('#account-export-feedback')).to_contain_text('Cannot reach HireMeMaybe')
             expect(export.locator('[name=passphrase]')).to_have_value('')
             expect(export.locator('[name=confirmation]')).to_have_value('')
             page.unroute('**/api/account-vault-export')
@@ -2312,7 +2316,7 @@ def test_backup_check_browser_retry_isolation_and_authentication(store, tmp_path
             browser = p.chromium.launch(); page = browser.new_page(viewport={'width': 320, 'height': 844})
             errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
             assert page.request.post(base+'/api/backup-check', data=archive.read_bytes()).status == 403
-            page.goto(base+'/#token=fixture-capability'); page.locator('[data-view=settings]').click()
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'settings')
             page.locator('#backup-check-panel summary').click()
             expect(page.locator('#backup-check-file')).to_be_enabled()
             page.locator('#backup-check-file').set_input_files(archive)
@@ -2354,7 +2358,7 @@ def test_posting_csv_browser_previews_retries_and_keeps_attempt_history(store, j
             for endpoint in ('posting-import-preview','posting-import'):
                 assert page.request.post(base+'/api/'+endpoint,data=data).status == 403
             assert page.request.post(base+'/api/posting-import',data=data,headers={'X-Hireme-Token':'fixture-capability'}).status == 400
-            page.goto(base+'/#token=fixture-capability')
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'opportunities')
             page.locator('#posting-import-panel summary').click()
             expect(page.locator('#posting-import-file')).to_be_enabled()
             with page.expect_download() as download: page.locator('#posting-import-template').click()
@@ -2408,15 +2412,15 @@ def test_saved_views_browser_restore_filters_retry_and_preserve_private_drafts(s
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':320,'height':844})
             errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
             assert page.request.post(base+'/api/saved-view',data={'action':'save','name':'Unauthorized'}).status==403
-            page.goto(base+'/#token=fixture-capability')
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'opportunities')
             page.locator('#saved-views-panel summary').click()
             expect(page.locator('#saved-view-form input')).to_be_enabled()
             page.locator('#job-search').fill('Acme');page.locator('#status-filter').select_option('prepared');page.locator('#job-sort').select_option('fit')
             page.locator('#saved-view-form input').fill('My prepared roles')
             page.locator('#saved-view-form button').click()
             expect(page.locator('#saved-views')).to_contain_text('My prepared roles')
-            page.locator('[data-view=settings]').click();page.locator('#settings-form [name=schedule_hours]').fill('7')
-            page.locator('[data-view=today]').click()
+            open_view(page, 'settings');page.locator('#settings-form [name=schedule_hours]').fill('7')
+            open_view(page, 'opportunities')
             page.locator('#job-search').fill('');page.locator('#status-filter').select_option('all');page.locator('#job-sort').select_option('recent')
             page.route('**/api/jobs?*',lambda route:route.fulfill(status=503,json={'error':'Synthetic saved-view connection failure'}))
             open_button=page.get_by_role('button',name='Open view: My prepared roles',exact=True)
@@ -2429,8 +2433,8 @@ def test_saved_views_browser_restore_filters_retry_and_preserve_private_drafts(s
             expect(page.locator('#saved-view-status')).to_contain_text('Opened view: My prepared roles')
             expect(page.locator('#job-search')).to_have_value('Acme');expect(page.locator('#status-filter')).to_have_value('prepared');expect(page.locator('#job-sort')).to_have_value('fit')
             expect(page.locator('#jobs')).to_be_focused()
-            page.locator('[data-view=settings]').click();expect(page.locator('#settings-form [name=schedule_hours]')).to_have_value('7')
-            page.locator('[data-view=today]').click()
+            open_view(page, 'settings');expect(page.locator('#settings-form [name=schedule_hours]')).to_have_value('7')
+            open_view(page, 'opportunities')
             replace=page.get_by_role('button',name='Replace with current filters: My prepared roles',exact=True)
             replace.focus();page.evaluate('window.savedViewButton=document.activeElement');page.evaluate('refresh()')
             assert page.evaluate('savedViewButton===document.activeElement')
@@ -2463,9 +2467,9 @@ def test_tool_search_navigates_without_writes_and_preserves_drafts_and_keyboard_
             errors=[];writes=[]
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.on('request',lambda request:writes.append(request.url) if request.method=='POST' else None)
-            page.goto(base+'/#token=fixture-capability');expect(page.locator('#run')).to_be_enabled()
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'opportunities');expect(page.locator('#run')).to_be_enabled()
             assert page.evaluate('toolDestinations.every(item=>document.querySelector(item.target))')
-            page.locator('[data-view=settings]').click();page.locator('#settings-form [name=schedule_hours]').fill('7')
+            open_view(page, 'settings');page.locator('#settings-form [name=schedule_hours]').fill('7')
             origin=page.locator('#settings-form [name=schedule_hours]');origin.focus()
             page.keyboard.press('Control+k')
             expect(page.locator('#tool-dialog')).to_be_visible();expect(page.locator('#tool-search')).to_be_focused()
@@ -2482,7 +2486,7 @@ def test_tool_search_navigates_without_writes_and_preserves_drafts_and_keyboard_
             expect(origin).to_have_value('7')
             page.locator('#find-tool').click();page.locator('#tool-search').fill('password');page.keyboard.press('Enter')
             expect(page.locator('#account-transfer-panel')).to_have_attribute('open','');expect(page.locator('#questions')).to_be_visible()
-            page.locator('[data-view=today]').click();page.locator('#jobs .opportunity-details').first.click()
+            open_view(page, 'opportunities');page.locator('#jobs .opportunity-details').first.click()
             expect(page.locator('#job-dialog')).to_be_visible();page.keyboard.press('Control+k')
             expect(page.locator('#job-dialog')).to_be_hidden();expect(page.locator('#tool-dialog')).to_be_visible()
             assert page.evaluate('document.body.classList.contains("dialog-open")')
@@ -2506,7 +2510,7 @@ def test_pending_form_save_freezes_its_payload_and_preserves_other_form_drafts(s
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':390,'height':844})
             errors=[];pending=[];page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(base+'/#token=fixture-capability');page.locator('[data-view=settings]').click()
+            page.goto(base+'/#token=fixture-capability');open_view(page, 'settings')
             form=page.locator('#settings-form');field=form.locator('[name=min_fit_score]')
             expect(field).to_have_value('45');field.fill('51')
             page.route('**/api/settings',lambda route:pending.append(route))
@@ -2516,14 +2520,14 @@ def test_pending_form_save_freezes_its_payload_and_preserves_other_form_drafts(s
             assert form.evaluate("form=>!form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))")
             assert len(pending)==1 and page.url==base+'/'
             page.evaluate('refresh()');expect(field).to_be_disabled();expect(field).to_have_value('51')
-            page.locator('[data-view=profile]').click();page.locator('#show-optional-facts').check()
+            open_view(page, 'profile');page.locator('#show-optional-facts').check()
             draft=page.locator('#facts-form [name=preferred_name]');draft.fill('New private draft while preferences save')
             pending.pop().continue_()
             expect(form).not_to_have_attribute('data-saving','true')
             expect(draft).to_have_value('New private draft while preferences save');expect(draft).to_be_focused()
             assert store.settings()['min_fit_score']==51
             assert 'preferred_name' not in store.facts()
-            page.unroute('**/api/settings');page.locator('[data-view=settings]').click()
+            page.unroute('**/api/settings');open_view(page, 'settings')
             expect(field).to_be_enabled();expect(field).to_have_value('51')
             field.fill('52')
             page.route('**/api/settings',lambda route:route.fulfill(status=503,json={'error':'Synthetic interrupted save'}))
@@ -2548,7 +2552,7 @@ def test_fact_form_capture_survives_pending_lock_and_restores_editable_confirmed
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':320,'height':844})
             pending=[];errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(base+'/#token=fixture-capability');page.locator('[data-view=profile]').click();page.locator('#show-optional-facts').check()
+            page.goto(base+'/#token=fixture-capability');open_view(page, 'profile');page.locator('#show-optional-facts').check()
             field=page.locator('#facts-form [name=preferred_name]');expect(field).to_be_visible();field.fill('Confirmed synthetic nickname')
             page.locator('#confirm-facts').check()
             page.route('**/api/facts',lambda route:pending.append(route))
@@ -2583,7 +2587,7 @@ def test_preferences_savebar_discards_locally_and_warns_before_losing_drafts(sto
             page.on('request',lambda request:posts.append(request.url) if request.method=='POST' else None)
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.on('dialog',lambda dialog:(dialogs.append(dialog.type),dialog.dismiss()))
-            page.goto(base+'/#token=fixture-capability');page.locator('[data-view=settings]').click()
+            page.goto(base+'/#token=fixture-capability');open_view(page, 'settings')
             field=page.locator('#settings-form [name=locations]');discard=page.locator('#discard-preferences')
             expect(discard).to_be_disabled()
             field.fill('Unsaved private location')
@@ -2598,9 +2602,9 @@ def test_preferences_savebar_discards_locally_and_warns_before_losing_drafts(sto
             page.evaluate('location.reload()')
             expect(field).to_have_value('Unsaved private location')
             assert dialogs==['beforeunload']
-            page.locator('[data-view=today]').click()
+            open_view(page, 'today')
             assert page.evaluate("(()=>{const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented})()")
-            page.locator('[data-view=settings]').click();page.locator('#alias-json-toggle').click()
+            open_view(page, 'settings');page.locator('#alias-json-toggle').click()
             page.locator('#alias-json-field textarea').fill('{invalid alias draft')
             discard.click()
             expect(field).to_have_value('\n'.join(before['locations']))
@@ -2616,7 +2620,7 @@ def test_preferences_savebar_discards_locally_and_warns_before_losing_drafts(sto
             expect(discard).to_be_disabled()
             page.reload();expect(page.locator('#worker-state')).to_have_text('Automatic submissions enabled' if before['live_enabled'] else 'Submissions paused')
             assert dialogs==['beforeunload'] and store.settings()['locations']==['Saved synthetic location']
-            page.locator('[data-view=profile]').click();page.locator('#facts-form [name=first_name]').fill('Private unsaved first name')
+            open_view(page, 'profile');page.locator('#facts-form [name=first_name]').fill('Private unsaved first name')
             page.evaluate('location.reload()')
             expect(page.locator('#facts-form [name=first_name]')).to_have_value('Private unsaved first name')
             assert dialogs==['beforeunload','beforeunload'] and not errors
@@ -2641,20 +2645,20 @@ def test_source_page_load_queues_followup_saves_and_preserves_other_section_focu
             pending=[];reads=[];errors=[]
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.on('request',lambda request:reads.append(request.url) if request.url==base+'/api/state?material_offset=20' else None)
-            page.goto(base+'/#token=fixture-capability');page.locator('[data-view=materials]').click()
+            page.goto(base+'/#token=fixture-capability');open_view(page, 'materials')
             expect(page.locator('#material-list article')).to_have_count(20)
             stale=page.request.get(base+'/api/state?material_offset=20',headers={'X-Hireme-Token':'fixture-capability'}).json()
             pause_first_request(page,'**/api/state?material_offset=20',pending)
             with page.expect_request('**/api/state?material_offset=20'):page.get_by_role('button',name='Older sources',exact=True).click()
             page.wait_for_function('()=>materialPagingBusy')
             page.evaluate('()=>{window.refreshesFinished=0;refresh().then(()=>refreshesFinished++);refresh().then(()=>refreshesFinished++)}')
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             score=page.locator('#settings-form [name=min_fit_score]');score.fill('57')
             with page.expect_response('**/api/settings'):page.get_by_role('button',name='Save preferences',exact=True).click()
             expect(page.locator('#settings-form')).to_have_attribute('data-saving','true')
             expect(score).to_be_disabled()
             assert store.settings()['min_fit_score']==57 and page.evaluate('refreshesFinished')==0
-            page.locator('[data-view=profile]').click()
+            open_view(page, 'profile')
             draft=page.locator('#facts-form [name=first_name]');draft.fill('Independent unsaved name')
             if failed_page:pending.pop().fulfill(status=503,json={'error':'Synthetic interrupted source page'})
             else:pending.pop().fulfill(json=stale)
@@ -2665,7 +2669,7 @@ def test_source_page_load_queues_followup_saves_and_preserves_other_section_focu
             expect(draft).to_have_value('Independent unsaved name');expect(draft).to_be_focused()
             expect(page.locator('#material-list article')).to_have_count(20 if failed_page else 5)
             assert page.evaluate('state.settings.min_fit_score')==57 and len(reads)==(1 if failed_page else 2)
-            page.locator('[data-view=settings]').click();expect(score).to_have_value('57');expect(score).to_be_enabled()
+            open_view(page, 'settings');expect(score).to_have_value('57');expect(score).to_be_enabled()
             assert not errors and store.facts()['first_name']['value']=='Test'
             browser.close()
     finally:process.terminate();process.join(5)
@@ -2687,7 +2691,7 @@ def test_saved_view_requests_release_queued_preference_refresh_on_success_or_fai
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':390,'height':844})
             pending=[];errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(base+'/#token=fixture-capability')
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'opportunities')
             page.wait_for_function('()=>!refreshing && ledgerState!==null')
             page.locator('#saved-views-panel summary').click()
             pattern='**/api/saved-view' if operation=='save' else '**/api/jobs?*'
@@ -2697,7 +2701,7 @@ def test_saved_view_requests_release_queued_preference_refresh_on_success_or_fai
                 with page.expect_request(pattern):page.locator('#saved-view-form button').click()
             else:
                 with page.expect_request(pattern):page.get_by_role('button',name='Open view: Existing synthetic view',exact=True).click()
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             score=page.locator('#settings-form [name=min_fit_score]');score.fill('59')
             with page.expect_response('**/api/settings'):page.get_by_role('button',name='Save preferences',exact=True).click()
             expect(page.locator('#settings-form')).to_have_attribute('data-saving','true')
@@ -2738,9 +2742,9 @@ def test_discard_fact_edits_restores_confirmed_values_and_unconfirmed_proposals_
             page.goto(base+'/#token=fixture-capability')
             # Discard starts with loaded saved values, after bootstrap rendering.
             page.wait_for_function('() => state !== null && refreshing === null',timeout=30000)
-            page.locator('[data-view=settings]').click()
+            open_view(page, 'settings')
             preference=page.locator('#settings-form [name=locations]');preference.fill('Separate unsaved location')
-            page.locator('[data-view=profile]').click();page.locator('#show-optional-facts').check()
+            open_view(page, 'profile');page.locator('#show-optional-facts').check()
             discard=page.locator('#discard-fact-edits');expect(discard).to_be_disabled()
             first=page.locator('#facts-form [name=first_name]');nickname=page.locator('#facts-form [name=preferred_name]')
             first.fill('');nickname.fill('Unsaved edited nickname');page.locator('#confirm-facts').check()
@@ -2752,7 +2756,7 @@ def test_discard_fact_edits_restores_confirmed_values_and_unconfirmed_proposals_
             expect(page.locator('[data-draft-for=facts-form]')).to_be_empty();expect(discard).to_be_disabled()
             assert page.evaluate("()=>{const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented}")
             page.evaluate('refresh()');expect(nickname).to_have_value('Synthetic extracted nickname')
-            page.locator('[data-view=settings]').click();expect(preference).to_have_value('Separate unsaved location')
+            open_view(page, 'settings');expect(preference).to_have_value('Separate unsaved location')
             page.locator('#discard-preferences').click()
             assert not page.evaluate("()=>{const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented}")
             assert not posts and store.snapshot()==before and not errors
@@ -2780,7 +2784,7 @@ def test_private_opportunity_notes_preserve_drafts_retry_conflicts_and_applicati
             assert page.request.get(base+'/api/job-note/'+job['id']).status==403
             assert page.request.post(base+'/api/job-note',data={'job_id':job['id'],'body':'Unauthorized','revision':0}).status==403
             assert page.request.get(base+'/api/job-note/missing',headers=headers).status==400
-            page.goto(base+'/#token=fixture-capability')
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'opportunities')
             details=page.get_by_role('button',name=f"View details for {job['company']} · {job['title']}",exact=True)
             details.click();assert not reads
             page.locator('#opportunity-notes summary').click()
@@ -2831,7 +2835,7 @@ def test_pending_note_save_and_closed_dialog_keep_other_opportunity_drafts_separ
             pending=[];dialogs=[];errors=[]
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.on('dialog',lambda dialog:(dialogs.append(dialog.type),dialog.dismiss()))
-            page.goto(base+'/#token=fixture-capability')
+            page.goto(base+'/#token=fixture-capability'); open_view(page, 'opportunities')
             page.get_by_role('button',name=f"View details for {job['company']} · {job['title']}",exact=True).click()
             page.locator('#opportunity-notes summary').click()
             field=page.locator('#opportunity-note-body');expect(field).to_be_enabled();field.fill('First opportunity saved note')
@@ -2870,7 +2874,7 @@ def test_supplied_employer_credentials_auth_retry_duplicate_save_and_secret_clea
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':390,'height':844});errors=[]
             page.on('pageerror',lambda e:errors.append(str(e)));page.goto(base+'/#token=fixture-capability')
-            page.locator('[data-view=questions]').click();page.locator('#account-credentials-panel > summary').click()
+            open_view(page, 'questions');page.locator('#account-credentials-panel > summary').click()
             form=page.locator('#account-credentials-form');expect(form.locator('[name=email]')).to_have_value('test@candidate.invalid')
             assert form.locator('[name=email]').evaluate('(e)=>e.readOnly')
             form.locator('[name=company]').fill('Synthetic Employer');form.locator('[name=origin]').fill('https://careers.example.com')
