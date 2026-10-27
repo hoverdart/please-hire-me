@@ -18,6 +18,8 @@ The direction is a complete job-search feedback loop: applications, their exact 
 
 Requires **Python 3.11+**, Git, and macOS or Linux. Windows users need a supported Linux environment such as WSL2. For Raspberry Pi OS, follow the [Pi guide](docs/pi.md).
 
+On **Intel Macs**, the pinned cryptography dependency builds from source. Install the Xcode Command Line Tools (`xcode-select --install` if needed), Rust and OpenSSL 3 before setup. With Homebrew, use `brew install rust openssl@3`; see the dependency's [macOS build instructions](https://cryptography.io/en/50.0.2/installation/#building-cryptography-on-macos) for other options.
+
 ```bash
 git clone https://github.com/hoverdart/please-hire-me.git
 cd please-hire-me
