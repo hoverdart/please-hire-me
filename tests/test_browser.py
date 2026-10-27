@@ -1432,6 +1432,10 @@ def test_employer_ai_privacy_disclosure_does_not_prohibit_applying(store,ats,not
     'We do not use AI to write your application.',
     'We do not allow AI-generated applications.',
     'AI-assisted responses are prohibited.',
+    'Please share your own thoughts and experiences rather than using AI-generated answers. Authenticity matters to us!',
+    'Please write your response instead of using artificial intelligence assisted responses.',
+    'Avoid submitting AI-generated applications.',
+    'Please refrain from using AI-assisted responses.',
 ])
 def test_employer_privacy_notice_cannot_mask_an_application_restriction(store,ats,restriction):
     notice='We do not use AI to infer your emotions or sensitive traits. '

@@ -599,8 +599,9 @@ def test_transport_success_alone_is_not_a_saved_field(store,job,package,mode):
 
 @pytest.mark.parametrize('restored_phone',[False,True])
 @pytest.mark.parametrize('save_on_blur',[False,True])
+@pytest.mark.parametrize('applicant_only',[False,True])
 @pytest.mark.parametrize('live,ack',[(True,True),(False,True),(True,False)])
-def test_browser_saves_only_approved_fields_before_final_intent_and_keeps_preparation_local(store,monkeypatch,live,ack,restored_phone,save_on_blur):
+def test_browser_saves_only_approved_fields_before_final_intent_and_keeps_preparation_local(store,monkeypatch,live,ack,restored_phone,save_on_blur,applicant_only):
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     job={'id':digest(REQ),'url':f'https://jobs.ashbyhq.com/acme/{REQ}', 'host':'jobs.ashbyhq.com',
          'company':'Acme','title':'Software Engineer Intern Summer 2027','description':'Build Python software.',
@@ -631,6 +632,8 @@ for(const el of document.querySelectorAll('input:not([type=file])'))el.addEventL
 document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=await fetch(endpoint,{method:'POST',body:JSON.stringify('''+json.dumps(native)+''')});if(r.ok)document.body.innerHTML='Thank you for applying. Your application was received.'};
 </script></body></html>'''
     html=documents.html(html)
+    if applicant_only:
+        html=html.replace('<form>','<form><p>Please share your own thoughts and experiences rather than using AI-generated answers.</p>')
     if save_on_blur:html=html.replace("addEventListener('input'", "addEventListener('blur'")
     with Browser(store) as b:
         class Route:
@@ -658,14 +661,18 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=awa
             if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
             else:b._route(Route(route))
         b.page.route('**/*',serve)
-        if live and not ack:
+        if applicant_only:
+            with pytest.raises(Blocked,match='human_work_sample'):b.apply(job,live=live)
+            assert not documents.operations
+            assert not store.db.execute("SELECT 1 FROM events WHERE kind IN ('field_answered','submit_intent','ashby_draft_write')").fetchone()
+        elif live and not ack:
             with pytest.raises(Blocked,match='ashby_draft_save_failed'):b.apply(job,live=True)
             assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
         else:assert b.apply(job,live=live)==('confirmed' if live else 'prepared')
-        if live and ack:
+        if live and ack and not applicant_only:
             with pytest.raises(Blocked):b.apply(job)
-    assert len(final)==int(live and ack)
-    if not live:assert remote==initial
+    assert len(final)==int(live and ack and not applicant_only)
+    if not live or applicant_only:assert remote==initial
 
 
 def test_saved_form_can_reveal_a_conditional_field_without_authorizing_its_value(store,job,package):

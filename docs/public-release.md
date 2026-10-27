@@ -1,6 +1,6 @@
 # Release status
 
-The configured version is **0.5.0rc5**, a public release candidate for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
+The configured version is **0.5.0rc6**, a public release candidate for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
 
 ## Capability boundaries
 
