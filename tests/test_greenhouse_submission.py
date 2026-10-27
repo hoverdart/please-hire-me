@@ -61,7 +61,7 @@ def setup_native(store, *, extra_questions=None, extra_fields=None, documents=No
         upload_host = ('grnhse-prod-jben-eu-west-1.s3.eu-west-1.amazonaws.com' if region == 'eu'
                        else 'grnhse-prod-jben-us-east-1.s3.us-east-1.amazonaws.com')
         config = {'url': 'https://' + upload_host,
-                  'key': 'applications/resume.pdf', 'fields': {'policy': 'verified-policy'}}
+                  'key': 'applications/'+name+'.pdf', 'fields': {'policy': 'verified-policy'}}
         browser.greenhouse_upload_fields[name] = config
         browser.greenhouse_uploads[name] = {'hash': document['hash'], 'filename': document['filename'],
             'url': config['url'] + '/' + config['key'], 'config_hash': digest(config),
@@ -134,6 +134,59 @@ def test_adapter_update_releases_only_the_pre_submit_encoding_hold(store, job, p
     assert job_holds.ready(store, job) is (state == 'prepared')
     assert store.db.execute('SELECT state FROM applications WHERE id=?', (aid,)).fetchone()[0] == state
     assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0] == intents
+
+
+@pytest.mark.parametrize('uncertain',['none','intent','unknown','application_unknown'])
+def test_upload_selector_upgrade_reconsiders_only_unattempted_document_holds(store,job,package,tmp_path,monkeypatch,uncertain):
+    from pypdf import PdfWriter
+    from hireme.onboarding import import_resume
+    from hireme import job_holds
+    path=tmp_path/'transcript.pdf';pdf=PdfWriter();pdf.add_blank_page(width=612,height=792)
+    with path.open('wb') as output:pdf.write(output)
+    import_resume(store,path,'transcript')
+    if uncertain=='application_unknown':
+        aid=store.prepare(job,package)
+    elif uncertain!='none':
+        store.db.execute('INSERT INTO remote_draft_steps(id,job_id,tenant,step,request_hash,sources_hash,state,created,updated) VALUES(?,?,?,?,?,?,?,?,?)',
+                         ('held-upload',job['id'],'acme','upload',digest('request'),digest('sources'),uncertain,'2026-01-01','2026-01-01'))
+    monkeypatch.setattr(job_holds,'ADAPTER_VERSION',32)
+    job_holds.hold(store,job,'missing_answers','Attach')
+    assert store.db.execute('SELECT 1 FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+    if uncertain=='application_unknown':
+        store.begin_submit(aid);store.finish(aid,'unknown')
+    assert not job_holds.ready(store,job)
+    before=[dict(r) for r in store.db.execute('SELECT * FROM application_records')]
+    monkeypatch.setattr(job_holds,'ADAPTER_VERSION',33)
+    assert job_holds.ready(store,job)==(uncertain=='none')
+    assert [dict(r) for r in store.db.execute('SELECT * FROM application_records')]==before
+
+
+@pytest.mark.parametrize('ack',['valid','missing','unacknowledged'])
+def test_custom_transcript_is_bound_to_its_native_attachment_slot(store,tmp_path,ack):
+    from pypdf import PdfWriter
+    from hireme.onboarding import import_resume
+    path=tmp_path/'transcript.pdf';pdf=PdfWriter();pdf.add_blank_page(width=612,height=792)
+    with path.open('wb') as output:pdf.write(output)
+    imported=import_resume(store,path,'transcript')
+    document=dict(store.db.execute("SELECT * FROM documents WHERE kind='transcript'").fetchone())
+    document['field']=field(99,'question_456','Please upload a copy of your transcript',kind='file')
+    resume=dict(store.db.execute("SELECT * FROM documents WHERE kind='resume'").fetchone())
+    resume['field']=field(98,'resume','Resume/CV',kind='file')
+    browser,job,package,aid,state,data=setup_native(store,documents=[resume,document])
+    if ack=='missing':browser.greenhouse_uploads.pop('question_456')
+    elif ack=='unacknowledged':browser.greenhouse_uploads['question_456']['acknowledged']=False
+    if ack!='valid':
+        with pytest.raises(Blocked):GreenhouseSubmission(browser,job,package,aid)
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+        return
+    grant=GreenhouseSubmission(browser,job,package,aid)
+    application=data['job_application']
+    application['attachments']={'456_url':application.pop('question_456_url'),
+                                '456_url_filename':application.pop('question_456_url_filename')}
+    assert grant.expected['attachments']==application['attachments']
+    assert browser.greenhouse_uploads['question_456']['hash']==imported['hash']
+    store.begin_submit(aid);req,key=request(data)
+    assert grant.grant(req,key)
 
 
 def request(data, *, url='https://boards.greenhouse.io/acme/jobs/123', method='POST', raw=None):

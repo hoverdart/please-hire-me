@@ -18,6 +18,8 @@ The direction is a complete job-search feedback loop: applications, their exact 
 
 Requires **Python 3.11+**, Git, and macOS or Linux. Windows users need a supported Linux environment such as WSL2. For Raspberry Pi OS, follow the [Pi guide](docs/pi.md).
 
+On **Intel Macs**, the pinned cryptography dependency builds from source. Install the Xcode Command Line Tools (`xcode-select --install` if needed), Rust and OpenSSL 3 before setup. With Homebrew, use `brew install rust openssl@3`; see the dependency's [macOS build instructions](https://cryptography.io/en/50.0.2/installation/#building-cryptography-on-macos) for other options.
+
 ```bash
 git clone https://github.com/hoverdart/please-hire-me.git
 cd please-hire-me
@@ -140,7 +142,7 @@ Use **Past applications from email** to scan an employer or build a broader hist
 - **Answers & evidence** joins an attempt's posting identity, exact document references, submission outcome, reviewed recruiting feedback and next action. Export its private JSON record or download the original recorded PDFs. New attempts capture posting identity; older records clearly label unavailable historical context.
 - **Recruiting Insights** in Applications compares reviewed responses by company, exact role title, source and resume PDF. Choose a response window and inspect the attempts behind each metric. Recent or uncertain submissions do not enter mature-response denominators; missing feedback is not a rejection.
 
-The version is **0.5.0rc6**, a public release candidate for self-hosting. Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
+The version is **0.5.0rc7**, a public release candidate for self-hosting. Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
 
 ## Guides and development
 

@@ -14,11 +14,31 @@ from tests.dashboard_evidence import dashboard_evidence, open_fixture_dashboard
 def wait_for_dashboard(process,base,timeout=30):
     """Wait for a live fixture's HTTP readiness, including slow Pi startup."""
     deadline=time.monotonic()+timeout
+    last_error=None
     while time.monotonic()<deadline:
         if not process.is_alive():raise AssertionError('Dashboard fixture exited before HTTP readiness')
         try:
             with urllib.request.urlopen(base,timeout=1):return
-        except OSError:time.sleep(.1)
+        except OSError as error:
+            last_error={'type':type(error).__name__,'status':getattr(error,'code',None),'errno':getattr(error,'errno',None)}
+            time.sleep(.1)
+    # Only our synthetic child is sampled, and the original failure stays fatal.
+    import os,signal,subprocess,sys
+    info={'pid':process.pid,'exitcode':process.exitcode,'python':sys.executable,
+          'start_method':multiprocessing.get_start_method(),'last_error':last_error}
+    directory=Path('test-results/dashboard');directory.mkdir(parents=True,exist_ok=True)
+    if sys.platform=='darwin' and process.is_alive():
+        path=directory/f'fixture-startup-{process.pid}.txt'
+        try:
+            result=subprocess.run(['sample',str(process.pid),'1','1','-file',str(path)],capture_output=True,text=True,timeout=10)
+            info['sample_status']=result.returncode
+            if path.exists():print('DASHBOARD_FIXTURE_STACK',path.read_text()[:18000],flush=True)
+        except Exception as error:info['sample_error']=type(error).__name__
+    if process.is_alive() and hasattr(signal,'SIGUSR1'):
+        try:os.kill(process.pid,signal.SIGUSR1);time.sleep(.2)
+        except OSError:pass
+    (directory/f'fixture-startup-{process.pid}.json').write_text(json.dumps(info,indent=2))
+    print('DASHBOARD_FIXTURE_STARTUP_FAILURE',json.dumps(info),flush=True)
     raise AssertionError('Dashboard fixture did not become HTTP-ready within its startup deadline')
 
 
@@ -51,6 +71,9 @@ def assert_layout_fits_viewport(page):
 
 
 def launch(root,repo,port,initial_state_delay=0):
+    import faulthandler,signal
+    if hasattr(signal,'SIGUSR1'):faulthandler.register(signal.SIGUSR1,all_threads=True)
+    print('DASHBOARD_FIXTURE_PROCESS_STARTED',flush=True)
     from hireme import scheduler
     scheduler.status=lambda *args, **kwargs: {'installed':False}
     if initial_state_delay:
