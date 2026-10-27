@@ -344,7 +344,7 @@ def review(store,data):
         job=None
         if data['state']=='confirmed':
             job=store.db.execute('SELECT * FROM jobs WHERE id=?',(data.get('job_id'),)).fetchone()
-            if not job or not row['company_key'] or store.company(row['company_key'])!=store.company(job['company']): raise ValueError('Choose a saved role at the matching company')
+            if not job or not row['company_key'] or row['company_key'] not in _company_keys(store,job['company']): raise ValueError('Choose a saved role at the matching company')
         store.db.execute('UPDATE prior_application_mail SET state=?,job_id=?,selected_posting_key=?,selected_role_key=?,revision=revision+1,updated=? WHERE id=?',
             (data['state'],job['id'] if job else None,_posting_key(job['url']) if job else None,_role_key(store,job) if job else None,now(),row['id']))
         store.event('prior_application_mail_reviewed',row['id'],{'state':data['state'],'job_id':job['id'] if job else None})

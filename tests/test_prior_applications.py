@@ -315,6 +315,9 @@ def test_opaque_board_slug_is_bound_to_official_company_name_before_mail_search(
     assert '"Optiver"' in service.lists[0]['q'] and '"optiverus"' in service.lists[0]['q']
     assert prior.matches(store,slug)
     assert prior.listing(store)['messages'][0]['candidates'][0]['company']=='optiverus'
+    row=prior.listing(store)['messages'][0]
+    prior.review(store,{'id':row['id'],'revision':row['revision'],'state':'confirmed','job_id':slug['id']})
+    assert prior.matches(store,slug)[0]['match_reason']=='Reviewed email link'
 
 
 def test_unverified_board_name_cannot_be_guessed_from_a_prefix(store,optiver,monkeypatch):
@@ -366,3 +369,11 @@ def test_browser_startup_blocker_stops_the_batch_without_a_phantom_attempt(store
     run=store.db.execute('SELECT status,detail FROM runs').fetchone()
     assert run['status']=='blocked' and json.loads(run['detail'])['attempts']==0
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='application_started'").fetchone()
+
+
+def test_email_review_rejects_an_unrelated_company_with_the_same_role_title(store,optiver,job):
+    other={**job,'title':optiver['title']};store.upsert_job(other)
+    assert prior.ingest(store,mail(optiver))
+    row=prior.listing(store)['messages'][0]
+    with pytest.raises(ValueError,match='matching company'):
+        prior.review(store,{'id':row['id'],'revision':row['revision'],'state':'confirmed','job_id':other['id']})
