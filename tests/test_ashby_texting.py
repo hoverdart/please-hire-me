@@ -240,7 +240,8 @@ def test_sms_declaration_and_channel_are_part_of_snapshot_approval(store):
 
 
 @pytest.mark.parametrize('mode,preference', [('live', 'No'), ('live', 'Yes'), ('prepare', 'No'), ('bad_ack', 'No')])
-def test_browser_keeps_phone_sms_and_final_submission_separate(store, monkeypatch, mode, preference):
+@pytest.mark.parametrize('restored_phone',[False,True])
+def test_browser_keeps_phone_sms_and_final_submission_separate(store, monkeypatch, mode, preference, restored_phone):
     monkeypatch.setattr('hireme.browser.public_host', lambda host: True)
     store.put_facts({'sms': preference})
     job = {'id': digest(REQ), 'url': f'https://jobs.ashbyhq.com/acme/{REQ}', 'host': 'jobs.ashbyhq.com',
@@ -248,7 +249,7 @@ def test_browser_keeps_phone_sms_and_final_submission_separate(store, monkeypatc
            'description': 'Build Python software.', 'location': 'San Francisco, United States', 'source': 'fixture'}
     store.upsert_job(job)
     documents = AshbyDocuments(store, 'acme', REQ, RENDER, DEFINITION)
-    remote = {}
+    remote = {PHONE_PATH:store.facts()['phone']['value']} if restored_phone else {}
     consent = []
     final = []
     action = '44444444-4444-4444-8444-444444444444'
@@ -274,7 +275,7 @@ def test_browser_keeps_phone_sms_and_final_submission_separate(store, monkeypatc
                      for path, title, kind in [('_systemfield_name', 'Name', 'text'), ('_systemfield_email', 'Email', 'email')])
     html = '<h1>Software Engineer Intern Summer 2027</h1><p>Build Python software in San Francisco, United States.</p><form>'+inputs+f'''
       <div data-field-path="{PHONE_PATH}" data-field-entry-id="{RENDER}_{PHONE_PATH}">
-        <label>Phone<input id="{PHONE_PATH}" type="tel" required></label>
+        <label>Phone<input id="{PHONE_PATH}" type="tel" value="{remote.get(PHONE_PATH,'')}" required></label>
         <div class="ashby-application-form-texting-consent-description">
           <div class="_consentBody_fixture">{DECLARATION.removesuffix('Privacy Policy')}<a href="{POLICY}">Privacy Policy</a></div>
           <label><input type="radio" name="communicationConsent" value="given">Yes - I consent to receiving text messages</label>
@@ -317,6 +318,7 @@ def test_browser_keeps_phone_sms_and_final_submission_separate(store, monkeypatc
                     result = {'data': {'setFormValue': native_form()}}
                 elif operation == OPERATION:
                     assert not b.attempted
+                    assert (RENDER,PHONE_PATH) in b.ashby_draft.saved and not b.ashby_draft.pending
                     consent.append(data['variables']['consent'])
                     result = {'data': {'submitCandidateTextingConsent': native_form()}}
                 else:

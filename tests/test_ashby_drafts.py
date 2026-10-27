@@ -225,6 +225,26 @@ def test_submission_uses_rotated_action_from_acknowledged_draft_save(store,job,p
     assert grant.allow(r,data)
 
 
+def test_late_full_form_snapshot_cannot_erase_another_acknowledged_answer(store,job,package):
+    from hireme.ashby_submission import AshbySubmission
+    d,grant,_,_=submission_fixture(store,job,package)
+    approved=d.grants[(RENDER,'_systemfield_email')]['value']
+    d.grants[(RENDER,'_systemfield_name')]={'definition':DEFINITION,'value':'Test Person'}
+    d.saved.add((RENDER,'_systemfield_name'))
+    # A late email response acknowledges email correctly, but its full-form
+    # snapshot predates the name save. Individual acknowledgements alone do
+    # not establish a consistent final draft.
+    save,payload=request(approved)
+    assert d.allow(save,payload,'late-email')
+    stale=form({'_systemfield_email':approved})
+    stale['formControls']=d.submission_contexts['acme']['application']['formControls']
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':stale}}),'late-email')
+    assert d.complete
+    with pytest.raises(Blocked,match='An approved field acknowledgement changed'):
+        AshbySubmission(d,grant.aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('change',['definition','render','value','action_title','missing_control','duplicate_control','extra_action_metadata','unacknowledged'])
 def test_rotated_action_cannot_borrow_changed_or_unacknowledged_form(store,job,package,change):
     from hireme.ashby_submission import AshbySubmission
@@ -578,8 +598,9 @@ def test_transport_success_alone_is_not_a_saved_field(store,job,package,mode):
 
 
 @pytest.mark.parametrize('restored_phone',[False,True])
+@pytest.mark.parametrize('save_on_blur',[False,True])
 @pytest.mark.parametrize('live,ack',[(True,True),(False,True),(True,False)])
-def test_browser_saves_only_approved_fields_before_final_intent_and_keeps_preparation_local(store,monkeypatch,live,ack,restored_phone):
+def test_browser_saves_only_approved_fields_before_final_intent_and_keeps_preparation_local(store,monkeypatch,live,ack,restored_phone,save_on_blur):
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     job={'id':digest(REQ),'url':f'https://jobs.ashbyhq.com/acme/{REQ}', 'host':'jobs.ashbyhq.com',
          'company':'Acme','title':'Software Engineer Intern Summer 2027','description':'Build Python software.',
@@ -610,6 +631,7 @@ for(const el of document.querySelectorAll('input:not([type=file])'))el.addEventL
 document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=await fetch(endpoint,{method:'POST',body:JSON.stringify('''+json.dumps(native)+''')});if(r.ok)document.body.innerHTML='Thank you for applying. Your application was received.'};
 </script></body></html>'''
     html=documents.html(html)
+    if save_on_blur:html=html.replace("addEventListener('input'", "addEventListener('blur'")
     with Browser(store) as b:
         class Route:
             def __init__(self,route):self.route=route;self.request=route.request
@@ -620,6 +642,10 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=awa
                 if data['operationName']=='ApiJobPosting':result={'data':{'jobPosting':{'id':REQ,'applicationForm':official_form()}}}
                 elif data['operationName']=='ApiSetFormValue':
                     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+                    # Concurrent full-form responses can contain stale values
+                    # for a different field. Do not start the next autosave
+                    # before the current field has been acknowledged.
+                    assert set(b.ashby_draft.pending.values())=={(RENDER,data['variables']['path'])}
                     v=data['variables'];remote[v['path']]=v['value'];result={'data':{'setFormValue':official_form()}}
                     if not ack:result['errors']=[{'message':'Synthetic save rejected'}]
                 else:
