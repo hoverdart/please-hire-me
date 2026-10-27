@@ -533,12 +533,16 @@ def test_visible_captcha_prevents_submit_intent(store,ats,src,opacity):
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
-def test_required_transcript_blocks_until_imported_then_attaches(store,ats,tmp_path):
+@pytest.mark.parametrize('group_label',[False,True])
+def test_required_transcript_blocks_until_imported_then_attaches(store,ats,tmp_path,group_label):
     import hashlib
     from pypdf import PdfWriter
     from hireme.onboarding import import_resume
     job=local_job(store,ats)
-    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>','<label>Transcript<input type="file" name="transcript" required></label></form>')
+    upload=('<div class="file-upload" role="group" aria-labelledby="transcript-label" aria-required="true">'
+            '<div id="transcript-label">Transcript*</div><div><label for="question_123">Attach</label>'
+            '<input id="question_123" type="file" name="question_123"></div></div>') if group_label else '<label>Transcript<input type="file" name="transcript" required></label>'
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',upload+'</form>')
     def serve_form(route):
         if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
         else:route.fallback()
@@ -818,6 +822,47 @@ def test_upload_wrapper_required_marker_is_not_hidden_attach_label(store,ats):
         b.page.goto(ats[0])
         b.page.set_content('<div class="file-upload"><div>Cover Letter*</div><div><label for="cover_letter">Attach</label><input id="cover_letter" type="file"></div></div>')
         assert b._snapshot()[0]['required'] is True
+
+
+def test_custom_upload_uses_its_own_group_heading_and_required_state(store,ats):
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('''<div class="file-upload" role="group" aria-labelledby="resume-label" aria-required="true">
+          <div id="resume-label">Resume/CV</div><label for="resume">Attach</label><input id="resume" type="file"></div>
+          <div class="file-upload" role="group" aria-labelledby="transcript-label" aria-required="true">
+          <div id="transcript-label">Please upload a copy of your transcript</div><label for="question_42">Attach</label>
+          <input id="question_42" type="file"></div>''')
+        fields=b._snapshot()
+    assert [(f['label'],f['required']) for f in fields]==[('Resume/CV',True),('Please upload a copy of your transcript',True)]
+    assert fields[1]['ref']['id']=='question_42'
+
+
+@pytest.mark.parametrize('request_title',['Resume and transcript','Resume and cover letter'])
+def test_combined_document_request_does_not_upload_one_document_instead(store,ats,tmp_path,request_title):
+    from pypdf import PdfWriter
+    from hireme.onboarding import import_resume
+    path=tmp_path/'transcript.pdf';pdf=PdfWriter();pdf.add_blank_page(width=612,height=792)
+    with path.open('wb') as output:pdf.write(output)
+    import_resume(store,path,'transcript')
+    html=(Path(__file__).parent/'fixtures/application.html').read_text().replace('</form>',
+        '<label>'+request_title+'<input type="file" name="question_42" required></label></form>')
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.route(ats[0]+'/**',lambda route:route.fulfill(status=200,content_type='text/html',body=html) if route.request.method=='GET' else route.fallback())
+        with pytest.raises(Blocked,match='missing_answers'):b.apply(local_job(store,ats))
+    assert not ats[1]
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('mode',['missing','external','empty','multiple_inputs'])
+def test_upload_heading_must_belong_to_one_unambiguous_file_group(store,ats,mode):
+    title='<div id="request">Transcript</div>'
+    outside=title if mode=='external' else ''
+    inside=title if mode not in {'missing','external','empty'} else '<div id="request"></div>' if mode=='empty' else ''
+    extra='<label for="question_43">Attach</label><input id="question_43" type="file">' if mode=='multiple_inputs' else ''
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content(outside+'<div class="file-upload" role="group" aria-labelledby="request" aria-required="true">'+inside+
+                           '<label for="question_42">Attach</label><input id="question_42" type="file">'+extra+'</div>')
+        fields=b._snapshot()
+    assert all(f['label']=='Attach' and f['required'] for f in fields)
 
 
 @pytest.mark.parametrize('ats',[True],indirect=True)

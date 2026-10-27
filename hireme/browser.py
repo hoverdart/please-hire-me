@@ -97,7 +97,17 @@ SNAPSHOT=r"""selector => {
   required=required||!!ashbyHeading?.className.includes('_required_');
   if(type==='file'){
    const upload=el.closest('.file-upload');
-   if(upload)required=required||/\*/.test(upload.innerText.split('\n')[0]);
+   if(upload){
+    required=required||upload.getAttribute('aria-required')==='true'||/\*/.test(upload.innerText.split('\n')[0]);
+    // Greenhouse's hidden input label says only "Attach". The containing
+    // upload group names the actual requested document, including custom files.
+    const ids=(upload.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean);
+    const headings=ids.map(id=>document.getElementById(id));
+    if(upload.getAttribute('role')==='group' && upload.querySelectorAll('input[type=file]').length===1 &&
+       headings.length && headings.every(n=>n&&upload.contains(n))){
+     const heading=headings.map(labelText).join(' ').trim();if(heading)question=heading;
+    }
+   }
    const identity=(el.id+' '+el.name).toLowerCase();
    if(/transcript/.test(identity))question='Transcript';
    else if(/resume|\bcv\b/.test(identity))question='Resume/CV';
@@ -1243,7 +1253,9 @@ class Browser:
                     if f['required']:raise Blocked('unlabeled_required_field')
                     continue
                 if f['type']=='file':
-                    kind='transcript' if re.search(r'transcript',f['label'],re.I) else 'resume' if re.search(r'resume|cv',f['label'],re.I) else 'cover_letter' if re.search(r'cover.?letter',f['label'],re.I) else None
+                    kinds=[kind for kind,pattern in (('transcript',r'\btranscript\b'),('resume',r'\b(?:resume|cv)\b'),('cover_letter',r'\bcover.?letter\b'))
+                           if re.search(pattern,f['label'],re.I)]
+                    kind=kinds[0] if len(kinds)==1 else None
                     doc=self.store.db.execute('SELECT * FROM documents WHERE kind=?',(kind,)).fetchone()
                     if kind=='resume' and self.store.settings()['tailored_resumes']:
                         from .tailored_resumes import generate as generate_resume
