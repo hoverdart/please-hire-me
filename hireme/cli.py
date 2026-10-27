@@ -35,6 +35,7 @@ def main(argv=None):
     p.add_argument('--json',action='store_true',help='Output JSON (the default)')
     p=sub.add_parser('health',help='Check operational health without application writes or inference')
     p.add_argument('--record',action='store_true');p.add_argument('--json',action='store_true')
+    p.add_argument('--port',type=dashboard_port,default=8766,help='Local dashboard port (default: 8766)')
     sub.add_parser('remote-ops',help='Restricted SSH operations for the backup monitor')
     p=sub.add_parser('backup-agent',help='Monitor a Pi and retain verified encrypted backups on this Mac')
     p.add_argument('action',choices=['run','install']);p.add_argument('config',type=Path)
@@ -51,7 +52,8 @@ def main(argv=None):
     sub.add_parser('model-probe',help='Make one synthetic structured inference request; consumes model allowance')
     p=sub.add_parser('import-material');p.add_argument('path',type=Path);p.add_argument('--kind',choices=['writing_sample','cover_letter','context'],required=True)
     p=sub.add_parser('import-resume');p.add_argument('path',type=Path);p.add_argument('--transcript',action='store_true')
-    p=sub.add_parser('gmail');p.add_argument('action',choices=['import-client','connect','status','check','sync-feedback','disconnect']);p.add_argument('path',type=Path,nargs='?')
+    p=sub.add_parser('gmail');p.add_argument('action',choices=['import-client','connect','status','check','sync-feedback','scan-applications','disconnect']);p.add_argument('path',type=Path,nargs='?')
+    p.add_argument('--company',help='Limit a past-application scan to one company');p.add_argument('--restart',action='store_true',help='Restart a past-application scan across all matching historical mail')
     p=sub.add_parser('backup');p.add_argument('path',type=Path)
     sub.add_parser('backup-stream',help='Stream a consistent history ZIP to stdout for an encrypted off-device backup')
     p=sub.add_parser('restore');p.add_argument('path',type=Path)
@@ -90,7 +92,7 @@ def main(argv=None):
             return 2
     if args.command=='health':
         from .health import check_health,record_health
-        result=check_health(args.data_dir)
+        result=check_health(args.data_dir,dashboard_port=args.port)
         if args.record:record_health(args.data_dir,result)
         print(json.dumps(result,indent=2,sort_keys=True))
         return 0 if result['ready'] else 1
@@ -193,7 +195,7 @@ def main(argv=None):
         elif args.command=='open-dashboard':
             import webbrowser
             from .server import dashboard_url
-            if not webbrowser.open(dashboard_url(store.root,args.port)):raise ValueError('Open the dashboard from a terminal in the Pi desktop session')
+            if not webbrowser.open(dashboard_url(store.root,args.port)):raise ValueError('Open the dashboard from a desktop terminal on the computer running this installation')
         elif args.command=='workday':
             from .workday import commission,reconcile
             result=(commission if args.action=='commission' else reconcile)(store,REPO,args.job_id)
@@ -218,6 +220,9 @@ def main(argv=None):
             elif args.action=='sync-feedback':
                 from .recruiting_feedback import sync
                 print(json.dumps(sync(store)))
+            elif args.action=='scan-applications':
+                from .prior_applications import scan
+                print(json.dumps(scan(store,company=args.company,restart=args.restart)))
             else:gmail.disconnect(store);print('Local Gmail credentials removed; revoke access in your Google account if desired')
         elif args.command=='import-material':
             from .materials import import_material

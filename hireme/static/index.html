@@ -3,12 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#f5f6f5" />
+    <meta name="theme-color" content="#F5F7FC" />
     <meta
       name="description"
       content="Your private application workspace. Find opportunities, keep track of applications, and move your search forward."
     />
-    <title>Application desk · Connected workspace</title>
+    <title>HireMeMaybe · Your job search</title>
     <link rel="stylesheet" href="/style.css" />
     <script src="/notes.js" defer></script>
     <script src="/app.js" defer></script>
@@ -19,36 +19,33 @@
   </head>
   <body>
     <a class="skip" href="#main">Skip to workspace</a>
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="HireMeMaybe home">HireMe<span>Maybe</span></a>
+      <div class="header-tools">
+            <button
+              id="find-tool"
+              type="button"
+              class="secondary find-tool-button" aria-label="Find a tool"
+              aria-haspopup="dialog"
+              aria-keyshortcuts="Control+k Meta+k"
+            >
+              <span class="nav-icon" data-icon="search" aria-hidden="true"></span> <span class="tool-label">Find a tool</span>
+            </button>
+        <div class="worker-indicator"><span id="worker-dot"></span><span id="worker-state">Connecting…</span></div>
+        <button id="open-notifications" type="button" class="secondary" aria-haspopup="dialog"><span class="nav-icon" data-icon="bell" aria-hidden="true"></span> Notifications<span id="notification-count" class="nav-count" hidden></span></button>
+      </div>
+    </header>
     <div class="shell">
       <aside class="rail">
-        <a class="brand" href="/" aria-label="Application desk home"
-          ><span class="brand-mark" aria-hidden="true">a<span>↗</span></span
-          ><span
-            >application desk<span class="brand-caption"
-              >YOUR APPLICATION WORKSPACE</span
-            ></span
-          ></a
-        >
-        <div class="rail-note">
-          <span class="privacy-dot"></span> Private workspace
-        </div>
         <nav aria-label="Workspace">
-          <button data-view="today" aria-current="page"><span class="nav-icon" data-icon="today"></span>Today</button>
+          <button data-view="today" aria-current="page"><span class="nav-icon" data-icon="today"></span>Home</button>
           <button data-view="opportunities"><span class="nav-icon" data-icon="jobs"></span>Jobs</button>
+          <button data-view="applications"><span class="nav-icon" data-icon="materials"></span>Applications</button>
           <button data-view="questions"><span class="nav-icon" data-icon="attention"></span>Needs you <span id="question-count" class="nav-count"></span></button>
-          <button data-view="materials"><span class="nav-icon" data-icon="materials"></span>Materials</button>
           <button data-view="profile"><span class="nav-icon" data-icon="profile"></span>Profile</button>
-          <button data-view="connections"><span class="nav-icon" data-icon="connections"></span>Connections</button>
-          <div class="nav-utilities">
-            <button data-view="settings"><span class="nav-icon" data-icon="settings"></span>Preferences</button>
-            <button data-view="setup"><span class="nav-icon" data-icon="setup"></span>Setup</button>
-          </div>
+          <div class="nav-utilities"><button data-view="settings"><span class="nav-icon" data-icon="settings"></span>Settings</button></div>
         </nav>
         <div class="rail-footer">
-          <div class="worker-indicator">
-            <span id="worker-dot"></span
-            ><span id="worker-state">Connecting…</span>
-          </div>
           <p>Your documents and application history stay on this computer.</p>
           <span class="footer-label">A LITTLE LESS BUSYWORK.</span>
         </div>
@@ -83,7 +80,7 @@
           </button>
         </div>
         <p id="worker-error" class="callout" role="alert" hidden></p>
-        <div id="notice" role="status" aria-live="polite"></div>
+
         <div id="demo-banner" class="demo-banner" hidden>
           <span
             ><strong>You’re exploring a sample workspace.</strong> Companies,
@@ -97,21 +94,13 @@
             <span class="local-label"
               ><span class="privacy-dot"></span> Local &amp; private</span
             >
-            <button
-              id="find-tool"
-              type="button"
-              class="secondary"
-              aria-haspopup="dialog"
-              aria-keyshortcuts="Control+k Meta+k"
-            >
-              <span class="nav-icon" data-icon="search" aria-hidden="true"></span> Find a tool
-            </button>
+
           </div>
         </div>
         <header class="page-head">
           <div>
             <span id="page-eyebrow" hidden></span>
-            <h1 id="heading">Today’s applications</h1>
+            <h1 id="heading">Your job search</h1>
             <p id="subheading">Loading your application ledger…</p>
           </div>
           <div class="actions">
@@ -135,7 +124,7 @@
 
               <h2>Your experience.<br />Your voice. Your next step.</h2>
               <p>
-                Give your desk the essentials. It takes care of the repetitive
+                Give HireMeMaybe the essentials. It takes care of the repetitive
                 parts, and comes back to you when it needs an answer.
               </p>
             </div>
@@ -199,7 +188,8 @@
         </section>
         <section id="opportunities" class="view" hidden><div class="jobs-workspace"><div id="job-list-workspace"></div><aside id="job-detail-workspace" aria-label="Selected opportunity"><p class="detail-placeholder">Select a job to review its posting, materials and application record.</p></aside></div></section>
         <section id="today" class="view">
-          <div class="today-workspace"><section aria-labelledby="attention-title"><div class="section-head"><h2 id="attention-title">Next actions</h2><button id="open-attention" class="secondary">Review all</button></div><div id="today-attention"></div></section><section aria-labelledby="connection-health-title"><div class="section-head"><h2 id="connection-health-title">Connection health</h2><button id="open-connections" class="secondary">Manage</button></div><div id="today-connections"></div></section></div>
+          <div class="today-workspace"><section aria-labelledby="attention-title"><div class="section-head"><h2 id="attention-title">Needs your attention</h2><button id="open-attention" class="secondary">Review all</button></div><div id="today-attention"></div></section></div>
+          <section class="section activity-panel" aria-labelledby="activity-title"><div class="section-head"><h2 id="activity-title">Latest activity</h2><button id="open-application-history" class="secondary">All activity</button></div><div id="brief-activity"></div></section>
           <div class="overview-grid" aria-label="Application overview">
             <article class="metric metric-primary">
               <div class="metric-top">
@@ -237,18 +227,20 @@
             </article>
           </div>
           <section class="section" aria-labelledby="cycle-funnel-title">
-            <h2 id="cycle-funnel-title">Latest application cycle</h2>
-            <p id="cycle-funnel-status" class="help">No recorded cycle yet.</p>
+            <h2 id="cycle-funnel-title">Latest batch</h2>
+            <p id="cycle-funnel-status" class="help">No recorded batch yet.</p>
             <dl id="cycle-funnel" class="cycle-funnel"></dl>
+            <details id="cycle-details"><summary>Batch details</summary><p id="cycle-record" class="help"></p></details>
           </section>
           <section class="section" aria-labelledby="application-outcomes-title">
             <h2 id="application-outcomes-title">Application outcomes</h2>
-            <p class="help">Across your complete history, including retained attempts. Prepared drafts have not been submitted. Uncertain attempts stay held until you verify them.</p>
+            <p class="help">All recorded attempts. Drafts are unsubmitted; uncertain attempts stay held for your review.</p>
             <dl id="application-outcomes" class="cycle-funnel"></dl>
             <h3>Recruiting progress</h3>
-            <p class="help">Latest reviewed recruiting feedback per application. These email milestones are separate from submission confirmation.</p>
+            <p class="help">Reviewed email milestones, separate from submission confirmation.</p>
             <dl id="recruiting-stages" class="cycle-funnel"></dl>
             <button type="button" id="open-recruiting-feedback" class="secondary">Review recruiting feedback</button>
+            <button type="button" id="open-prior-applications" class="secondary">Check previous applications</button>
           </section>
           <details id="recruiting-insights-panel" class="section">
             <summary>Recruiting Insights</summary>
@@ -296,7 +288,7 @@
               <div>
 
                 <h2>
-                  Application ledger
+                  Saved jobs
                   <span id="ledger-count" class="count-pill">0</span>
                 </h2>
               </div>
@@ -489,7 +481,7 @@
 
               <h2>Recent batches</h2>
             </div>
-            <span class="help">Your worker’s activity</span>
+
           </div>
           <div id="runs"></div>
           <details id="run-history-panel" class="section">
@@ -624,6 +616,7 @@
             </div>
           </details>
         </section>
+        <section id="applications" class="view" hidden></section>
         <section id="questions" class="view" hidden>
           <p class="intro">
             Answer a personal question once and it will be reused for the same
@@ -893,6 +886,8 @@
             </div>
           </details>
         </section>
+        <nav id="profile-navigation" class="section-nav" aria-label="Profile sections" hidden><button data-view="profile" class="secondary">Your facts</button><button data-view="materials" class="secondary">Materials</button></nav>
+        <nav id="settings-navigation" class="section-nav" aria-label="Settings sections" hidden><button data-view="connections" class="secondary">Connections</button><button data-view="settings" class="secondary">Search &amp; automation</button><button data-view="setup" class="secondary">Setup</button></nav>
         <section id="profile" class="view" hidden>
           <details class="section"><summary>Platform profile suggestions</summary><p class="help">Draft a profile from approved sources, then review and copy it yourself. Generating a suggestion uses your selected model and request allowance.</p><div class="actions"><button id="suggest-handshake" class="secondary">Draft Handshake profile</button><button id="suggest-workatastartup" class="secondary">Draft startup profile</button></div><p id="profile-suggestion-status" role="status"></p><textarea id="profile-suggestion" readonly rows="6" aria-label="Draft profile suggestion" hidden></textarea><button id="copy-profile-suggestion" class="secondary" hidden>Copy suggestion</button></details>
           <div class="section">
@@ -1247,11 +1242,9 @@
           ></div>
         </section>
         <section id="connections" class="view" hidden>
-          <p class="intro">Choose where your desk finds and applies to jobs. Each platform has its own sign-in and verified capabilities.</p>
-          <div id="platform-connections"></div>
-          <div class="section-head"><h2>Workspace services</h2><button data-view="providers" class="secondary">Model settings</button></div>
+
           <div class="section">
-            <h2>Your Gmail connection</h2>
+            <h2>Gmail</h2>
             <p id="gmail-state">Checking authorization…</p>
             <p class="intro">
               Connect the same email you use on applications to read
@@ -1302,12 +1295,28 @@
               after each batch, including paused and failed batches.</label
             ><label class="confirmation"
               ><input name="gmail_feedback" type="checkbox" /> Find recruiting feedback in Gmail after scheduled batches and when I choose Sync. Store matching message previews privately for my review; never send email contents to a model.</label
+            ><label class="confirmation"
+              ><input name="gmail_prior_applications" type="checkbox" /> Check Gmail for past applications before applying, including applications made outside this app. Matching roles stay held for review.</label
             ><button type="submit">Save email preferences</button>
             <p class="help">
               Codes stay out of Claude prompts and logs. Unsupported
               verification steps remain held for manual handling.
             </p>
           </form>
+          <details id="prior-applications-panel" class="section">
+            <summary>Past applications from email</summary>
+            <p class="help">Find earlier acknowledgements and recruiting updates, even when the application is missing from this app. The first scan includes archived mail with no date cutoff. Matching uses posting links or the company and exact role in an application passage. General company emails need your review.</p>
+            <form id="prior-scan-form" class="actions">
+              <label>Company (optional)<input id="prior-company" name="company" maxlength="200" placeholder="For example, Optiver" /></label>
+              <button id="prior-scan" type="submit">Scan application mail</button>
+              <button id="prior-reload" type="button" class="secondary">Refresh email history</button>
+              <button id="prior-restart" type="button" class="secondary">Restart full scan</button>
+            </form>
+            <p id="prior-status" class="help" role="status"></p>
+            <p class="help">Each scan reads a bounded page. Scan again to continue. Saved matches keep blocking duplicate applications if you disconnect Gmail or turn off scanning. Reviewing email does not change an existing submission outcome. No email is sent, and no links, attachments or email text go to a model.</p>
+            <div id="prior-list" aria-live="polite"></div>
+            <div class="actions"><button id="prior-previous" type="button" class="secondary">Previous emails</button><span id="prior-page" class="help" role="status"></span><button id="prior-next" type="button" class="secondary">Next emails</button></div>
+          </details>
           <details id="recruiting-feedback-panel" class="section">
             <summary>Recruiting feedback</summary>
             <p class="help">Review application acknowledgements, assessments, interviews, rejections and offers. Each message needs your confirmation and a matching application attempt. Reviewing email never changes whether an application was submitted or permits an uncertain attempt to retry.</p>
@@ -1381,9 +1390,7 @@
               <div id="company-alias-editor" data-preference-field>
                 <h3>Alternate company names</h3>
                 <p class="help">
-                  Group different names for the same employer so exclusions and
-                  company limits apply consistently. For example, map “Acme Inc”
-                  to “Acme”.
+                  Treat alternate names as one company for exclusions and limits.
                 </p>
                 <div id="company-alias-rows"></div>
                 <div class="actions">
@@ -1738,7 +1745,7 @@ claude auth login</pre
               <p id="model-request-usage" role="status"></p>
               <p id="model-request-reset" class="help"></p>
               <ul id="model-token-usage" aria-label="Today’s usage by provider and model"></ul>
-              <p class="help">Tokens are reported by the provider for this desk’s requests. Missing counts are unavailable. Remaining subscription credits and billed costs are not supplied by this ledger.</p>
+              <p class="help">Tokens are reported by the provider for this workspace’s requests. Missing counts are unavailable. Remaining subscription credits and billed costs are not supplied by this ledger.</p>
               <p class="help">
                 Counts successful and failed model requests across providers in
                 this private ledger. Change the daily and per-batch caps in
@@ -1752,7 +1759,7 @@ claude auth login</pre
               Remove saved API key
             </button>
           </div>
-          <div class="section">
+          <div class="section" id="finish-setup-panel">
             <h2>Ready to work</h2>
             <p>
               Finish setup with submissions paused, or start automatic batches
@@ -1771,11 +1778,19 @@ claude auth login</pre
           </div>
         </section>
         <footer class="workspace-footer">
-          <span>Connected application workspace</span
-          ><span>Application desk · Your private search workspace</span>
+          <span>Local &amp; private</span
+          ><span>HireMeMaybe · Your private search workspace</span>
         </footer>
       </main>
     </div>
+    <div id="toast" popover="manual" aria-label="Notification" hidden>
+      <div id="notice" role="status" aria-live="polite" aria-atomic="true"></div>
+      <button id="dismiss-notification" class="secondary icon-button" type="button" aria-label="Dismiss notification"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12 M18 6 6 18"/></svg></button>
+    </div>
+    <dialog id="notification-dialog" aria-labelledby="notification-title">
+      <header class="dialog-head"><h2 id="notification-title">Notifications</h2><button id="close-notifications" type="button" class="secondary">Close</button></header>
+      <div class="dialog-body"><p class="help">Updates from this browser session.</p><div id="notification-history"><p class="help">No notifications yet.</p></div></div>
+    </dialog>
     <dialog
       id="job-dialog"
       class="job-dialog"

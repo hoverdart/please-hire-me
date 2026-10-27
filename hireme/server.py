@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import secrets
 import re
+import shlex
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
@@ -81,10 +83,13 @@ def dashboard_url(root,port=8766):
     return f'http://127.0.0.1:{port}/#token={token}'
 
 
-def dashboard_startup_message(url,hide_token=False):
+def dashboard_startup_message(url,hide_token=False,root=None):
     if not hide_token:return f'Dashboard: {url}'
     origin=urlsplit(url)
-    return f'Dashboard is running at {origin.scheme}://{origin.netloc}/; use `.venv/bin/python -m hireme open-dashboard` on the Pi desktop to open it.'
+    command=[sys.executable,'-I','-m','hireme']
+    if root is not None:command.extend(['--data-dir',str(Path(root).expanduser().resolve())])
+    command.extend(['open-dashboard','--port',str(origin.port or 8766)])
+    return f'Dashboard is running at {origin.scheme}://{origin.netloc}/. Run: '+shlex.join(command)
 
 
 def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_token=False):
@@ -261,6 +266,12 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     from .recruiting_feedback import listing
                     query=parse_qs(urlsplit(self.path).query)
                     try:return self.send(200,listing(store,state=query.get('state',['pending'])[0],offset=int(query.get('offset',['0'])[0])))
+                    except (ValueError,Blocked) as error:return self.send(400,{'error':str(error)})
+                if path=='/api/prior-applications':
+                    if demo:return self.send(200,{'messages':[],'total':0,'offset':0,'limit':25})
+                    from .prior_applications import listing
+                    query=parse_qs(urlsplit(self.path).query)
+                    try:return self.send(200,listing(store,offset=int(query.get('offset',['0'])[0])))
                     except (ValueError,Blocked) as error:return self.send(400,{'error':str(error)})
                 if path.startswith('/api/job-feedback/'):
                     from .recruiting_feedback import for_job
@@ -447,6 +458,13 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     if path=='/api/recruiting-feedback/sync':
                         from .recruiting_feedback import sync
                         return self.send(200,sync(store))
+                    if path=='/api/prior-applications/scan':
+                        from .prior_applications import scan
+                        if not isinstance(data,dict) or set(data)-{'company','restart'}:raise ValueError('Choose a company or scan all application mail')
+                        return self.send(200,scan(store,company=data.get('company') or None,restart=data.get('restart',False)))
+                    if path=='/api/prior-applications/review':
+                        from .prior_applications import review
+                        return self.send(200,review(store,data))
                     if path=='/api/recruiting-feedback/review':
                         from .recruiting_feedback import review
                         return self.send(200,review(store,data))
@@ -626,7 +644,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
             except Exception as e:return self.send(500,{'error':type(e).__name__})
     server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     url=f'http://127.0.0.1:{port}/#token={token}'
-    print(dashboard_startup_message(url,hide_token),flush=True)
+    print(dashboard_startup_message(url,hide_token,root),flush=True)
     if open_browser:
         import webbrowser
         try:

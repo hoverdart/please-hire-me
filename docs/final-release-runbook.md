@@ -59,25 +59,37 @@ The baseline records the schema already installed; it does not require the old c
 
 ## Deploy paused, then commission
 
-Follow the [Pi upgrade sequence](pi.md#update-an-existing-checkout): pause, suspend the applicant's scheduler, wait for the active worker, validate a private backup, stop the dashboard, fast-forward to the exact verified commit, install locked dependencies and restart the dashboard. Preserve unrelated Git changes; a dirty or diverged checkout stops deployment.
+The release process is the same on macOS, Linux and Pi: pause, suspend the applicant-owned schedule, wait for active work to finish, validate a private backup, update the exact verified code, and restart paused. Pi is an optional deployment target, not a prerequisite for local validation. Keep the restored local applicant separate from disposable development fixtures.
 
-For the final rollout, replace the guide's moving-branch pull with the exact revision below. Set `RELEASE_SHA` to the complete commit that passed verification. Run each line only after the preceding line succeeds; the equality check must pass before installation or dashboard startup:
+### macOS and Linux source installations
+
+Set `RELEASE_SHA` to the complete commit that passed the local and hosted checks. Before these commands, stop the foreground dashboard with Ctrl+C, or stop its existing background service. Run each line only after the preceding line succeeds. An unrelated or unverifiable schedule must be removed through its original installation rather than overwritten.
 
 ```bash
 cd "$HOME/please-hire-me"
-systemctl --user stop please-hire-me-dashboard.service
+.venv/bin/python -m hireme pause
+.venv/bin/python -m hireme schedule uninstall
 git diff --quiet && git diff --cached --quiet && test -z "$(git ls-files --others --exclude-standard)"
 git fetch origin "$RELEASE_SHA"
 git merge --ff-only "$RELEASE_SHA"
 test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 .venv/bin/python -m pip install -r requirements/runtime.lock
 .venv/bin/python -m pip install --no-deps -e .
-systemctl --user start please-hire-me-dashboard.service
+.venv/bin/python -m hireme doctor --verify-login
+.venv/bin/python -m hireme dashboard --open
 ```
+
+These commands use the default applicant directory. For a custom directory, pass the same absolute `--data-dir` before every subcommand, including dashboard, Gmail, pause, schedule and release checks. Changing the checkout does not select a different applicant.
+
+For a wheel installation, retain the verified wheel SHA-256 and install that exact artifact into the existing private runtime with `python -m pip install --no-deps --force-reinstall /path/to/verified.whl`. Provision Chromium and the optional Gmail extra as described in the README. Run source-revision release checks from the clean verified checkout against the installed applicant directory; an installed wheel alone has no Git checkout. Separately compare served dashboard assets with that wheel and record the runtime interpreter and artifact hash.
+
+### Raspberry Pi services
+
+Use the [Pi upgrade sequence](pi.md#update-an-existing-checkout), substituting the exact verified `RELEASE_SHA` for the moving-branch pull. Stop `please-hire-me-dashboard.service` before installation, confirm the checkout equals that SHA, and restart the service paused. The Python package, data-preservation checks and employer-acceptance requirements are shared with local installations; systemd service management is Pi-specific.
 
 After updating, compare protected-history fingerprints and every pre-existing operational-history fingerprint with the before-update report. Newly added tables may be empty; existing structured history, draft acknowledgements and uncertainty must survive. Any intended schema/data change must have its own explicit preservation comparison. Reuse an already verified backup restore when neither schema nor preservation requirements changed; do not repeat a large restore merely because adapter code changed.
 
-Verify the dashboard loopback/authentication boundaries, `doctor --verify-login`, one synthetic `model-probe`, and `gmail check` if Gmail is enabled. These commands establish different evidence; `release-check` does not replace them. Run the actual worker service while paused: it must exit successfully with zero attempts/submissions and a suppressed idle report. Restore exactly one applicant-owned timer at the saved interval, with no parallel cron or daemon, then check:
+Verify the dashboard loopback/authentication boundaries, `doctor --verify-login`, one synthetic `model-probe`, and `gmail check` if Gmail is enabled. These commands establish different evidence; `release-check` does not replace them. Run the actual scheduled worker command while paused: it must exit successfully with zero attempts/submissions and a suppressed idle report. Verify exactly one applicant-owned schedule at the saved interval: a LaunchAgent on macOS, cron on ordinary Linux, or the worker timer on Pi. Do not leave a verification schedule enabled on a secondary restored installation. With the intended primary schedule active, check:
 
 ```bash
 .venv/bin/python -m hireme release-check --expected-revision "$RELEASE_SHA" --require-paused --require-scheduler --output /absolute/private/after-update.json
@@ -103,7 +115,7 @@ The explicit commands below never install or enable a missing native transport. 
 
 ## Observe and decide
 
-Audit one ordinary timer-triggered cycle at its saved interval. Check persisted run/outcome counts, day/company/attempt limits, prior uncertainty exclusions, actionable holds and the report outbox. A valid idle cycle proves scheduling behavior, not employer acceptance. Verify report delivery independently; a queued message is not sent mail, and a provider send acknowledgement is not proof that the user read it.
+Audit one ordinary scheduler-triggered cycle at its saved interval. Check persisted run/outcome counts, day/company/attempt limits, prior uncertainty exclusions, actionable holds and the report outbox. A valid idle cycle proves scheduling behavior, not employer acceptance. Verify report delivery independently; a queued message is not sent mail, and a provider send acknowledgement is not proof that the user read it.
 
 Report one decision with evidence tied to the exact commit: engineering checks passed; deployed checks passed; scheduler operation observed; and employer acceptance proved for specifically named supported flows. Any unverified capability remains disabled or manual. External blockers do not justify weakening consent, source validation, budgets or duplicate protection.
 

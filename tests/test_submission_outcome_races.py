@@ -6,10 +6,48 @@ from playwright.sync_api import Error as BrowserError
 import pytest
 
 from hireme.browser import Browser
+from hireme.util import Blocked
 from tests.test_pipeline_integration import Posting, RECEIPT, harness
 
 
 NAVIGATION='Locator.evaluate_all: Execution context was destroyed, most likely because of a navigation'
+
+
+@pytest.mark.parametrize('operation',[
+    'ApiSubmitMultipleFormsAction','ApiSetFormValue','synthetic-private-operation',
+    {'private':'synthetic-private-operation'},['synthetic-private-operation'],
+])
+def test_denied_ashby_request_before_final_transport_retains_private_safe_diagnostics(store,job,package,operation):
+    import hashlib
+    import re
+    browser=Browser(store);browser.current_host='jobs.ashbyhq.com';browser.attempted=True
+    browser.aid=store.prepare(job,package);store.begin_submit(browser.aid)
+    browser.ashby_submission=SimpleNamespace(used=False,allow=lambda *args:False)
+    browser.host_cache['jobs.ashbyhq.com']=True
+    query='mutation Synthetic { private(value: "synthetic-private-query") }'
+    data={'operationName':operation,'query':query,'variables':{'token':'synthetic-private-token'}}
+    raw=json.dumps(data)
+    route=SimpleNamespace(request=SimpleNamespace(
+        url='https://jobs.ashbyhq.com/api/non-user-graphql?token=synthetic-private-url',
+        method='POST',post_data=raw,post_data_buffer=raw.encode(),headers={}))
+    aborted=[];continued=[]
+    route.abort=lambda:aborted.append(True)
+    route.continue_=lambda **kwargs:continued.append(True)
+    browser._route(route)
+    browser._route(route)
+    for _ in range(2):
+        with pytest.raises(Blocked,match='unapproved_draft_write'):browser._guard(job)
+    events=list(store.db.execute("SELECT detail FROM events WHERE kind='post_submit_write_blocked'"))
+    assert len(events)==1 and len(aborted)==2 and not continued
+    detail=json.loads(events[0][0])
+    assert detail['final_transport_used'] is False
+    assert detail['query_sha256']==hashlib.sha256(re.sub(r'\s+','',query).encode()).hexdigest()
+    assert detail.get('operation')==(operation if operation in ('ApiSubmitMultipleFormsAction','ApiSetFormValue') else None)
+    assert all(secret not in events[0][0] for secret in
+        ('synthetic-private-operation','synthetic-private-query','synthetic-private-token','synthetic-private-url'))
+    assert not browser.ashby_submission.used
+    assert store.db.execute('SELECT state FROM applications WHERE id=?',(browser.aid,)).fetchone()[0]=='submitting'
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_submission_write'").fetchone()
 
 
 def polling_browser(store,job):

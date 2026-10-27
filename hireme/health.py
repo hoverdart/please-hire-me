@@ -8,6 +8,8 @@ import sqlite3
 import subprocess
 import time
 from types import SimpleNamespace
+import urllib.error
+import urllib.request
 
 from .config import validate_settings
 from .storage import capacity
@@ -23,7 +25,21 @@ def _age(value, clock):
     except (ValueError,TypeError,OverflowError):return None
 
 
-def check_health(root, *, services=True, verify_login=True, clock=None):
+def _dashboard_available(port):
+    if type(port) is not int or not 1 <= port <= 65535:return False
+    # A foreground dashboard on macOS/Linux has no systemd unit. Read only its
+    # public static shell; health must not open an API that initializes Store.
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):return None
+    try:
+        expected=(Path(__file__).parent/'static/index.html').read_bytes()
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+        with opener.open(f'http://127.0.0.1:{port}/',timeout=5) as response:
+            return response.status==200 and response.read(len(expected)+1)==expected
+    except (OSError,urllib.error.URLError):return False
+
+
+def check_health(root, *, services=True, verify_login=True, clock=None, dashboard_port=8766):
     root=Path(root).expanduser().absolute()
     clock=time.time() if clock is None else clock
     result={'checked_at':now(),'ready':False,'failures':[],'warnings':[],
@@ -85,9 +101,11 @@ def check_health(root, *, services=True, verify_login=True, clock=None):
             schedule=result['scheduler']
             if not (schedule.get('ready') and schedule.get('installed_count')==1
                     and schedule.get('enabled') and schedule.get('active')):failures.append('scheduler_unavailable')
-            service=subprocess.run(['systemctl','--user','is-active','please-hire-me-dashboard.service'],
-                                   capture_output=True,text=True,timeout=5)
-            result['dashboard_active']=service.returncode==0
+            if settings['deployment']=='pi' or schedule.get('kind')=='systemd':
+                service=subprocess.run(['systemctl','--user','is-active','please-hire-me-dashboard.service'],
+                                       capture_output=True,text=True,timeout=5)
+                result['dashboard_active']=service.returncode==0 and service.stdout.strip()=='active'
+            else:result['dashboard_active']=_dashboard_available(dashboard_port)
             if not result['dashboard_active']:failures.append('dashboard_unavailable')
         ack=root/'operations'/'backup-ack.json'
         backup=json.loads(ack.read_text()) if ack.is_file() and not ack.is_symlink() else {}

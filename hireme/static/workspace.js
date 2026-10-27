@@ -1,15 +1,26 @@
 "use strict";
 (() => {
   const nodes = [document.querySelector('.ledger-panel'), ...['add-posting-panel', 'posting-import-panel', 'prepare-panel'].map(id => document.getElementById(id))];
-  const today = document.getElementById('today');
   const jobList = document.getElementById('job-list-workspace');
   const dialog = document.getElementById('job-dialog');
   document.getElementById('job-detail-workspace').append(dialog);
   const strip = document.getElementById('worker-strip');
-  strip.append(document.querySelector('.worker-indicator'), document.querySelector('.page-head .actions'));
+  strip.append(document.querySelector('.page-head .actions'));
+
   const model = document.getElementById('providers');
   model.classList.remove('view'); model.hidden = false;
-  document.getElementById('connections').append(model);
+  const connections = document.getElementById('connections');
+  connections.querySelector('.section').after(model);
+  const optional = el('details', undefined, 'section');
+  optional.id = 'optional-connections';
+  optional.append(el('summary', 'Optional job platforms'), el('p', 'Add a platform only if you use it. Each has its own sign-in and verified capabilities.', 'help'));
+  const platforms = el('div'); platforms.id = 'platform-connections'; optional.append(platforms); connections.append(optional);
+  const history = document.getElementById('applications');
+  for (const node of [document.querySelector('[aria-labelledby="application-outcomes-title"]'), document.getElementById('recruiting-insights-panel'), document.querySelector('[aria-labelledby="cycle-funnel-title"]'), document.getElementById('runs').previousElementSibling, document.getElementById('runs'), document.getElementById('run-history-panel')]) history.append(node);
+  for (const node of nodes) jobList.append(node);
+  for (const id of ['coverage-panel', 'source-health-panel']) jobList.append(document.getElementById(id));
+  document.getElementById('settings-form').before(el('h2', 'Search & automation'));
+  document.getElementById('open-application-history').onclick = () => show('applications');
   const paths = {
     today:'M3 4h18v16H3z M3 9h18 M8 2v4 M16 2v4',
     jobs:'M3 6h18v14H3z M8 6V3h8v3 M3 12h18 M10 12v3h4v-3',
@@ -19,6 +30,7 @@
     connections:'M8 8 5 5a3 3 0 0 0-4 4l4 4 M16 16l3 3a3 3 0 0 0 4-4l-4-4 M8 16l8-8',
     settings:'M3 6h18 M3 12h18 M3 18h18 M8 3v6 M16 9v6 M10 15v6',
     search:'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M15 15l6 6',
+    bell:'M5 16V9a7 7 0 0 1 14 0v7l2 3H3l2-3 M9 22h6',
     setup:'M4 3h16v18H4z M8 8h8 M8 12h8 M8 16h5'
   };
   for (const target of document.querySelectorAll('[data-icon]')) {
@@ -27,7 +39,7 @@
     const path = document.createElementNS(svg.namespaceURI,'path');
     path.setAttribute('d',paths[target.dataset.icon]); svg.append(path); target.append(svg);
   }
-  let connectionsSignature = '', attentionSignature = '', healthSignature = '';
+  let connectionsSignature = '', attentionSignature = '';
   let artifactOffset = 0, artifactBusy = false, artifactResult = null;
   let selectedJob = null, jobRequest = 0;
   const drafts = new Map();
@@ -35,13 +47,13 @@
   const pendingSuggestions = new Set();
   const artifactForm = document.getElementById('artifact-form');
 
-  function placeLedger(name) {
-    if (!['today','opportunities'].includes(name)) return;
-    const destination = name === 'opportunities' ? jobList : today;
-    for (const node of nodes) if (node.parentElement !== destination) destination.append(node);
+  function placeLedger() {
+    // Keep the same form nodes mounted so navigation preserves drafts and filters.
+    for (const node of nodes) if (node.parentElement !== jobList) jobList.append(node);
   }
   function feedback(parent, message, error=false) {
     parent.textContent = message; parent.setAttribute('role',error?'alert':'status');
+    note(message, error);
   }
   function sessionLabel(connection) {
     if(connection.session_ready)return 'Signed in';
@@ -105,12 +117,6 @@
   }
   function render(snapshot) {
     renderConnections(snapshot);
-    const health=document.getElementById('today-connections');
-    const healthKey=JSON.stringify([snapshot.platform_connections,snapshot.provider,snapshot.gmail]);
-    if(healthKey!==healthSignature){healthSignature=healthKey;health.replaceChildren();
-      for(const c of snapshot.platform_connections||[]){const row=el('div',undefined,'health-row');row.append(el('strong',c.name),el('span',!c.enabled?'Disabled':!c.session_ready?sessionLabel(c):!c.capabilities.submission.available?'Validation needed':'Ready','help'));health.append(row);}
-      const services=el('p','Model and email settings are available in Connections.','help');health.append(services);
-    }
     const parent=document.getElementById('today-attention');
     const jobs=snapshot.jobs.filter(j=>j.requires_attention).sort((a,b)=>Number(['unknown','awaiting_verification'].includes(b.status))-Number(['unknown','awaiting_verification'].includes(a.status))).slice(0,5);
     const human=snapshot.human_verification?.phase==='challenge'?snapshot.human_verification:null;
@@ -118,10 +124,10 @@
     const key=JSON.stringify([jobs,snapshot.summary?.question_count,human,pendingMail]);
     if(key!==attentionSignature){attentionSignature=key;parent.replaceChildren();
       if(human){const button=el('button',undefined,'attention-row secondary');button.append(el('strong',`${human.company} · Complete verification`),el('span','Use the application browser already open on the worker desktop.','help'));button.onclick=()=>{const notice=document.getElementById('human-verification-notice');notice.focus({preventScroll:true});notice.scrollIntoView({block:'start',behavior:'auto'});};parent.append(button);}
-      if(snapshot.summary?.question_count){const button=el('button',`${snapshot.summary.question_count} unanswered application questions`,'attention-row secondary');button.onclick=()=>show('questions');parent.append(button);}
+      if(snapshot.summary?.question_count){const button=el('button',`${snapshot.summary.question_count} unanswered application ${snapshot.summary.question_count === 1 ? "question" : "questions"}`,'attention-row secondary');button.onclick=()=>show('questions');parent.append(button);}
       if(pendingMail){const button=el('button',`${pendingMail} recruiting messages to review`,'attention-row secondary');button.onclick=()=>window.recruitingFeedback?.open();parent.append(button);}
       for(const job of jobs){const button=el('button',undefined,'attention-row secondary');button.append(el('strong',`${job.company} · ${job.title}`),el('span',job.next_step||job.reason_label||'Review the application record.','help'));button.onclick=()=>openOpportunity(job);parent.append(button);}
-      if(!parent.children.length)parent.append(el('p','No action needed in your loaded queue. Your desk will flag missing information or uncertain outcomes here.','help'));
+      if(!parent.children.length)parent.append(el('p','No action needed in your loaded queue. Missing information or uncertain outcomes will appear here.','help'));
     }
     for(const id of ['suggest-handshake','suggest-workatastartup'])document.getElementById(id).disabled=snapshot.demo||snapshot.worker_running||pendingSuggestions.has(id.replace('suggest-',''));
     for(const control of artifactForm.elements)control.disabled=snapshot.demo||artifactForm.dataset.saving==='true';
@@ -193,7 +199,6 @@
   document.getElementById('artifact-previous').onclick=()=>{artifactOffset=Math.max(0,artifactOffset-25);loadArtifacts();};
   document.getElementById('artifact-next').onclick=()=>{artifactOffset+=25;loadArtifacts();};
   document.getElementById('open-attention').onclick=()=>show('questions');
-  document.getElementById('open-connections').onclick=()=>show('connections');
   for(const id of ['connection-source','connection-destination','connection-fit'])document.getElementById(id).onchange=()=>loadLedger(true);
   document.querySelector('[data-view=materials]').addEventListener('click',loadArtifacts);
   window.addEventListener('beforeunload',event=>{if(drafts.size){event.preventDefault();event.returnValue='';}});

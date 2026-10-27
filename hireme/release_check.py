@@ -30,6 +30,7 @@ PROTECTED_TABLES = (
 OPERATIONAL_TABLES = (
     'employer_accounts', 'remote_draft_steps', 'adapter_verifications',
     'confirmed_history', 'workday_drafts', 'recruiting_feedback', 'recruiting_sync',
+    'prior_application_mail', 'prior_application_scans', 'prior_application_company_names', 'prior_application_mail_companies',
 )
 
 
@@ -214,13 +215,14 @@ def _scheduler(view):
         if primary.get('kind') == 'systemd' and shutil.which('crontab'):
             records.append(scheduler.status(view, cron_only=True))
         installed = [record for record in records if record.get('installed')]
+        installed_count = sum(record.get('installed_count', 1) for record in installed)
         owned = all(record.get('matches_applicant') is True for record in installed)
         result = {
-            'installed_count': len(installed), 'matches_applicant': owned,
+            'installed_count': installed_count, 'matches_applicant': owned,
             'kind': primary.get('kind'), 'interval_hours': primary.get('interval_hours'),
             'enabled': primary.get('enabled'), 'active': None,
             'daemon_running': daemon_running,
-            'ready': (not daemon_running and len(installed) <= 1 and owned
+            'ready': (not daemon_running and installed_count <= 1 and owned
                       and not any(record.get('error') for record in records)),
         }
         if primary.get('kind') == 'systemd':
@@ -274,7 +276,7 @@ def _integrations(view, settings):
     token = integrations / 'gmail-token.json'
     gmail_bound = (bool(owner_email) and account.get('email') == owner_email.casefold()
                    and token.is_file() and not token.is_symlink())
-    gmail_enabled = any(settings[key] for key in ('gmail_reports', 'gmail_verification', 'gmail_feedback'))
+    gmail_enabled = any(settings[key] for key in ('gmail_reports', 'gmail_verification', 'gmail_feedback', 'gmail_prior_applications'))
     return {
         'ready': model_configured and (not gmail_enabled or gmail_bound),
         'model': {'provider': provider, 'configured': model_configured, 'login_and_connectivity': 'not_checked'},

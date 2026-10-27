@@ -2,6 +2,12 @@
 
 Start with the [installation instructions](../README.md#get-started). All commands below run from the repository directory. For a background dashboard on Raspberry Pi OS, use the [Pi guide](pi.md).
 
+## Find your way around
+
+Home shows today's counts, items needing you and recent activity. Jobs holds the complete queue, posting imports and draft preparation. Applications holds outcomes, Recruiting Insights and batch history. Needs you collects unanswered questions and uncertain attempts. Profile contains facts and Materials; Settings contains Connections, search preferences and Setup.
+
+Action feedback appears as a floating notification, including when you have scrolled down. Ordinary updates dismiss after a few seconds; hover or focus pauses that timer. Errors stay until dismissed. The Notifications button in the header keeps the latest 20 messages for the current browser session. Application records and batch history remain the durable evidence.
+
 ## Follow an application through the search
 
 Open **Answers & evidence** on a recorded attempt in Jobs or Needs you. Its application record joins the captured posting identity and source, exact document hashes and known resume revision, submission status, reviewed recruiting stage and next action. **Application timeline** distinguishes preparation, final intent, the saved outcome and recruiting messages. The private JSON export records this view; original recorded PDF downloads and answers remain below it.
@@ -10,15 +16,15 @@ Reopen the evidence after reviewing email to refresh its recruiting context. Ope
 
 ## Set it up for your search
 
-Start in **Preferences** with the jobs you actually want: roles, seniority, locations, compensation requirements and companies to skip. The defaults focus on internships and new-grad technical roles, including Summer 2027 and school-location settings. Review them before your first batch.
+Start in **Settings → Search & automation** with the jobs you actually want: roles, seniority, locations, compensation requirements and companies to skip. The defaults focus on internships and new-grad technical roles, including Summer 2027 and school-location settings. Review them before your first batch.
 
-In **Your facts**, confirm your own information. In **Writing & context**, add the projects, experience and writing samples you'd want an application to draw from, then review how each source may be used. You can revise or withdraw those sources later; the sections below explain what happens to existing drafts and records.
+In **Your facts**, confirm your own information. In **Profile → Materials**, add the projects, experience and writing samples you'd want an application to draw from, then review how each source may be used. You can revise or withdraw those sources later; the sections below explain what happens to existing drafts and records.
 
 Choose your model, schedule and limits to fit how you want to use the app. Finish setup paused, prepare a few drafts, and review the answers and documents before enabling submissions. The [models and request limits](#models-and-request-limits) section explains the defaults and billing choices.
 
 ## Recruiting Insights
 
-Open **Recruiting Insights** in Today or find it through Find a tool. Choose the application period, a 7/14/30-day response window, and grouping by company, exact role title, application source or resume PDF. Click a metric or group count to reach its matching attempts, then **View application evidence** for the exact package, recorded PDF, receipt and reviewed messages. Refresh or reopen the panel after reviewing mail.
+Open **Recruiting Insights** in Applications or find it through Find a tool. Choose the application period, a 7/14/30-day response window, and grouping by company, exact role title, application source or resume PDF. Click a metric or group count to reach its matching attempts, then **View application evidence** for the exact package, recorded PDF, receipt and reviewed messages. Refresh or reopen the panel after reviewing mail.
 
 Response milestones and mail-review coverage use only confirmed submissions old enough for the full selected window. A 14-day comparison counts reviewed messages arriving in each attempt's first 14 days. Recent submissions, uncertain outcomes, failed submissions and unplaceable timestamps are separately inspectable. Acknowledgements count as reviewed mail but not as assessments, interviews, offers or recruiting rejections. Milestones may overlap; an offer does not establish that an interview was observed.
 
@@ -48,11 +54,11 @@ Clearing a saved optional fact removes it from future confirmed use. **Review sa
 
 ## Writing and materials
 
-For per-posting resumes, first confirm **Education and employment** in **Your facts**. Add complete responsibilities or accomplishments on separate lines under their original role, with only dates and details you can confirm. Enable **Tailored resumes** in Preferences. The worker chooses up to four complete lines per role by relevance, keeps their wording and employer context, and renders a PDF with your confirmed education, skills and contact details. It makes no model calls for this step. Missing descriptions, unsupported PDF characters or content exceeding two pages need attention before that resume can be used.
+For per-posting resumes, first confirm **Education and employment** in **Your facts**. Add complete responsibilities or accomplishments on separate lines under their original role, with only dates and details you can confirm. Enable **Tailored resumes** in Settings → Search & automation. The worker chooses up to four complete lines per role by relevance, keeps their wording and employer context, and renders a PDF with your confirmed education, skills and contact details. It makes no model calls for this step. Missing descriptions, unsupported PDF characters or content exceeding two pages need attention before that resume can be used.
 
 Open a job's **Prepare application materials → Tailored resume PDF** to generate and download a version for review. When enabled, supported browser application runs use the generated resume. Your original upload remains selected in Your facts. Each revision stays in Materials; source changes invalidate its use in new submissions without deleting the historical download. Workday and platform-native controllers retain their separately validated document paths.
 
-In **Writing & context**, upload DOCX, PDF, PPTX, TXT or Markdown sources. Review their excerpts and approve each for personal factual evidence, background reference or style only. Style examples never establish your qualifications. Search and page through the complete source library; save or discard excerpt edits before changing pages.
+In **Profile → Materials**, upload DOCX, PDF, PPTX, TXT or Markdown sources. Review their excerpts and approve each for personal factual evidence, background reference or style only. Style examples never establish your qualifications. Search and page through the complete source library; save or discard excerpt edits before changing pages.
 
 Approved personal sources can support factual answers and tailored writing when contextual choices are enabled. Generated answers retain source references and pass a separate grounding review. Model review can still miss errors, so review important drafts yourself.
 
@@ -108,7 +114,7 @@ To exclude a company, use **Skip this company**. **Include this company again** 
 
 ## Models and request limits
 
-Choose a connection in **Model connection**:
+Choose a model in **Settings → Connections**:
 
 | Choice | Setup | Billing |
 | --- | --- | --- |
@@ -119,11 +125,11 @@ Choose a connection in **Model connection**:
 
 Subscription modes reject API-only authentication and omit inherited API keys. CLI versions must support the required isolation flags. Models receive no browser or shell tools; application code owns side effects. API keys stay in private local storage and are excluded from ordinary backups. A saved key does not establish model access; API connectivity is checked on the first request.
 
-Model connection shows durable worker request counts and available token metadata. Missing token usage is shown as unreported. Failed calls count toward limits. Drafting and grounding review are separate requests. These measurements do not show remaining subscription allowance, vendor credits or a dollar balance.
+The model section in Connections shows durable worker request counts and available token metadata. Missing token usage is shown as unreported. Failed calls count toward limits. Drafting and grounding review are separate requests. These measurements do not show remaining subscription allowance, vendor credits or a dollar balance.
 
-Defaults are six hours between batches, a target of seven confirmed applications per batch and 28 daily, with maximums of ten per batch and 40 daily. Additional defaults are ten attempts per batch, 40 model requests per batch, 100 model requests per local calendar day and a 180-minute batch time budget. Preferences stores the values for your instance; existing installations may have different limits.
+Defaults are six hours between batches, a target of seven confirmed applications per batch and 28 daily, with maximums of ten per batch and 40 daily. Additional defaults are ten attempts per batch, 40 model requests per batch, 100 model requests per local calendar day and a 180-minute batch time budget. Settings stores the values for your instance; existing installations may have different limits.
 
-By default, there is no per-company application cap or cooldown. In Preferences, **Applications per company** set to **0** means no company count limit; **Company cooldown, days** set to **0** means no waiting period or same-company daily restriction. Positive values enable those optional limits. Existing saved limits remain in place until you change them. Duplicate applications, uncertain outcomes, pending verification and company exclusions remain held even when company limits are disabled. Daily, batch and model-request limits are separate.
+By default, there is no per-company application cap or cooldown. In Settings → Search & automation, **Applications per company** set to **0** means no company count limit; **Company cooldown, days** set to **0** means no waiting period or same-company daily restriction. Positive values enable those optional limits. Existing saved limits remain in place until you change them. Duplicate applications, uncertain outcomes, pending verification and company exclusions remain held even when company limits are disabled. Daily, batch and model-request limits are separate.
 
 Older releases require positive company-limit values and cannot read unlimited preferences. Keep this release or newer when restoring an instance configured with zero; a downgrade must remain paused until its configuration compatibility is verified.
 
@@ -139,7 +145,7 @@ Targets are not promises of throughput. Rate limits stop work without automatic 
 
 Pause stops a cycle at cancellation checkpoints, including active CLI inference. An in-flight browser/API request may finish its timeout first. An employer request already sent cannot be undone. Resume permits a new cycle and cannot revive the cancelled one.
 
-After saving a batch interval, choose **Preferences → Apply saved interval**, then **Check schedule**. The CLI equivalent is `.venv/bin/python -m hireme schedule install`. Your computer must be awake for scheduled work. macOS uses a LaunchAgent; Linux uses cron unless Pi systemd units are installed. Cron intervals must divide 24 hours: 1, 2, 3, 4, 6, 8, 12 or 24.
+After saving a batch interval, choose **Settings → Search & automation → Apply saved interval**, then **Check schedule**. The CLI equivalent is `.venv/bin/python -m hireme schedule install`. Your computer must be awake for scheduled work. macOS uses a LaunchAgent; Linux uses cron unless Pi systemd units are installed. Cron intervals must divide 24 hours: 1, 2, 3, 4, 6, 8, 12 or 24.
 
 To remove a schedule:
 
@@ -161,7 +167,7 @@ Recovery keeps interrupted submission intents uncertain and unfinished accounts 
 
 The authoritative database is `~/.local/share/please-hire-me/ledger.sqlite3`. Multiple checkouts share this directory by default. Documents, reviewed sources, evidence, browser sessions and credentials are private local files. For a different applicant, use another OS account or pass the same explicit `--data-dir` to every command for that instance. Do not split one applicant's history across directories.
 
-Choose **Preferences → Your data and backups** to download a backup after active work finishes. **Check a backup before moving it** validates an uploaded ZIP using a temporary restore, leaving the active workspace unchanged. Browser checks accept ZIP archives up to 1 GiB. The current CLI can restore up to 8 GiB compressed and 16 GiB expanded, subject to free disk space; update the restoration tool before using an archive larger than an older release supports.
+Choose **Settings → Search & automation → Your data and backups** to download a backup after active work finishes. **Check a backup before moving it** validates an uploaded ZIP using a temporary restore, leaving the active workspace unchanged. Browser checks accept ZIP archives up to 1 GiB. The current CLI can restore up to 8 GiB compressed and 16 GiB expanded, subject to free disk space; update the restoration tool before using an archive larger than an older release supports.
 
 For a terminal backup and restore:
 
@@ -180,7 +186,7 @@ For automatic encrypted Pi backups to a Mac, use the [operations guide](operatio
 
 Do not run the same applicant simultaneously on Mac and Pi. Pause the source and remove its schedule before moving history; locks do not coordinate across machines.
 
-If both machines have independent application history, stop both before migration. Do not restore one over the other. An operator can retain original attempts in the destination's historical application records after verifying both private snapshots. These records remain visible in Application desk, outcome review, CSV exports and backups, and continue to enforce company limits and duplicate protection. Retained records cannot authorize employer writes. Reconcile each uncertain attempt separately; reconciling an older attempt does not replace the newer receipt for that job.
+If both machines have independent application history, stop both before migration. Do not restore one over the other. An operator can retain original attempts in the destination's historical application records after verifying both private snapshots. These records remain visible in HireMeMaybe, outcome review, CSV exports and backups, and continue to enforce company limits and duplicate protection. Retained records cannot authorize employer writes. Reconcile each uncertain attempt separately; reconciling an older attempt does not replace the newer receipt for that job.
 
 Employer passwords use a separate encrypted transfer. Pause both instances, restore matching history first, then use **Needs you → Move employer passwords to another computer**. Choose and repeat a passphrase of at least 12 characters. Keep the passphrase separately and remove the transfer file after verifying recovery.
 
@@ -195,9 +201,15 @@ These commands prompt interactively. Transfer validates applicant/account identi
 
 ## Gmail and employer accounts
 
+To find applications you made elsewhere, enable **Check Gmail for past applications** under **Connections → Email automation**. Open **Past applications from email**, enter a company such as Optiver or leave it blank, and choose **Scan application mail**. The first scan searches historical and archived application mail without a date cutoff; Spam and Trash are excluded. Receipt phrases are searched in the message text, so the employer's subject wording does not determine whether the message is found. Each bounded page saves its cursor; scan again when more mail remains. The CLI equivalent is `.venv/bin/python -m hireme gmail scan-applications --company Optiver`; omit `--company` for application mail across companies, or add `--restart` to repeat the full history search. Company searches use up to ten names, starting with the requested name and verified public names. Search an older name explicitly if your alias group is larger.
+
+Role-specific email evidence holds matching jobs even if this app has no application record. Matching uses an exact posting link or a possible employer and complete role title in an application passage. Differences in year, location and seniority within the full role title are preserved. Ambiguous employer names create conservative holds instead of allowing another application. Inspect the original email, select the exact saved role and choose **Record past application** to keep the correct role held and release unrelated candidates. Dismiss unrelated messages. Company-only mail remains available for review; if no saved employer can be identified, use **Applied manually** on the verified job instead. An email hold does not mark a worker attempt confirmed or resolve an uncertain submission. Saved holds remain after Gmail is disconnected or scanning is disabled. Explicitly reviewed role links also survive changing your primary email within the same private workspace; unreviewed mail and original-message previews remain bound to the original account. To change an old email review, select its original confirmed account again. Email holds do not add to company quotas or cooldowns; use **Applied manually** when you need to record an external application in that history.
+
+When enabled, live applications check the company's mailbox history before opening the application browser and require a completed check no older than 15 minutes before final submission. Incomplete scans or unavailable Gmail hold work rather than skip the check. Scans read at most 25 messages within a bounded work period; company checks have their own per-cycle ceiling tied to the attempt limit. Failed checks rotate behind fresh candidates; incomplete scans retain priority to make progress next cycle. A completed company scan restores normal priority. No application attempt is consumed by a mailbox check. Only bounded application passages, previews, posting-identity hashes and message references are retained privately. Authentication mail and self-sent reports are excluded; email links and attachments are never fetched, and inbox text is never sent to a model. Opaque Greenhouse board names are verified through the official public boards API. English-language matching can miss unusual receipt wording; an absent match is not proof that you never applied.
+
 To track recruiting replies, enable **Find recruiting feedback in Gmail** under Connections → Email automation. Open **Recruiting feedback** and choose **Sync recruiting mail**, or run `.venv/bin/python -m hireme gmail sync-feedback`. Each sync handles at most ten messages within a bounded work period and retains its remaining page for the next sync. The initial search covers the last 30 days; later searches overlap to catch delayed arrivals. Matching uses the confirmed applicant recipient and prior application history, prioritizing exact posting URLs, then company/role text. Unmatched mail, authentication messages and messages sent by the applicant, including the app's own batch reports, are ignored. This English-language classifier can miss or misclassify messages.
 
-Review the private preview and original Gmail message, correct its suggested category, choose the exact attempt and select **Confirm feedback**. Ambiguous company matches require your selection. Dismiss unrelated messages. Confirmed milestones appear in Today and the job's application context. Feedback never marks an uncertain submission confirmed or releases it for retry; verify submission separately with the employer. Sender DKIM checks help inspection but do not prove the sender is authorized to recruit for that employer.
+Review the private preview and original Gmail message, correct its suggested category, choose the exact attempt and select **Confirm feedback**. Ambiguous company matches require your selection. Dismiss unrelated messages. Confirmed milestones appear in Applications and the job's application context. Feedback never marks an uncertain submission confirmed or releases it for retry; verify submission separately with the employer. Sender DKIM checks help inspection but do not prove the sender is authorized to recruit for that employer.
 
 When feedback is enabled, live-mode batches also check a bounded mail page after finishing, including batches that stop paused. Preparation mode does not sync mail. This setting operates separately from sending batch reports. Message previews and reviews are included in private history backups; OAuth credentials are excluded. Inbox text is never sent to a model, and syncing does not send messages, follow links or fetch attachments.
 

@@ -155,6 +155,17 @@ def _option_value(key, value, options, context=None):
         matches=[x for x in options if re.match(re.escape(value)+r'(?:\b|/)',x,re.I)]
         if len(matches)!=1:raise Blocked('option_mismatch')
         return matches[0]
+    if key=='earliest_start' and re.fullmatch(r'\d{4}-\d{2}',value):
+        import calendar
+        year,month=value.split('-');number=int(month)
+        if not 1<=number<=12:raise Blocked('option_mismatch')
+        # Preserve the confirmed month, without inventing a day or a wider window.
+        names=(calendar.month_name[number],calendar.month_abbr[number])
+        exact={normalize(value),*(normalize(name+year) for name in names),
+               *(normalize(year+name) for name in names)}
+        matches=[option for option in options if normalize(option) in exact]
+        if len(matches)!=1:raise Blocked('option_mismatch')
+        return matches[0]
     if key=='gpa' and re.fullmatch(r'\d+(?:\.\d+)?(?:\s*/\s*4(?:\.0+)?)?',value):
         from decimal import Decimal
         score=Decimal(value.split('/')[0].strip());matches=[]
@@ -265,6 +276,12 @@ def _mapped_option(store, key, field, provider=None):
     """
     fact=store.facts().get(key);options=field.get('options',[])
     if not fact or key in UNMAPPED_FACTS or field.get('type')=='checkbox' or not field.get('required'):return None
+    if (key=='earliest_start' and re.fullmatch(r'\d{4}-\d{2}',fact['value'])
+            and re.search(r'\bmonths?\b',field['label'],re.I)
+            and re.search(r'\bstart\b',field['label'],re.I)):
+        # A model-selected alternative cannot expand confirmed month availability.
+        # Explicit applicant-approved literal answers remain available separately.
+        return None
     mapping=_option_mapping_id(key,fact,field)
     row=store.db.execute('SELECT value FROM option_mappings WHERE id=?',(mapping,)).fetchone()
     if row:return row['value'] if options.count(row['value'])==1 else None

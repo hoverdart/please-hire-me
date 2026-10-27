@@ -85,7 +85,7 @@ def export_csv(store):
         except (ValueError, TypeError, AttributeError): location = ''
         display=dict(job)
         if job['historical']:
-            display.update(status=job['application_state'],reason='Historical application; review its record in Application desk.')
+            display.update(status=job['application_state'],reason='Historical application; review its record in HireMeMaybe.')
         writer.writerow([spreadsheet_text(value) for value in (
             job['company'], job['title'], location, job_display(display)['status_label'],
             job['score'], job['url'], job['first_seen'], job['application_updated'] if job['historical'] else job['updated'], job['attempted'], display['reason'])])

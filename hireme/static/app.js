@@ -270,12 +270,80 @@ const el = (tag, text, cls) => {
   if (cls) n.className = cls;
   return n;
 };
+// Notification history is session-only: account and application details stay private.
+const notifications = [];
+let notificationTimer, notificationRemaining = 0, notificationStarted = 0;
+let notificationOrigin = null, notificationError = false;
+const toast = $("#toast");
+function placeNotification() {
+  // Modal inertness follows DOM ancestry, even for elements in the top layer.
+  const parent = [...document.querySelectorAll("dialog:modal")].at(-1) || document.body;
+  if (toast.parentElement !== parent) {
+    if (toast.matches(":popover-open")) toast.hidePopover();
+    parent.append(toast);
+  }
+  if (toast.showPopover && !toast.matches(":popover-open")) toast.showPopover();
+}
+document.addEventListener("close", event => {
+  if (event.target.contains?.(toast) && !toast.hidden) placeNotification();
+}, true);
+function dismissNotification() {
+  clearTimeout(notificationTimer);
+  const focused = toast.contains(document.activeElement);
+  if (toast.matches(":popover-open")) toast.hidePopover();
+  toast.hidden = true;
+  if (focused && notificationOrigin?.isConnected && !notificationOrigin.disabled)
+    notificationOrigin.focus({preventScroll: true});
+}
+function pauseNotification() {
+  clearTimeout(notificationTimer);
+  if (notificationStarted) notificationRemaining = Math.max(0, notificationRemaining - (performance.now() - notificationStarted));
+  notificationStarted = 0;
+}
+function resumeNotification() {
+  clearTimeout(notificationTimer);
+  if (toast.hidden || notificationError || toast.matches(":hover") || toast.contains(document.activeElement)) return;
+  notificationStarted = performance.now();
+  notificationTimer = setTimeout(dismissNotification, notificationRemaining);
+}
+function renderNotificationHistory() {
+  const parent = $("#notification-history");
+  parent.replaceChildren();
+  if (!notifications.length) parent.append(el("p", "No notifications yet.", "help"));
+  for (const item of notifications) {
+    const row = el("article", undefined, "notification-entry");
+    row.append(el("strong", item.error ? "Action needed" : "Update"), el("p", item.text), el("time", new Intl.DateTimeFormat(undefined, {hour: "numeric", minute: "2-digit"}).format(item.time), "help"));
+    row.classList.toggle("error", item.error);
+    parent.append(row);
+  }
+}
 const note = (text, error = false) => {
+  pauseNotification();
   const notice = $("#notice");
   notice.textContent = text;
-  notice.classList.toggle("error", error);
   notice.setAttribute("role", error ? "alert" : "status");
+  notice.setAttribute("aria-live", error ? "assertive" : "polite");
+  notice.classList.toggle("error", error);
+  if (!text) { dismissNotification(); return; }
+  notificationError = error;
+  toast.classList.toggle("error", error);
+  if (!toast.contains(document.activeElement)) notificationOrigin = document.activeElement;
+  notifications.unshift({text, error, time: new Date()});
+  notifications.length = Math.min(notifications.length, 20);
+  const count = $("#notification-count"); count.textContent = String(notifications.length); count.hidden = false;
+  renderNotificationHistory();
+  toast.hidden = false;
+  placeNotification();
+  notificationRemaining = 6500;
+  resumeNotification();
 };
+$("#dismiss-notification").onclick = dismissNotification;
+toast.addEventListener("pointerenter", pauseNotification);
+toast.addEventListener("pointerleave", resumeNotification);
+toast.addEventListener("focusin", pauseNotification);
+toast.addEventListener("focusout", () => queueMicrotask(resumeNotification));
+$("#open-notifications").onclick = () => { dismissNotification(); renderNotificationHistory(); $("#notification-dialog").showModal(); };
+$("#close-notifications").onclick = () => $("#notification-dialog").close();
 async function api(path, data, raw = false, extraHeaders = {}) {
   let response, value, timedOut = false;
   const controller = new AbortController();
@@ -302,7 +370,7 @@ async function api(path, data, raw = false, extraHeaders = {}) {
       });
     } catch {
       throw new Error(timedOut ? timeoutMessage :
-        "Cannot reach your application desk. Check that the dashboard is still running, then try again.");
+        "Cannot reach HireMeMaybe. Check that the dashboard is still running, then try again.");
     }
     try {
       value = await response.json();
@@ -377,7 +445,7 @@ $("#account-export-form").onsubmit = async (event) => {
       body: JSON.stringify({ passphrase, confirmation }),
     }).catch(() => {
       throw new Error(
-        "Cannot reach your application desk. Check that the dashboard is running and try again.",
+        "Cannot reach HireMeMaybe. Check that the dashboard is running and try again.",
       );
     });
     if (!response.ok) {
@@ -492,26 +560,33 @@ function show(name) {
   $("#heading").textContent = {
     setup: "Make it yours",
     providers: "Your model connection",
-    today: "Today’s applications",
+    today: "Your job search",
+    applications: "Applications",
     opportunities: "Jobs",
     questions: "A few things need you",
     profile: "Your verified facts",
     materials: "Materials",
     connections: "Connections",
-    settings: "Your search preferences",
+    settings: "Settings",
   }[name];
   $("#subheading").textContent = {
     setup: "Set up once. Save as you go.",
     providers: "Choose who processes your application context.",
-    today: "A real record of what the worker submitted, held and discovered.",
+    today: "Here is what needs you today.",
+    applications: "Your application history and outcomes.",
     questions: "Resolve the exception. Let the next cycle do the rest.",
     profile: "Saved once, reused across applications. Unknown means unknown.",
     materials:
       "Reviewed sources guide the voice and facts in your applications.",
-    opportunities: "One queue across your connected platforms and employer sites.",
-    connections: "Job platforms, model providers and email for your private workspace.",
-    settings: "Choose your search boundaries. Throughput never overrides them.",
+    opportunities: "",
+    connections: "",
+    settings: "",
   }[name];
+  $("#finish-setup-panel").hidden = !!state?.settings.onboarding_complete && setupStep !== 6;
+  $("#profile-navigation").hidden = !["profile", "materials"].includes(name);
+  $("#settings-navigation").hidden = !["settings", "connections", "setup"].includes(name);
+  const group = ["materials"].includes(name) ? "profile" : ["connections", "setup"].includes(name) ? "settings" : name;
+  document.querySelectorAll(".rail [data-view]").forEach(button => button.setAttribute("aria-current", button.dataset.view === group ? "page" : "false"));
   if(modelRoute) { $("#model-connection-title").scrollIntoView({block:"start"}); $("#model-connection-title").focus({preventScroll:true}); }
 }
 const toolDestinations = [
@@ -553,7 +628,7 @@ const toolDestinations = [
     label: "Prepare drafts for review",
     description: "Prepare answers and documents while submissions stay paused.",
     aliases: "cover letter writing draft preview",
-    view: "today",
+    view: "opportunities",
     target: "#prepare-panel",
     common: true,
   },
@@ -569,7 +644,7 @@ const toolDestinations = [
     label: "Import a posting spreadsheet",
     description: "Check a CSV and review its postings before saving them.",
     aliases: "bulk jobs opportunities excel sheets import",
-    view: "today",
+    view: "opportunities",
     target: "#posting-import-panel",
     common: true,
   },
@@ -583,7 +658,7 @@ const toolDestinations = [
   },
   {
     label: "Overview",
-    description: "Browse your opportunity ledger and current progress.",
+    description: "Check your daily brief, attention list and latest activity.",
     aliases: "home today applications jobs search",
     view: "today",
     target: "#heading",
@@ -667,14 +742,14 @@ const toolDestinations = [
     description:
       "Name your search, status and sorting for one-click reopening.",
     aliases: "saved views favorites bookmarks prepared filters",
-    view: "today",
+    view: "opportunities",
     target: "#saved-views-panel",
   },
   {
     label: "Add a specific posting",
     description: "Save an official application link and posting details.",
     aliases: "job opportunity manual url company role",
-    view: "today",
+    view: "opportunities",
     target: "#job-form",
   },
   {
@@ -704,7 +779,7 @@ const toolDestinations = [
     label: "Review batch history",
     description: "Search complete run history and recorded progress.",
     aliases: "runs logs cycle preparation discovery errors",
-    view: "today",
+    view: "applications",
     target: "#run-history-panel",
   },
   {
@@ -715,10 +790,17 @@ const toolDestinations = [
     target: "#recruiting-feedback-panel",
   },
   {
+    label: "Check past applications in Gmail",
+    description: "Find application emails, including applications made outside this app.",
+    aliases: "already applied duplicate email inbox Optiver history receipt",
+    view: "connections",
+    target: "#prior-applications-panel",
+  },
+  {
     label: "Recruiting Insights",
     description: "Compare reviewed responses by role, company, source and resume PDF.",
     aliases: "analytics funnel interviews offers response rate outcomes",
-    view: "today",
+    view: "applications",
     target: "#recruiting-insights-panel",
   },
   {
@@ -732,7 +814,7 @@ const toolDestinations = [
     label: "Review discovery source health",
     description: "See which job sources were available or need another check.",
     aliases: "network failed boards sources unavailable search errors",
-    view: "today",
+    view: "opportunities",
     target: "#source-health-panel",
   },
   {
@@ -1325,7 +1407,7 @@ async function downloadPdf(button, feedback, path, filename) {
       headers: { "X-Hireme-Token": token },
     }).catch(() => {
       throw new Error(
-        "Cannot reach your application desk. Check that the dashboard is still running, then try again.",
+        "Cannot reach HireMeMaybe. Check that the dashboard is still running, then try again.",
       );
     });
     if (!response.ok) {
@@ -2491,7 +2573,7 @@ function renderQuestions() {
 $("#view-all-holds").onclick = async () => {
   $("#job-search").value = "";
   $("#status-filter").value = "blocked";
-  show("today");
+  show("opportunities");
   await loadLedger(true);
   scrollLedgerIntoView();
 };
@@ -2965,7 +3047,7 @@ function updateAliasEmpty() {
     rows.append(
       el(
         "p",
-        "No alternate names saved. Add one only when an employer uses more than one name.",
+        "No alternate names saved.",
         "help",
       ),
     );
@@ -3074,13 +3156,15 @@ function runRow(run) {
       Object.entries(data.reasons || {})
         .map(([key, value]) => `${key.replaceAll("_", " ")}: ${value}`)
         .join("; ");
+    const reasonNote = reason === run.status ? "" : reason;
     detail =
       data.mode === "discovery"
-        ? `Opportunity search · ${data.added || 0} new listings${data.sources_checked !== undefined ? ` · ${data.sources_checked} sources checked · ${data.sources_failed || 0} unavailable` : ""} · No submissions.${data.time_limit_reached ? " Search time limit reached." : ""} ${reason}`.trim()
+        ? `Opportunity search · ${data.added || 0} new listings${data.sources_checked !== undefined ? ` · ${data.sources_checked} sources checked · ${data.sources_failed || 0} unavailable` : ""} · No submissions.${data.time_limit_reached ? " Search time limit reached." : ""} ${reasonNote}`.trim()
         : data.mode === "prepare"
-          ? `Preparation batch · ${data.prepared ?? data.confirmed ?? 0} prepared · ${data.attempts || 0} attempted · No submissions. ${outcomes} ${reason}`.trim()
-          : `${run.submitted ?? data.confirmed ?? 0} submitted · ${data.attempts || 0} attempted. ${outcomes} ${reason}`.trim();
+          ? `Preparation batch · ${data.prepared ?? data.confirmed ?? 0} prepared · ${data.attempts || 0} attempted · No submissions. ${outcomes} ${reasonNote}`.trim()
+          : `${run.submitted ?? data.confirmed ?? 0} submitted · ${data.attempts || 0} attempted. ${outcomes} ${reasonNote}`.trim();
   } catch {}
+  if (detail.trim().toLowerCase() === run.status) detail = "";
   if (run.model_requests_used !== undefined)
     detail += ` · ${run.model_requests_used} model ${run.model_requests_used === 1 ? "request" : "requests"}`;
   row.append(
@@ -3100,6 +3184,18 @@ function runRow(run) {
   return row;
 }
 function renderRuns() {
+  const activity = $("#brief-activity");
+  activity.replaceChildren();
+  for (const run of state.runs.slice(0, 3)) {
+    const row = el("div", undefined, "brief-activity-row");
+    const full = runRow(run);
+    const [when, status, detail] = [...full.children];
+    const content = el("div");
+    content.append(el("strong", `Batch ${status.textContent.toLowerCase()}`), el("p", detail.textContent.slice(0, 160) + (detail.textContent.length > 160 ? "…" : ""), "help"));
+    row.append(when, content);
+    activity.append(row);
+  }
+  if (!state.runs.length) activity.append(el("p", "No batches recorded yet. Finish setup, then run a batch when you are ready.", "help"));
   if ($("#run-history-panel").open) loadRunHistory();
   const parent = $("#runs");
   parent.replaceChildren();
@@ -3107,7 +3203,7 @@ function renderRuns() {
     empty(
       parent,
       "Finish your setup and start a batch. This is where you’ll see what ran and how it went.",
-      "Your desk is ready for its first batch",
+      "Ready for your first batch",
     );
     return;
   }
@@ -3437,6 +3533,7 @@ function render() {
   renderMaterials();
   renderMail();
   window.recruitingFeedback?.render(state);
+  window.priorApplicationMail?.render(state);
   window.recruitingInsights?.render(state);
   window.historyImport?.render(state);
   renderDocumentStatus();
@@ -4544,6 +4641,8 @@ $("#mail-settings-form").onsubmit = async (event) => {
     await api("/api/settings", {
       gmail_reports: form.elements.gmail_reports.checked,
       gmail_verification: form.elements.gmail_verification.checked,
+      gmail_feedback: form.elements.gmail_feedback.checked,
+      gmail_prior_applications: form.elements.gmail_prior_applications.checked,
     });
     saved(form);
     blurForm(form);
@@ -5036,7 +5135,7 @@ function organizePreferences() {
   const sections = [
     [
       "Where and what you’re looking for",
-      "Choose the roles and places that fit your next step.",
+      "",
       [
         "roles",
         "seniority",
@@ -5051,7 +5150,7 @@ function organizePreferences() {
     ],
     [
       "Companies and boundaries",
-      "Keep your search focused and avoid applications you don’t want.",
+      "",
       [
         "skip_companies",
         "interview_companies",
@@ -5063,7 +5162,7 @@ function organizePreferences() {
     ],
     [
       "Your pace",
-      "Decide how often your desk works and how many applications it can submit. Targets are goals; ceilings are firm limits.",
+      "Targets are goals; maximums are firm limits.",
       [
         "schedule_hours",
         "cycle_timeout_seconds",
@@ -5076,7 +5175,7 @@ function organizePreferences() {
     ],
     [
       "Model usage limits",
-      "Limit the number of requests made to your chosen model. These counts include failed requests and writing reviews.",
+      "Includes failed requests and writing reviews.",
       [
         "max_attempts_per_cycle",
         "max_model_requests_per_cycle",
@@ -5086,17 +5185,15 @@ function organizePreferences() {
     ],
     [
       "Advanced browser settings",
-      "Change these only if you need a particular browser or already use signed-in employer portals.",
+      "",
       ["browser_channel", "signed_in_portals"],
     ],
   ];
   for (const [title, description, keys] of sections) {
     const group = el("fieldset", undefined, "settings-group"),
       fields = el("div", undefined, "form-grid");
-    group.append(
-      el("legend", title),
-      el("p", description, "help settings-description"),
-    );
+    group.append(el("legend", title));
+    if (description) group.append(el("p", description, "help settings-description"));
     for (const key of keys) {
       const input = grid.querySelector(`[name="${key}"]`);
       if (input)
@@ -5566,7 +5663,10 @@ function renderCycleFunnel() {
     const item=el("div");item.append(el("dt",label),el("dd",String(state.application_outcomes?.[key]??0)));outcomes.append(item);
   }
   const parent=$("#cycle-funnel"),run=state.cycle_funnel;parent.replaceChildren();
-  $("#cycle-funnel-status").textContent=run ? `${run.mode === "prepare" ? "Preparation" : "Live"} · ${run.status} · ${run.run_id.slice(0,8)}${run.reconciled ? ` · ${run.reconciled} outcome${run.reconciled === 1 ? "" : "s"} updated after review` : ""}` : "No recorded cycle yet.";
+  const status = run ? ({paused: "Paused", running: "Running", finished: "Finished", blocked: "Stopped for a blocker", interrupted: "Interrupted"}[run.status] || run.status.replaceAll("_", " ")) : "";
+  $("#cycle-funnel-status").textContent = run ? `${run.mode === "prepare" ? "Preparation" : "Applications"} · ${status}${run.reconciled ? ` · ${run.reconciled} outcome${run.reconciled === 1 ? "" : "s"} updated after review` : ""}` : "No recorded batch yet.";
+  $("#cycle-details").hidden = !run;
+  $("#cycle-record").textContent = run ? `Batch ID: ${run.run_id}` : "";
   if (!run) return;
   for (const [key,label] of [["discovered","New discoveries"],["eligible","Eligible"],["attempted","Browser attempted"],["prepared","Prepared"],["confirmed","Confirmed"],["blocked","Attempt blocked"],["uncertain","Uncertain"]]) {
     const item=el("div");item.append(el("dt",label),el("dd",run[key] == null ? "Not recorded" : String(run[key])));parent.append(item);

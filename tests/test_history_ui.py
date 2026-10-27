@@ -1,3 +1,4 @@
+from tests.dashboard_evidence import open_view
 import pytest
 
 from tests.test_history_api import history_server
@@ -10,7 +11,7 @@ def test_history_editor_repeat_entries_refresh_reconfirm_withdraw_and_literal_so
     with sync_playwright() as p:
         browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':900});errors=[]
         page.on('pageerror',lambda error:errors.append(str(error)))
-        page.goto(base+'/#token=fixture-capability');page.locator('[data-view=profile]').click()
+        page.goto(base+'/#token=fixture-capability');open_view(page, 'profile')
         expect(page.locator('#history-list')).to_contain_text('No structured entries saved')
         page.locator('#history-add-education').click()
         form=page.locator('#history-form')
@@ -44,7 +45,7 @@ def test_history_editor_repeat_entries_refresh_reconfirm_withdraw_and_literal_so
         with page.expect_response('**/api/history'):form.get_by_role('button',name='Save confirmed entry',exact=True).click()
         expect(form).to_be_hidden()
         assert len(store.history_entries())==2
-        page.reload();page.locator('[data-view=profile]').click()
+        page.reload();open_view(page, 'profile')
         school_row=page.locator(f'[data-history-id="{school["id"]}"]')
         school_row.get_by_role('button',name='Edit entry',exact=True).click()
         expect(form.locator('[name=confirmed]')).not_to_be_checked()
@@ -92,11 +93,11 @@ def test_history_holds_offer_direct_editor_in_action_desk_and_question_queue(sto
     with sync_playwright() as p:
         browser=p.chromium.launch();page=browser.new_page()
         page.goto(history_server+'/#token=fixture-capability')
-        page.locator('[data-view=opportunities]').click()
+        open_view(page, 'opportunities')
         page.locator('#jobs').get_by_role('button',name='Review education and employment').click()
         expect(page.locator('#history-panel')).to_be_visible()
         expect(page.locator('#history-add-education')).to_be_focused()
-        page.locator('[data-view=questions]').click()
+        open_view(page, 'questions')
         page.locator('#question-list').get_by_role('button',name='Review education and employment').click()
         expect(page.locator('#history-panel')).to_be_visible()
         browser.close()

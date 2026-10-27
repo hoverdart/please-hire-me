@@ -1,3 +1,4 @@
+from tests.dashboard_evidence import open_view
 import json
 from pathlib import Path
 import pytest
@@ -66,7 +67,7 @@ def test_dashboard_manual_actions_and_filters(store,job,tmp_path):
             except OSError:time.sleep(.1)
         with sync_playwright() as p:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':1280,'height':900})
-            page.goto(base+'/#token=fixture-capability')
+            page.goto(base+'/#token=fixture-capability');open_view(page,'opportunities')
             page.get_by_role('button',name='Applied manually: Acme',exact=False).click()
             page.locator('#jobs .state').filter(has_text='Applied manually').wait_for()
             page.locator('#status-filter').select_option('manually_applied')
@@ -78,7 +79,7 @@ def test_dashboard_manual_actions_and_filters(store,job,tmp_path):
             page.set_viewport_size({'width':390,'height':844})
             page.screenshot(path=str(tmp_path/'jobs-mobile.png'),full_page=True)
             assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
-            page.reload();page.locator('#jobs .state').filter(has_text='Don’t apply').wait_for()
+            page.reload();open_view(page,'opportunities');page.locator('#jobs .state').filter(has_text='Don’t apply').wait_for()
             browser.close()
     finally:process.terminate();process.join(5)
 

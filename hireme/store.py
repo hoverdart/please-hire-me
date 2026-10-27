@@ -77,6 +77,22 @@ CREATE TABLE IF NOT EXISTS recruiting_feedback (id TEXT PRIMARY KEY, owner_hash 
 CREATE INDEX IF NOT EXISTS recruiting_feedback_owner_state ON recruiting_feedback(owner_hash,state,received DESC);
 CREATE TABLE IF NOT EXISTS recruiting_sync (owner_hash TEXT PRIMARY KEY, watermark REAL NOT NULL,
  query TEXT NOT NULL, pending TEXT NOT NULL, next_page TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS prior_application_mail (id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL,
+ message_id TEXT NOT NULL, received TEXT NOT NULL, sender TEXT NOT NULL, subject TEXT NOT NULL,
+ excerpt TEXT NOT NULL, role_text TEXT NOT NULL, posting_keys TEXT NOT NULL, company_key TEXT NOT NULL,
+ category TEXT NOT NULL, sender_verified INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+ job_id TEXT, selected_posting_key TEXT, selected_role_key TEXT,
+ revision INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL,
+ UNIQUE(owner_hash,message_id));
+CREATE INDEX IF NOT EXISTS prior_application_mail_company ON prior_application_mail(owner_hash,company_key,state);
+CREATE TABLE IF NOT EXISTS prior_application_mail_companies (mail_id TEXT NOT NULL, company_key TEXT NOT NULL,
+ PRIMARY KEY(mail_id,company_key));
+CREATE TABLE IF NOT EXISTS prior_application_scans (owner_hash TEXT NOT NULL, company_key TEXT NOT NULL,
+ query TEXT NOT NULL, pending TEXT NOT NULL, next_page TEXT NOT NULL, started REAL NOT NULL,
+ completed REAL, updated TEXT NOT NULL, PRIMARY KEY(owner_hash,company_key));
+CREATE TABLE IF NOT EXISTS prior_application_company_names (company_key TEXT NOT NULL,
+ email_company_key TEXT NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL, checked TEXT NOT NULL,
+ PRIMARY KEY(company_key,email_company_key));
 CREATE TABLE IF NOT EXISTS materials (id TEXT PRIMARY KEY, hash TEXT NOT NULL, filename TEXT NOT NULL,
  original_name TEXT NOT NULL, media_type TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,
  confirmed INTEGER NOT NULL, role TEXT NOT NULL, revision INTEGER NOT NULL, created TEXT NOT NULL,
@@ -620,6 +636,8 @@ class Store:
 
     def _check_budget(self, job, s, *, application_id=None):
         self.check_job_decision(job["id"])
+        from .prior_applications import check_saved
+        check_saved(self,job)
         if self.db.execute("SELECT 1 FROM archived_applications WHERE job_id=? AND state!='prepared'",(job['id'],)).fetchone():
             raise Blocked('duplicate_or_uncertain','This requisition has a retained application from another worker')
         if application_id is not None:
@@ -707,6 +725,8 @@ class Store:
             if not s["live_enabled"] or not s["onboarding_complete"] or self.missing_setup():
                 raise Blocked("not_ready")
             job=json.loads(self.db.execute("SELECT payload FROM jobs WHERE id=?",(app["job_id"],)).fetchone()[0])
+            from .prior_applications import require_recent_check
+            require_recent_check(self,job)
             package=json.loads(app["package"])
             if digest(package)!=app["hash"]:
                 raise Blocked("package_tampered")

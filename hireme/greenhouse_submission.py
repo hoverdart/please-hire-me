@@ -376,8 +376,12 @@ class GreenhouseSubmission:
             _unsupported()
         self.confirmation_url = urljoin(state['url'], route['confirmationPath'])
         self.metadata = route.get('jobPost')
-        public = _https(self.metadata.get('public_url'), HOSTS) if isinstance(self.metadata, dict) else None
-        public_valid = bool(public and public.path == path and public.hostname == current.hostname and not public.query)
+        # The renderer may identify the same posting on its canonical boards
+        # host, with gh_jid repeating the requisition. Neither grants a new
+        # destination: the submit endpoint and region remain independently bound.
+        public = _https(self.metadata.get('public_url'), {canonical, 'job-' + canonical}) if isinstance(self.metadata, dict) else None
+        public_valid = bool(public and public.path == path
+                            and parse_qsl(public.query, keep_blank_values=True) in ([], [('gh_jid', identifier)]))
         if embedded and isinstance(self.metadata, dict):
             # The public URL may name the employer's custom careers page. It
             # is identity evidence only; it never gains navigation/write access.

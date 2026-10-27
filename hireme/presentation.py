@@ -13,6 +13,12 @@ QUIET_REASONS = NOT_MATCH_REASONS | WAIT_REASONS
 
 # (Reason label, next useful step). Unknown reasons keep their exact evidence in the ledger.
 REASON_GUIDANCE = {
+    'prior_application_company_review': ('The employer name needs checking', 'Retry the email scan or add a confirmed company alias. A board slug alone is not an employer name.'),
+    'prior_application_email': ('An earlier application was found in email', 'Review Past applications in Settings → Connections. Check the original message before applying again.'),
+    'prior_application_scan_incomplete': ('Email history still needs checking', 'Continue scanning past applications in Connections. This role stays held until the company scan completes.'),
+    'prior_application_mail_unavailable': ('Gmail history could not be checked', 'Check Gmail access in Connections and retry the scan. No application was attempted.'),
+    'prior_application_check_required': ('Check past applications first', 'Enable and complete the company email check in Connections before applying.'),
+    'prior_application_check_budget': ('Company email checks reached the batch limit', 'The next cycle can continue from saved scan progress. No application allowance was consumed by these checks.'),
     'seniority_mismatch': ('Outside your experience level', 'Your desk will keep looking for roles at your chosen level.'),
     'role_mismatch': ('Outside your chosen roles', 'Your desk will keep looking for your role keywords.'),
     'internship_out_of_scope': ('Internships are outside your search', 'Change seniority in Preferences if you want to include internships.'),

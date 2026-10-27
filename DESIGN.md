@@ -1,28 +1,22 @@
 ---
-name: Application desk
-description: A private applicant operations workspace with compact records and actionable exceptions.
+name: HireMeMaybe
+description: A private local job-search workspace with clear actions and evidence-led records.
 colors:
-  action: "#17695c"
-  action-hover: "#115247"
-  paper: "#f5f6f5"
+  action: "#3155d9"
+  action-hover: "#2344b7"
+  apricot: "#f6b089"
+  paper: "#f5f7fc"
   surface: "#fff"
-  ink: "#242c2a"
-  muted: "#606d68"
-  rule: "#dce2de"
-  rail: "#edf1ee"
-  selection: "#dce9e2"
-  selection-ink: "#154d43"
-  worker-ground: "#eaf0ec"
-  worker-rule: "#d5e0d8"
-  control-rule: "#cbd5ce"
-  secondary-hover: "#f0f3f1"
-  secondary-hover-rule: "#a8beb6"
-  focus: "#51a794"
+  ink: "#19233b"
+  muted: "#626d83"
+  rule: "#dfe5f0"
+  selected: "#eaf0ff"
+  secondary-hover-rule: "#a4b4e3"
   confirmed-ground: "#e9f3ed"
   confirmed-ink: "#337253"
   attention-ground: "#fbf0de"
   attention-ink: "#8d641f"
-  danger: "#ad3737"
+  danger: "#b73745"
 typography:
   headline:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
@@ -51,10 +45,9 @@ typography:
     fontSize: "12px"
     lineHeight: 1.5
 rounded:
-  control: "5px"
-  text-input: "8px"
+  panel: "12px"
+  control: "8px"
   record: "6px"
-  navigation: "4px"
 spacing:
   compact: "8px"
   control-gap: "12px"
@@ -76,16 +69,16 @@ components:
     rounded: "{rounded.control}"
     padding: "8px 13px"
   button-secondary-hover:
-    backgroundColor: "{colors.secondary-hover}"
+    backgroundColor: "{colors.paper}"
   text-input:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.text-input}"
+    rounded: "{rounded.control}"
     padding: "10px 12px"
   navigation-active:
-    backgroundColor: "{colors.selection}"
-    textColor: "{colors.selection-ink}"
-    rounded: "{rounded.navigation}"
+    backgroundColor: "{colors.selected}"
+    textColor: "{colors.action}"
+    rounded: "{rounded.control}"
     padding: "9px 10px"
   chip-confirmed:
     backgroundColor: "{colors.confirmed-ground}"
@@ -100,153 +93,164 @@ components:
   work-panel:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.control}"
+    rounded: "{rounded.panel}"
     padding: "20px"
-  worker-strip:
-    backgroundColor: "{colors.worker-ground}"
-    rounded: "{rounded.control}"
-    padding: "12px 16px"
+  form-group:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.panel}"
+    padding: "24px"
+  metric-group:
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
 ---
 
-# Design System: Application desk
+# Design System: HireMeMaybe
 
 ## Overview
 
-**Applicant operations workspace**
+**Creative North Star: "HireMeMaybe"**
 
-The private local dashboard organizes progress and actionable exceptions on neutral paper. White work surfaces, graphite type and restrained teal actions keep the applicant's records and next decision prominent. This is a framework-free HTML/CSS/JavaScript interface served by the local Python application.
+A quiet, practical job-search workspace with a little warmth. A pale blue canvas, white work surfaces and dark ink keep records readable; cobalt defines actions and selection, while apricot supplies a small warm accent. Compact typography, open space and separator rows give dense application evidence a clear hierarchy.
 
-The implementation lives in `hireme/static/style.css`, `index.html`, `app.js` and `workspace.js`. The README screenshot uses the synthetic desktop fixture; its origin and verification limits are recorded in [screenshot provenance](docs/images/application-desk-demo.provenance.md).
+This records the finished framework-free dashboard in `hireme/static/style.css`, `index.html`, `app.js` and `workspace.js`, including the final CSS cascade. The user-approved replacement identity is HireMeMaybe with Cobalt + Apricot; the Daily brief composition is recorded in the [surface brief](.impeccable/surfaces/daily-brief.md). The [README screenshot provenance](docs/images/application-desk-demo.provenance.md) identifies the synthetic source and verification limits.
 
 **Key Characteristics:**
 
-- Compact utility typography and labeled operational states.
-- Flat surfaces with quiet borders and separator disclosures.
-- Persistent worker controls and a single paginated ledger.
-- Adjacent desktop job detail and full-screen mobile detail.
-- Read-only generated revisions separated from reusable sources.
+- Cobalt actions and pale blue selection on white and cool paper.
+- Compact utility typography with explicit operational labels.
+- Soft panel corners, smaller controls and flat separator rows.
+- A white wordmark header and persistent desktop navigation.
+- Complete record identity, source provenance and visible uncertainty.
 
 ## Colors
 
-The palette combines neutral paper and graphite with one restrained teal action family; semantic green, amber and red communicate outcomes alongside text.
+Cool neutrals carry the workspace; cobalt is the strong action color, with apricot used sparingly in worker status.
 
 ### Primary
 
-- **Action Teal:** Primary buttons, links, checkbox accents and progress fills; its deeper hover shade signals the same action.
-- **Selection Teal:** Pale navigation selection with darker teal text; active navigation remains quieter than the primary action.
-- **Focus Teal:** The shared keyboard focus outline, distinct from selection.
+- **Cobalt Action:** Primary buttons, links, selected navigation, checkbox accents, caret and keyboard focus. Hover deepens the same blue.
+- **Pale Blue Selection:** Active navigation and contextual section controls; also the read-only sample banner.
+
+### Secondary
+
+- **Apricot:** Warm worker-status accent. The built implementation uses this sparingly; it does not fill every attention row.
 
 ### Neutral
 
-- **Paper / White Surface:** Application ground outside panels; white panels, fields and secondary buttons.
-- **Graphite Ink / Muted Graphite:** Headings and reading text; metadata and descriptions.
-- **Quiet Rule / Control Rule:** Panel borders and record separators; a stronger field boundary.
-- **Rail Ground / Worker Ground:** Subtle green neutrals separate navigation and worker status from white work surfaces.
+- **Cool Paper / White Surface:** Application ground and work panels, fields, header and secondary buttons.
+- **Dark Ink / Muted Ink:** Reading hierarchy, metadata and supporting descriptions.
+- **Quiet Rule:** Panel boundaries, field strokes and record separators.
 
-Confirmed and attention chips use their semantic ground/ink pairs in the frontmatter. Danger is reserved for destructive or error states. These are operational meanings, not decorative accents. Sidecar tonal strips are synthesized OKLCH preview ramps, not additional CSS tokens.
+Confirmed chips retain green; blocked, unknown and awaiting-verification chips retain amber. Danger marks errors and destructive actions. Written state labels carry meaning alongside color. The sidecar's synthesized OKLCH strips are preview ramps, not additional source tokens.
 
-**The Action Hierarchy Rule.** Use teal fill for the primary action and white bordered controls for supporting actions; preserve written status labels alongside state color.
+**The Action Hierarchy Rule.** Cobalt fill identifies primary actions; white bordered controls support them, and pale selection identifies location. Preserve written labels alongside semantic state color.
 
 ## Typography
 
-**Body and heading font:** The frontmatter's native UI stack. There is no imported display font or hero typography. The small serif monogram is a brand mark, not a heading system. Command blocks use native monospace.
-
-The ramp is compact and functional: page titles lead, section titles organize work, and metadata yields space to records. The native UI face serves utility reading rather than decorative display.
+**Body and heading font:** The native UI stack in the frontmatter. No imported display face is used. The text wordmark uses the same stack with a cobalt second half; it has no monogram in the current header. Command blocks retain native monospace.
 
 ### Hierarchy
 
-- **Headline:** Page title; reduces to (25px) at the small-screen breakpoint.
-- **Title:** Section heading; job-detail titles use the observed (20px) intermediate size.
-- **Body:** Reading text; introductory paragraphs commonly use a (65ch) maximum.
-- **Label:** Semibold buttons and record labels. Form labels commonly use weight (500); descriptions remain regular.
-- **Metadata:** Counts, dates, helper text and chips. Metric figures use (32px), weight (500), tabular numerals and tracking (-0.03em), reducing to (26px) on small screens.
+- **Headline:** Page titles; reduced to (25px) on small screens.
+- **Title:** Section titles. Job-dialog headings use the observed intermediate size (20px).
+- **Body:** Compact reading text. Introductory and job-reason paragraphs commonly cap at (65ch).
+- **Label:** Semibold actions and record labels; form labels commonly use weight (500).
+- **Metadata:** Dates, helper text, chips and compact count labels. Home count figures use (24px), weight (500), tabular numerals and tracking (-0.03em).
 
-**The Task Label Rule.** Visible task titles establish hierarchy. Decorative eyebrows and the uppercase brand caption remain hidden; uppercase ledger column headings are functional labels, not a decorative heading pattern.
+**The Task Label Rule.** Task titles and field labels establish hierarchy. Decorative eyebrows and brand captions remain hidden; uppercase ledger column headings remain functional labels.
 
 ## Layout
 
-The desktop shell has a sticky navigation rail (210px) and fluid content with horizontal padding (32px). The top bar precedes the page title and persistent worker strip. Repeated gaps and insets use the compact spacing steps in the frontmatter.
+The desktop shell places a sticky white header above a white navigation rail (210px) and fluid content with horizontal padding (32px). Header minimum height is (77px); the rail starts below it. Between (901px) and (1150px), the rail becomes (180px), content padding becomes (22px), and Jobs detail stacks below its list.
 
-Today joins three totals in one bordered surface. Priorities and connection health use a two-column grid (1.6fr / 1fr) with a (24px) gap, followed by cycle information, the shared ledger and activity. The ledger moves between Today and Jobs as the same DOM nodes; search, status, sort, source/destination/fit filters, saved-filter disclosure and pagination describe one queue.
+At (900px) and below, the rail becomes a wrapping horizontal navigation group and content padding becomes (20px). At (600px) and below, content padding becomes (14px), the header wraps into two rows, and its search control becomes an independently sized icon button (44px). The wordmark retains its own space when the notification count appears. Forms stack, ledger rows become labeled records, and full-width contextual controls can grow to fit. The account-transfer grid has an independent breakpoint (700px).
 
-Jobs uses a list/detail grid (1.15fr / 0.85fr), a (20px) gap and a detail minimum of (350px). Desktop detail is sticky (20px from the top). Between (901px) and (1150px), the rail narrows to (180px), padding becomes (22px), and Jobs stacks with static detail.
+Jobs uses an adjacent list/detail grid (1.15fr / 0.85fr), a gap (20px) and detail minimum width (350px). Desktop detail is sticky (20px from the top). At (900px) and below, the detail becomes a viewport-filling native modal with no corner rounding. Keep the same ledger and form nodes mounted so navigation preserves filters and drafts.
 
-At (900px) and below, navigation becomes a horizontal scrollable strip, content padding becomes (20px), Today stacks, and job details open as a viewport-filling modal without corner rounding. At (600px) and below, padding is (14px), totals become joined rows, forms become one column, table rows become labeled records, and worker controls share a compact row. The account-transfer grid independently stacks at (700px).
+Recurring section padding and gaps use the frontmatter's spacing steps. Supporting connection panels use padding (24px), reducing to (16px) on mobile. Reusable sources have separation (32px) from generated materials. Long identities and command text remain accessible through wrapping or keyboard-reachable horizontal scrolling.
 
-Complete-history outcome groups and reviewed progress groups use labeled definition lists with tabular counts. Each group keeps its own heading and explanation; the compact count grid wraps to the available width rather than introducing another card per metric. A supporting review action follows the reviewed group.
-
-Reusable sources has top separation (32px) from generated materials. Generated text belongs to read-only revision rows; upload and source approval belong to the subsequent group. Long records wrap, and command blocks scroll horizontally with keyboard focus.
+Outcome, recruiting-progress and batch-count groups use an auto-fitting definition-list grid with gaps (16px). Each cell can shrink below its usual minimum (120px) when its container is narrower: `minmax(min(100%, 120px), 1fr)`. Cells have zero minimum width, and labels and values wrap within their own cell. Standalone Applications section headings have top separation (32px), including Recent batches.
 
 ## Elevation & Depth
 
-The operations workspace is flat at rest. White surfaces, toned grounds and one-pixel rules provide grouping. Totals share separators instead of floating cards; desktop detail has no shadow. Modal dialogs retain a backdrop and shadow, and the sticky preferences save bar retains a soft shadow for its pinned position.
+White surfaces, toned backgrounds and one-pixel rules do most grouping. Work panels are flat, and the activity list sits directly on the canvas. Joined counts and job-detail groups use separators instead of a card for every item. Floating feedback, native dialogs and the pinned preference save bar retain soft shadows for positional separation.
 
 ### Shadow Vocabulary
 
-- **Modal separation** (`0 24px 80px #00000030`): Modal job and tool dialogs; suppressed for embedded desktop detail.
+- **Notification lift** (`0 8px 32px #19233b26`): Viewport feedback above the current workspace or modal.
+- **Modal separation** (`0 24px 80px #00000030`): Dialogs; suppressed for embedded desktop job detail.
 - **Pinned save bar** (`0 6px 24px #0000001a`): Sticky preference actions.
-
-**The Separator Disclosure Rule.** Within the job-detail boundary and the ledger's saved-filter disclosure, use headings, disclosures and top rules rather than another stack of rounded framed cards.
 
 ## Shapes
 
-Buttons, selects, textareas and primary work panels use the small control radius. Text inputs retain the more-specific text-input radius in the actual cascade; this is not a universal radius change. Chips and the ledger enclosure use the record radius; active navigation uses the navigation radius. Record separators and flattened detail groups are square. Modal job dialogs use (7px) corners on desktop and no rounding in the full-screen mobile state.
+Panels use the soft panel radius; controls use the smaller control radius. Status chips retain record corners. Separator rows are square. The existing desktop job-detail enclosure retains corners (5px), and its modal uses (7px) before becoming square and full-screen on mobile. Those detail exceptions are local implementation facts, not a second general panel scale.
 
 ## Components
 
 ### Buttons
 
-Compact, explicit actions. Primary controls use action/surface colors; secondary controls use white, graphite and a quiet border. Hover deepens teal or lightly tones a secondary surface. The shared focus outline is (3px) with a (3px) offset. Disabled controls use opacity (0.5) and a not-allowed cursor. Base buttons have a (44px) minimum height; navigation, worker-strip and section actions have observed minima of (42px), (38px) and (36px). Do not describe all controls as uniformly 44px.
+Explicit, compact actions with cobalt primary and white bordered secondary variants. Primary hover deepens cobalt; secondary hover tones the surface and strengthens its border. Keyboard focus uses a cobalt outline (3px), offset (3px). Disabled controls use opacity (0.5) and a not-allowed cursor. Base buttons have minimum height (44px), navigation (42px), desktop worker actions (38px) and section actions (36px); mobile worker actions return to (44px).
 
 ### Chips
 
-Written outcomes with a small current-color dot, weight (600), metadata sizing and record corners. Confirmed records use green; blocked, unknown and awaiting-verification records share amber. Labels carry meaning independently of color. Neutral and discovery states remain implemented, but their incidental blue ink is not palette authority.
+Written outcomes with a small current-color dot, metadata sizing and semibold weight. Confirmed uses green; uncertain and blocked states share amber. Color does not establish acceptance or capability. Neutral and discovery variants retain their observed source colors without becoming additional brand accents.
 
 ### Cards / Containers
 
-White work panels use one-pixel quiet rules, small control corners and no resting shadow. Typical padding is the section inset; connections use the group inset, reducing to the smaller inset on mobile. The ledger is one enclosure with toolbar, row and pagination separators. Joined totals are flush within their common border.
+White surfaces with a quiet border, soft panel corners and no resting shadow. Typical attention-panel padding is the section inset. The ledger is a single enclosure with toolbar, records and pagination separated by rules. Within job detail and saved-filter disclosures, headings and top rules replace nested framed cards.
 
 ### Inputs / Fields
 
-White fields with a stronger rule, visible labels, (10px 12px) padding and a (44px) minimum height. Textareas resize vertically and use line height (1.6). Checkbox and radio accents are teal. Read-only materials use labeled textareas and revision metadata, distinct from upload and approval forms. Source guards retain dirty or focused connection forms and in-memory prompt drafts during polling; images are not independent runtime proof of these guards.
+White fields with a visible rule, labels, padding (10px 12px) and minimum height (44px). Textareas resize vertically with line height (1.6). Checkboxes and radio controls use cobalt accents. Read-only generated materials retain revision metadata and copy/download actions, separate from reusable-source upload and approval. Dirty/focused connection forms and in-memory prompt drafts are preserved during polling.
+
+### Form Groups
+
+Bordered settings and facts fieldsets keep their native fieldset/legend semantics. Their legends sit inside the panel padding rather than cutting across its border: full-width floated legends have zero padding, bottom margin (18px), and wrapping text; subsequent children clear the float. The same inset treatment covers generic section fieldsets, including Context and writing. The group heading identifies the controls without repeating a generic description.
 
 ### Navigation
 
-Today, Jobs, Needs you, Materials, Profile and Connections form the workspace group; Preferences and Setup are separated utilities. Active items use pale selection ground and darker teal ink with weight (600); inactive navigation is quiet graphite. Hover uses a lightly toned surface. Mobile items remain reachable in the horizontal strip. Authored SVG stroke icons are (18px), with stroke width (1.5), rounded caps and joins; search shares this system. Icons supplement written labels.
+The main workspace group contains Home, Jobs, Applications, Needs you and Profile; Settings follows a separator. Profile exposes Your facts and Materials through contextual navigation. Settings exposes Connections, Search & automation and Setup. Active locations use cobalt text on pale blue with weight (600). Authored SVG icons use stroke width (1.5), rounded joins and caps, and size (18px); labels remain visible. On mobile, the main group wraps rather than overflowing offscreen.
 
-### Worker Strip and Connection Health
+### Worker Controls and Connections
 
-The strip stays visible across views, with written state, a small dot and Find opportunities / Resume or Pause / Run a batch controls. Its pale ground and rule separate operation from white tasks. Connection health uses separated text rows. Connections show switches, sign-in state and explicit automatic-search/native-application availability. A fixture's checked draft switch does not establish live capability.
+Worker state lives in the global header; Find opportunities, Resume/Pause and Run a batch remain available across views. Connections presents Gmail first, model access second and optional platforms inside a disclosure. Each platform keeps sign-in, enabled state and individual capability availability distinct. A sample switch or signed-in browser is not evidence of a validated application path.
 
-### Job Detail and Evidence
+### Notifications
 
-Opening a job shows its route, held requirements, materials, notes and evidence beside the desktop queue or in the mobile dialog. Internal groups use separators and native disclosures. Generated rows preserve read-only content, revision metadata and explicit copy/download actions, including a named tailored-resume download. Earlier revisions remain individually inspectable; generating another revision does not turn the displayed record into an editable source. Uncertain outcomes stay labeled and require verification; a local artifact must not imply accepted submission.
+Feedback is fixed to the viewport with a soft shadow, wrapping text and an explicit dismiss button. On desktop it sits at bottom right (24px); on small screens it spans the available width with insets (16px). The manual popover enters the top layer and moves under the active modal's ancestry so feedback remains available above native dialogs.
 
-### Record Review
+Ordinary messages dismiss after (6.5 seconds) of unpaused time; hover or keyboard focus pauses the timer. Errors remain until dismissed or replaced. The Notifications dialog retains the latest (20) messages in memory for the current page session, with timestamps. Showing feedback does not scroll or take focus; dismissing focused feedback restores its prior connected control with `preventScroll`. This history is not persisted to account storage.
 
-Review records use the existing separator rows and labeled native controls. Category and exact-record selection precede confirmation; the source message remains reachable through a written link. Beneath a potentially clipped native select, a wrapping summary repeats the selected company, role, attempt timestamp, recorded outcome and full identifier. The summary spans the form width, updates with the selection and uses a polite live region. Two-column review forms become a single column on small screens, while long identifiers can break within the row. Confirmation and dismissal retain the primary/secondary action hierarchy.
+### Batch Summary
 
-**The Visible Identity Rule.** A compact record picker must expose its complete selected identity in adjacent wrapping text before confirmation; a truncated option label is insufficient evidence for the decision.
+Latest batch shows compact mode and status text, such as Applications · Paused. The Batch details disclosure retains the full Batch ID; its identifier can wrap. Unknown counters remain Not recorded, separate from zero, and prepared, confirmed, uncertain and blocked totals remain distinct. Avoid repeating the same paused explanation beside that status.
 
-Motion is limited to control transitions (150ms, default CSS ease); no decorative animation is required. Reduced-motion preference disables transitions, animations and smooth scrolling.
+### Job Detail and Record Review
+
+Desktop and mobile detail show route, held requirements, materials, notes and evidence. Immutable generated revisions remain read-only and independently inspectable. Uncertain submissions remain explicitly labeled for verification.
+
+Before feedback confirmation, adjacent wrapping text repeats the selected company, role, attempt timestamp, recorded outcome and full identifier. It spans the review form, updates with selection and uses a polite live region. Exact identity remains available even when a native select clips its label. Confirmation and dismissal retain the primary/secondary hierarchy.
+
+**The Visible Identity Rule.** A compact record picker exposes its complete selected identity in wrapping text before confirmation; a truncated option label is insufficient decision evidence.
+
+Control transitions use (150ms) with default CSS ease. Reduced-motion preference disables transitions, animation and smooth scrolling.
 
 ## Do's and Don'ts
 
 ### Do:
 
-- **Do** use the recorded paper, white, graphite and teal hierarchy for new workspace surfaces.
-- **Do** pair every status color with a written outcome or availability label.
-- **Do** retain one paginated queue and the desktop/mobile detail relationship.
-- **Do** use separators inside job detail and the saved-filter disclosure.
-- **Do** preserve drafts and reading focus when refreshing operational data.
-- **Do** distinguish generated revisions from reusable upload and approval.
-- **Do** preserve visible keyboard focus and reduced-motion behavior.
+- **Do** use cobalt actions, pale blue selection, cool paper and white surfaces for workspace extensions.
+- **Do** pair status color with a written outcome or availability label.
+- **Do** preserve complete record identity, source provenance and immutable revision boundaries.
+- **Do** preserve drafts, reading focus and scroll position during operational refresh and feedback.
+- **Do** keep visible keyboard focus and reduced-motion behavior.
+- **Do** use contextual navigation for Materials and Connections within their current parent areas.
 
 ### Don't:
 
-- **Don't** add decorative eyebrows or replace the teal action palette.
-- **Don't** replace the authored SVG icon system with ornamental text glyphs.
-- **Don't** promote nested card stacks or hard offset illustration shadows into reusable workspace patterns.
-- **Don't** treat synthetic fixtures as proof of live connections, Pi operation or accepted submissions.
-
-Not canonized: incidental blue company/status text, placeholder/hover colors, older pale-blue utility grounds, isolated setup illustration styling and its hard offset shadow. These are residual details or one-off decoration, not instructions for future surfaces. Removed glyphs and nested frames are also excluded; final source removes or flattens them. This documentation does not claim other residual details were fixed.
+- **Don't** restore the superseded Application desk identity or teal action palette.
+- **Don't** promote hidden decorative headings, legacy illustration shadows or ornamental text glyphs into reusable patterns.
+- **Don't** replace authored SVG navigation icons with text glyphs.
+- **Don't** treat sample records or screenshots as live Gmail, employer-acceptance or physical Pi proof.
+- **Don't** turn generated revisions into editable reusable sources or silently retry uncertain applications.

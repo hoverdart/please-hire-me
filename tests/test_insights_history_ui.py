@@ -1,3 +1,4 @@
+from tests.dashboard_evidence import open_view
 import json
 from pathlib import Path
 
@@ -19,6 +20,7 @@ def test_insight_drilldown_and_reviewed_history_import(store,job,package,cohort,
         page.on('pageerror',lambda error:errors.append(str(error)))
         page.on('request',lambda request:mail_requests.append(request.url) if '/gmail/' in request.url or 'recruiting-feedback/sync' in request.url else None)
         page.goto(history_server+'/#token=fixture-capability')
+        open_view(page, 'applications')
         page.locator('#recruiting-insights-panel > summary').click()
         expect(page.locator('#insights-status')).to_contain_text('Saved data as of')
         metrics=page.locator('#insights-metrics')
@@ -49,7 +51,7 @@ def test_insight_drilldown_and_reviewed_history_import(store,job,package,cohort,
         page.unroute('**/api/recruiting-insights?*')
         page.locator('#insights-filters').get_by_role('button',name='Refresh insights').click()
         expect(metrics).to_contain_text('Interviews · 1')
-        page.locator('[data-view=profile]').click()
+        open_view(page, 'profile')
         page.locator('#history-import-panel > summary').click()
         candidates=page.locator('#history-import-candidates')
         expect(candidates).to_contain_text('Previous Employer')

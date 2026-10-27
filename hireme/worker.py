@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 import time
 import uuid
 from datetime import datetime
@@ -11,7 +12,16 @@ from .discovery import sweep_boards,sweep_lists,sweep_portals
 from .policy import eligible
 from .util import Blocked,now
 from .store import worker_lock
-from .job_holds import ready, hold, clear, safe_state as safe_job_state
+from .job_holds import ready, hold, clear, safe_state as safe_job_state, mail_check_failed, LEGACY_MAIL_FAILURES
+
+
+def _recorded_outcome(store, job_id, fallback):
+    # An adapter can fail after persisting an employer response. Cleanup and
+    # cancellation errors must not replace that response in counts or reports.
+    row = store.db.execute('SELECT state FROM applications WHERE job_id=?', (job_id,)).fetchone()
+    state = row[0] if row else None
+    if state == 'submitting': return 'unknown'
+    return state if state in {'confirmed', 'not_submitted', 'unknown', 'awaiting_verification'} else fallback
 
 
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
@@ -24,7 +34,10 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         rid=uuid.uuid4().hex; s=store.settings(); count=0; attempts=0; reasons={}; outcomes={}; start=time.monotonic();discovered_count=None;eligible_count=None
         store.run_deadline=start+s['cycle_timeout_seconds']
         store.active_run_id=rid
+        store.prior_mail_checked=set()
+        store.prior_mail_failures={}
         max_attempts=min(max_attempts or s['max_attempts_per_cycle'],s['max_attempts_per_cycle'])
+        store.prior_mail_check_limit=max_attempts
         store.db.execute("INSERT INTO runs(id,started,status,detail) VALUES(?,?,'running',?)",(rid,now(),json.dumps({'mode':'live' if live else 'prepare'})))
         try:
             from .workday_commission_state import bind_run
@@ -87,14 +100,37 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                         from .platform_browser import ConnectedBrowser
                         factory=ConnectedBrowser
                     else:factory=browser_factory
-                    with factory(store) as browser:
-                        for _,job in sorted(ranked,key=lambda x:x[0],reverse=True):
+                    with ExitStack() as browser_stack:
+                        browser=None
+                        # Failed checks rotate behind fresh candidates. Incomplete
+                        # scans retain priority so they make progress next cycle.
+                        failures=tuple(sorted(LEGACY_MAIL_FAILURES))
+                        waiting={row['job_id']:row['updated'] for row in store.db.execute(
+                            "SELECT job_id,reason,evidence,updated FROM job_holds WHERE reason LIKE 'prior_application_%' OR reason IN ("+','.join('?' for _ in failures)+')',failures)
+                            if mail_check_failed(row)} if live else {}
+                        if waiting:
+                            from .prior_applications import require_recent_check
+                            for _,job in ranked:
+                                if job['id'] not in waiting:continue
+                                try:require_recent_check(store,job)
+                                except Exception:pass
+                                else:waiting.pop(job['id'])
+                        for _,job in sorted(ranked,key=lambda x:(x[1]['id'] in waiting,waiting.get(x[1]['id'],''),-x[0])):
                             if count>=target or (max_attempts is not None and attempts>=max_attempts):break
                             store.checkpoint()
+                            attempt_started=False
+                            stage='screening'
                             try:
                                 store.check_job_decision(job['id'])
                                 store._check_budget(job,store.settings())
+                                if live:
+                                    stage='mail'
+                                    from .prior_applications import preflight
+                                    preflight(store,job)
+                                stage='browser_start'
+                                if browser is None:browser=browser_stack.enter_context(factory(store))
                                 attempts+=1
+                                attempt_started=True
                                 store.event('application_started',job['id'],{'run_id':rid,'attempt':attempts,'company':job['company'],'title':job['title']})
                                 outcome=browser.apply(job,live=live)
                                 clear(store,job['id'])
@@ -103,32 +139,46 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 store.db.execute('UPDATE jobs SET status=? WHERE id=? AND id NOT IN (SELECT job_id FROM job_decisions)',(outcome,job['id']))
                                 if outcome=='confirmed' or not live and outcome=='prepared':count+=1
                             except Blocked as e:
-                                # A post-click exception can leave a durable unknown
-                                # or verification-pending outcome. Reports must keep
-                                # that outcome instead of inviting another application.
-                                state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
-                                outcome=state[0] if state and state[0] in ('unknown','submitting','awaiting_verification') else 'blocked'
-                                if outcome=='submitting':outcome='unknown'
+                                if not attempt_started:
+                                    if stage=='browser_start':raise
+                                    reasons[e.reason]=reasons.get(e.reason,0)+1
+                                    if e.reason in ('paused','cycle_timeout'):raise
+                                    if e.reason=='prior_application_check_budget':break
+                                    store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail,'screening')
+                                    store.event('job_screening_blocked',job['id'],{'run_id':rid,'outcome':'blocked','reason':e.reason,'detail':e.detail})
+                                    continue
+                                outcome=_recorded_outcome(store,job['id'],'blocked')
                                 if outcome!='blocked':outcomes[outcome]=outcomes.get(outcome,0)+1
+                                if live and outcome=='confirmed':count+=1
                                 store.event('application_finished',job['id'],{'run_id':rid,'outcome':outcome,'reason':e.reason,'detail':e.detail})
                                 if e.reason=='model_budget_exhausted' and safe_job_state(store,job['id']):
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail)
                                 if e.reason in ('paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'):raise
                                 reasons[e.reason]=reasons.get(e.reason,0)+1
-                                # Unknown outcomes must retain their distinct state.
-                                state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
-                                if not state or state[0] not in ('unknown','submitting','awaiting_verification'):
+                                if safe_job_state(store,job['id']):
                                     store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail)
                             except Exception as e:
-                                store.checkpoint()
+                                if not attempt_started:
+                                    # Startup is a batch failure, not a per-job
+                                    # browser outcome. Preserve its original
+                                    # propagation and sanitized run reporting.
+                                    if stage=='browser_start':raise
+                                    store.checkpoint()
+                                    reason='prior_application_mail_unavailable' if stage=='mail' else 'browser_error'
+                                    reasons[reason]=reasons.get(reason,0)+1
+                                    store.block(job['id'],reason,type(e).__name__);hold(store,job,reason,stage='screening')
+                                    store.event('job_screening_blocked',job['id'],{'run_id':rid,'outcome':'blocked','reason':reason,'error':type(e).__name__})
+                                    continue
                                 # Browser call logs can contain filled values, signed
                                 # URLs and credentials. Persist the failure category,
                                 # never arbitrary exception text (also used in mail).
-                                state=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
-                                outcome=state[0] if state and state[0] in ('unknown','submitting','awaiting_verification') else 'error'
-                                if outcome=='submitting':outcome='unknown'
+                                outcome=_recorded_outcome(store,job['id'],'error')
                                 if outcome!='error':outcomes[outcome]=outcomes.get(outcome,0)+1
+                                if live and outcome=='confirmed':count+=1
                                 store.event('application_finished',job['id'],{'run_id':rid,'outcome':outcome,'error':type(e).__name__})
+                                # Record the known outcome before cancellation can
+                                # stop this run, including a pause during readback.
+                                store.checkpoint()
                                 reasons['browser_error']=reasons.get('browser_error',0)+1
                                 if safe_job_state(store,job['id']):
                                     store.block(job['id'],'browser_error',type(e).__name__);hold(store,job,'browser_error',type(e).__name__)
@@ -140,13 +190,15 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             store.recover()
             status='paused' if isinstance(e,Blocked) and e.reason=='paused' else 'blocked'
             reason=str(e) if isinstance(e,Blocked) else type(e).__name__
-            store.db.execute("UPDATE runs SET finished=?,status=?,submitted=?,detail=? WHERE id=?",(now(),status,count if live else 0,json.dumps({'confirmed':count if live else 0,'prepared':count if not live else 0,'attempts':attempts,'reason':reason,'mode':'live' if live else 'prepare','discovered':discovered_count,'eligible':eligible_count}),rid))
+            store.db.execute("UPDATE runs SET finished=?,status=?,submitted=?,detail=? WHERE id=?",(now(),status,count if live else 0,json.dumps({'confirmed':count if live else 0,'prepared':count if not live else 0,'attempts':attempts,'outcomes':outcomes,'reason':reason,'reasons':reasons,'mode':'live' if live else 'prepare','discovered':discovered_count,'eligible':eligible_count}),rid))
             raise
         finally:
             store.run_generation=None
             store.preparation_generation=None
             store.run_deadline=None
             store.active_run_id=None
+            store.prior_mail_checked=None
+            store.prior_mail_failures=None
             try:
                 from .reports import queue_report,flush_reports
                 queue_report(store,rid)

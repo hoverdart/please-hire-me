@@ -1,3 +1,4 @@
+from tests.dashboard_evidence import open_view
 import json
 import multiprocessing
 import socket
@@ -34,7 +35,8 @@ def test_connected_workspace_drafts_focus_filters_and_disabled_capabilities(dash
         expect(page.locator('.metric-top').get_by_text('Opportunities',exact=True)).to_be_visible()
         page.evaluate('window.scrollTo(0,0)')
         page.screenshot(path=f'/tmp/hireme-workspace-today-{width}.png',full_page=True)
-        page.locator('[data-view=connections]').click()
+        open_view(page, 'connections')
+        page.locator('#optional-connections > summary').click()
         connection=page.locator('[data-connection-id=handshake]')
         expect(connection).to_contain_text('bulk collection')
         expect(connection.get_by_role('button',name='Search now')).to_be_disabled()
@@ -42,7 +44,7 @@ def test_connected_workspace_drafts_focus_filters_and_disabled_capabilities(dash
         page.evaluate('refresh()');expect(enabled).to_be_checked();expect(enabled).to_be_focused()
         page.evaluate('window.scrollTo(0,0)')
         page.screenshot(path=f'/tmp/hireme-workspace-connections-{width}.png',full_page=True)
-        page.locator('[data-view=opportunities]').click()
+        open_view(page, 'opportunities')
         page.locator('#connection-source').select_option('handshake')
         expect(page.locator('#jobs .opportunity-details')).to_have_count(1)
         page.locator('#jobs .opportunity-details').click()
@@ -54,12 +56,12 @@ def test_connected_workspace_drafts_focus_filters_and_disabled_capabilities(dash
         page.locator('#job-dialog').evaluate('dialog=>dialog.scrollTop=0')
         page.screenshot(path=f'/tmp/hireme-workspace-jobs-{width}.png',full_page=width>900)
         page.locator('#close-job-dialog').click()
-        page.locator('[data-view=materials]').click()
+        open_view(page, 'materials')
         expect(page.locator('#artifact-library textarea')).to_have_count(1)
         page.evaluate('window.scrollTo(0,0)')
         page.screenshot(path=f'/tmp/hireme-workspace-materials-{width}.png',full_page=True)
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-        page.locator('[data-view=opportunities]').click();page.locator('#jobs .opportunity-details').click()
+        open_view(page, 'opportunities');page.locator('#jobs .opportunity-details').click()
         expect(draft).to_have_value('My unsaved narrative prompt for this employer.')
         assert not errors
         browser.close()
@@ -110,7 +112,7 @@ def test_human_verification_notice_and_preferences_preserve_drafts(dashboard,wid
         assert notice.locator('img,script').count()==0
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.screenshot(path=f'/tmp/hireme-human-wait-{width}.png')
-        page.locator('[data-view=settings]').click()
+        open_view(page, 'settings')
         wait=page.locator('#settings-form [name=human_verification_wait_seconds]')
         wait.fill('60');page.locator('#settings-form button[type=submit]').click()
         expect(page.locator('#notice')).to_contain_text('background')
