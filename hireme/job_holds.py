@@ -133,6 +133,8 @@ def dependency(store, job, kind, reason=None):
         keys={'summer_2027_locations','school_locations','locations','roles','seniority','skip_companies','interview_companies','company_aliases','min_fit_score','max_years_required','min_annual_usd','min_hourly_usd'} if kind=='eligibility' else {'prior_employers','contextual_preferences','tailored_writing','cover_letters','signed_in_portals','employer_accounts','gmail_verification'}
         data['settings']={k:v for k,v in store.settings().items() if k in keys}
     if kind in {'information','mapping','documents'}:
+        from .answers import AUTOMATIC_ANSWER_VERSION
+        data['automatic_answers']=AUTOMATIC_ANSWER_VERSION
         data['history']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed FROM confirmed_history ORDER BY id')]
         data['answers']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM answers ORDER BY id')]
         data['templates']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM templates ORDER BY id')]

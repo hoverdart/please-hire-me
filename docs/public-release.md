@@ -1,6 +1,6 @@
 # Release status
 
-The configured version is **0.5.0rc7**, a public release candidate for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
+The configured development version is **0.5.0rc8.dev1**. The latest published [public release candidate is 0.5.0rc7](https://github.com/hoverdart/please-hire-me/releases/tag/v0.5.0rc7), for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
 
 ## Capability boundaries
 

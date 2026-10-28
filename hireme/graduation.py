@@ -37,12 +37,19 @@ def matches(value,bounds):
     if not re.fullmatch(r'20\d{2}(?:-(?:0[1-9]|1[0-2]))?',value):raise Blocked('graduation_window_review','Confirm a graduation date with sufficient precision')
     point=endpoint(value[:4]) if len(value)==4 else (int(value[:4])*12+int(value[5:])-1,)*2
     lo,hi=bounds
-    outcomes=[(lo is None or p>=lo) and (hi is None or p<=hi) for p in point]
-    if outcomes[0]!=outcomes[1]:raise Blocked('graduation_window_review','A month is required to compare this graduation cutoff')
-    return outcomes[0]
+    if (lo is not None and point[1]<lo) or (hi is not None and point[0]>hi):return False
+    if (lo is None or point[0]>=lo) and (hi is None or point[1]<=hi):return True
+    raise Blocked('graduation_window_review','A month is required to compare this graduation cutoff')
 
 def qualifies(value, text):
     """Compare discrete named graduation seasons without filling their gaps."""
+    month=r'(?:'+ '|'.join(sorted(MONTHS,key=len,reverse=True))+r')'
+    named=re.search(r'graduat\w*.{0,60}?\b('+month+r')\.?\s+(20\d{2})\s+or\s+('
+                    +month+r')\.?(?:\s*/\s*('+month+r')\.?)?\s+(20\d{2})\s*[?*]?\s*$',text,re.I)
+    if named:
+        alternatives=[(named[1],named[2]),(named[3],named[5])]
+        if named[4]:alternatives.append((named[4],named[5]))
+        return any(matches(value,endpoint(name+' '+year)) for name,year in alternatives)
     seasonal=re.search(r'graduat\w*.{0,80}?\b(?:either\s+)?(Spring|Summer|Fall|Autumn)\s+(20\d{2})\s+or\s+(Spring|Summer|Fall|Autumn)\s+(20\d{2})\b',text,re.I)
     if seasonal:
         seasons={'spring':(3,5),'summer':(6,8),'fall':(9,12),'autumn':(9,12)}

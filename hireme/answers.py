@@ -6,6 +6,8 @@ from .util import Blocked, digest
 from .field_context import binding as contextual_binding, save_binding, present, field_context,validate_numeric
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
+AUTOMATIC_ANSWER_VERSION = 2
+
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
 RULES = [
     (r"^first and last legal name\*?$", "full_name"),
@@ -338,7 +340,14 @@ def _discovery_answer(label, options, context):
     preferred=['companywebsite','companycareerssite','companycareerspage'] if source.startswith(('gh:','ash:','lv:','portal:')) else ['jobboard','onlinejobboard']
     company=normal(context.get('company',''))
     if company and source.startswith(('gh:','ash:','lv:','portal:')):
-        preferred=[company+'careerswebsite',company+'careerssite',company+'careerspage',*preferred]
+        # ATS boards sometimes abbreviate their employer in the source choice:
+        # "grow-therapy" offers "Grow website/careers page". Match only an
+        # exact website/careers label using the full employer or its first
+        # named word, never an incidental employer mention or a referral.
+        first=normal(re.split(r'[\s_-]+',context.get('company','').strip())[0])
+        brands=[company]+([first] if len(first)>=4 and first!=company else [])
+        preferred=[brand+kind for brand in brands for kind in
+                   ('careerswebsite','careerssite','careerspage','websitecareerspage','website')]+preferred
     unions=[x for x in options if re.search(r'(?:/|\bor\b)\s*(?:online )?job board\s*$',x,re.I)]
     for candidate in preferred+['other']:
         matches=[x for x in options if normal(x)==candidate]
@@ -364,6 +373,17 @@ def _local_campus_answer(store,label):
 
 def _current_enrollment(store,label,options):
     """Enrollment follows from a confirmed university and today's date within its confirmed dates."""
+    if re.fullmatch(r'(?:still student|are you (?:currently |still )?a student)[? *]*',label.strip(),re.I):
+        if options and options.count('Yes')!=1:return None
+        from .util import now
+        month=now()[:7]
+        for entry in store.history_entries('education'):
+            values=entry['values']
+            if (values.get('current') is True and values.get('start') and values.get('expected_end')
+                    and values['start']<=month<=values['expected_end']):
+                return {'value':'Yes','provenance':{'current_student_history':{
+                    'id':entry['id'],'revision':entry['revision']}}}
+        return None
     if not re.fullmatch(r'(?:are you )?currently enrolled in (?:a |an )?(?:degree program|undergraduate (?:degree )?program|bachelor.s (?:degree )?program)(?: at (?:a |an )?(?:registered |accredited )?(?:college or university|university or college|university|college))?[? *]*',label.strip(),re.I):return None
     if options and options.count('Yes')!=1:return None
     facts=store.facts();school=facts.get('school');start=facts.get('college_start');graduation=facts.get('graduation')
