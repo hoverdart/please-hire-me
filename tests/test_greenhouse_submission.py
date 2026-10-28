@@ -643,6 +643,98 @@ def test_education_uses_only_a_correlated_official_id_for_the_approved_school(st
     assert guard.grant(*request(data, url=endpoint))
 
 
+def ethnicity_helper_fixture(store, helper_value, *, race=None, required=False):
+    browser, job, package, aid, state, data = setup_native(store)
+    h = field(10, 'hispanic_ethnicity', 'Are you Hispanic/Latino?', kind='combobox',
+              options=['Yes', 'No', 'Decline To Self Identify'])
+    h['required'] = required
+    fields = [(h, helper_value)]
+    if race:
+        fields.append((field(11, 'race', 'Race', kind='combobox',
+                            options=['Asian', 'Hispanic or Latino', 'Decline To Self Identify']), race))
+    for f, value in fields:
+        qid = store.ask(job['id'], job['host'], f['label'], f['options'], field=f, context=job)
+        store.answer_question(qid, value)
+        package['answers'].append(resolve(store, job['host'], f, context=job))
+        package['steps'][0]['fields'].append(f)
+    aid = store.prepare(job, package)
+    state['loaders'][ROUTE]['jobPost']['eeoc_sections'] = [{'questions': [{
+        'label': 'Race', 'required': required, 'fields': [{'name': 'race',
+        'type': 'multi_value_single_select', 'values': [
+            {'label': 'Asian', 'value': '2'}, {'label': 'Hispanic or Latino', 'value': '4'},
+            {'label': 'Decline To Self Identify', 'value': '8'}]}]}]}]
+    return browser, job, package, aid, state, data
+
+
+@pytest.mark.parametrize('helper,race,expected', [
+    ('No', None, None), ('No', 'Asian', '2'),
+    ('Yes', None, '4'), ('Decline To Self Identify', None, '8'),
+])
+def test_native_ethnicity_helper_uses_only_the_renderers_race_encoding(store, helper, race, expected):
+    browser, job, package, aid, state, data = ethnicity_helper_fixture(store, helper, race=race)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    if expected is not None:
+        data['job_application']['race'] = expected
+    assert 'hispanic_ethnicity' not in guard.expected
+    store.begin_submit(aid)
+    forged = json.loads(json.dumps(data))
+    forged['job_application']['hispanic_ethnicity'] = helper
+    assert not guard.grant(*request(forged))
+    assert guard.grant(*request(data))
+
+
+@pytest.mark.parametrize('helper,race', [('Yes', 'Asian'), ('No', 'Hispanic or Latino'),
+                                      ('No', 'Decline To Self Identify'), ('Decline To Self Identify', 'Asian')])
+def test_conflicting_ethnicity_and_race_choices_stay_held(store, helper, race):
+    browser, job, package, aid, _, _ = ethnicity_helper_fixture(store, helper, race=race)
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('helper', ['Yes', 'Decline To Self Identify'])
+@pytest.mark.parametrize('marker', ['', ' ✱', '*'])
+def test_required_race_is_satisfied_only_by_an_explicit_terminal_helper_choice(store, helper, marker):
+    browser, job, package, aid, _, _ = ethnicity_helper_fixture(store, helper, required=True)
+    # Resolve the marked field again so its approval is bound to that label.
+    answer=next(a for a in package['answers'] if a['field']['ref']['id']=='hispanic_ethnicity')
+    answer['field']['label']+=marker
+    if marker:
+        qid=store.ask(job['id'],job['host'],answer['field']['label'],answer['field']['options'],field=answer['field'],context=job)
+        store.answer_question(qid,helper)
+        answer.update(resolve(store,job['host'],answer['field'],context=job))
+        aid=store.prepare(job,package)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    assert guard.expected['race'] == ('4' if helper == 'Yes' else '8')
+
+
+def test_no_ethnicity_choice_does_not_supply_a_missing_required_race(store):
+    browser, job, package, aid, _, _ = ethnicity_helper_fixture(store, 'No', required=True)
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+
+
+def test_ethnicity_helper_cannot_borrow_a_missing_or_changed_native_race_definition(store):
+    browser, job, package, aid, state, _ = ethnicity_helper_fixture(store, 'Yes')
+    state['loaders'][ROUTE]['jobPost']['eeoc_sections'][0]['questions'][0]['fields'][0]['values'][1]['value'] = '44'
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+
+
+@pytest.mark.parametrize('change',['missing_race','duplicate_race','integer_value','extra_option','duplicate_helper'])
+def test_ethnicity_helper_requires_its_exact_unique_native_definition(store,change):
+    browser, job, package, aid, state, _ = ethnicity_helper_fixture(store,'Yes')
+    meta=state['loaders'][ROUTE]['jobPost']
+    if change=='missing_race':meta['eeoc_sections']=[]
+    elif change=='duplicate_race':meta['eeoc_sections']*=2
+    elif change=='integer_value':meta['eeoc_sections'][0]['questions'][0]['fields'][0]['values'][1]['value']=4
+    else:
+        if change=='duplicate_helper':package['answers'].append(dict(package['answers'][-1]))
+        else:package['answers'][-1]['field']['options'].append('Other')
+        aid=store.prepare(job,package)
+    with pytest.raises(Blocked):GreenhouseSubmission(browser,job,package,aid)
+
+
 def test_one_same_application_native_email_verification_grant_after_a_delay(store):
     browser, job, package, aid, _, data = setup_native(store)
     guard = GreenhouseSubmission(browser, job, package, aid)
