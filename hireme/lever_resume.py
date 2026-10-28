@@ -10,10 +10,31 @@ from .util import Blocked
 HOSTS={'jobs.lever.co','jobs.eu.lever.co'}
 
 
+def parsed_urls(links):
+    """Reviewed parseResume.js mapping; later links replace earlier categories.
+
+    Public source SHA256 (2026-10-27 PDT):
+    b114955d021349e3d56975ae7f625e66341928d69c15d7f4a5aff654383c0ef8.
+    These are parser observations, never approved applicant facts.
+    """
+    if not isinstance(links,list) or len(links)>100:return {}
+    values={}
+    for link in links:
+        if not isinstance(link,dict):return {}
+        domain=link.get('domain');url=link.get('url')
+        if (domain is not None and not isinstance(domain,str)
+                or not isinstance(url,str) or not 0<len(url)<=2000 or re.search(r'[\x00-\x1f\x7f]',url)):
+            return {}
+        name=next((name for name in ('LinkedIn','Twitter','Quora','GitHub')
+                   if domain and name.lower() in domain.lower()),'Other')
+        values['urls['+name+']']=url
+    return values
+
+
 class LeverResume:
     def __init__(self,browser,document):
         self.browser=browser;self.document=document;self.request_keys=set();self.storage_id=None
-        self.used=False;self.parsed_company=None
+        self.used=False;self.parsed_company=None;self.parsed_urls={}
         account=browser.page.locator('input[type=hidden][name=accountId]')
         storage=browser.page.locator('input[type=hidden][name=resumeStorageId]')
         if account.count()!=1 or storage.count()!=1:raise Blocked('upload_verification_failed','Lever resume controls are unavailable')
@@ -67,27 +88,30 @@ class LeverResume:
             company=result.get('position')
             self.parsed_company=(company if isinstance(company,str) and 0<len(company)<=1000
                                  and not re.search(r'[\x00-\x1f\x7f]',company) else None)
+            self.parsed_urls=parsed_urls(result.get('links',[]))
 
-    def clear_unapproved_company(self,fields,answers,job_id):
-        """Preserve an initially blank optional company after native parsing.
+    def clear_unapproved_prefills(self,fields,answers,job_id):
+        """Preserve initially blank optional fields after native parsing.
 
-        Official parseResume.js fills org from position. Clear only that exact
-        acknowledged parser value; existing entries and approved answers stay
-        under the ordinary review and final-payload guards.
+        Clear only exact values from the acknowledged parser response in its
+        reviewed org/URL fields. Existing entries, required fields and approved
+        answers stay under the ordinary review and final-payload guards.
         """
-        if self.parsed_company is None:return
-        if any(ref.get('name')=='org' for answer in answers
-               for ref in answer['field'].get('refs',[answer['field'].get('ref',{})])):return
-        fields=[f for f in fields if f.get('ref',{}).get('name')=='org']
-        if (len(fields)!=1 or fields[0].get('type')!='text' or fields[0].get('required')
-                or fields[0].get('value','')!=''):return
-        control=self.browser._control(fields[0])
-        if control.input_value()!=self.parsed_company:return
-        self.verify()
-        if self.browser.write_boundary:self.browser.write_boundary.check()
-        control.fill('')
-        if control.input_value():raise Blocked('field_verification_failed',fields[0]['label'])
-        self.browser.store.event('parser_prefill_cleared',job_id,{'field':'org','document_hash':self.document['hash']})
+        prefills={**self.parsed_urls,**({'org':self.parsed_company} if self.parsed_company is not None else {})}
+        approved={ref.get('name') for answer in answers
+                  for ref in answer['field'].get('refs',[answer['field'].get('ref',{})])}
+        for name,value in prefills.items():
+            if name in approved:continue
+            matches=[f for f in fields if f.get('ref',{}).get('name')==name]
+            if (len(matches)!=1 or matches[0].get('type')!='text'
+                    or matches[0].get('required') or matches[0].get('value','')!=''):continue
+            control=self.browser._control(matches[0])
+            if control.input_value()!=value:continue
+            self.verify()
+            if self.browser.write_boundary:self.browser.write_boundary.check()
+            control.fill('')
+            if control.input_value():raise Blocked('field_verification_failed',matches[0]['label'])
+            self.browser.store.event('parser_prefill_cleared',job_id,{'field':name,'document_hash':self.document['hash']})
 
     def verify(self):
         storage=self.browser.page.locator('input[type=hidden][name=resumeStorageId]')

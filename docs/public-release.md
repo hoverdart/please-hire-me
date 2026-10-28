@@ -1,6 +1,6 @@
 # Release status
 
-The configured development version is **0.5.0rc8.dev1**. The latest published [public release candidate is 0.5.0rc7](https://github.com/hoverdart/please-hire-me/releases/tag/v0.5.0rc7), for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
+The configured release-candidate version is **0.5.0rc8**. Published candidates are available from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases), for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
 
 ## Capability boundaries
 
@@ -35,6 +35,8 @@ The [worker contract](worker-contract.md) describes execution and recovery in mo
 Every live Ashby application uses one exact final request. An optional human-verification wait starts disabled, requires a visible browser and lasts at most 600 seconds. It lets the applicant complete an exposed challenge within that existing attempt. The worker does not solve challenges, authorize unrelated writes or restart an uncertain attempt. Passive transparent verification frames can remain pending while the worker waits for a receipt. Desktop availability and employer acceptance require separate verification.
 
 **Greenhouse and Lever** require the approved PDF and a matching upload acknowledgement before final submission. Lever's resume-parser grant is limited to that PDF and the rendered employer account. Its location picker requires an exact approved suggestion and committed location object. Temporary official Greenhouse posting-read failures use bounded delayed retries; restricted or unrecognized responses require review before filling fields.
+
+Lever parser output does not become approved facts. Initially blank optional company or URL fields are restored to blank only when their value exactly matches the acknowledged parser response. Existing entries, required fields, changed values and approved answers remain protected. Ashby waits for its native form's exact attachment acknowledgement before starting answer saves; storage accepting file bytes alone is insufficient.
 
 **NVIDIA Workday** requires current native definitions, approved values, correlated save responses and fresh owned-record readbacks. Installing the controller does not establish employer acceptance or enable ordinary scheduling. Unknown definitions, unsupported steps and unreadable saved values remain held. Employer application history supplements local duplicate/company-limit checks, and interrupted commissioning recovers paused. Other Workday tenants remain manual.
 

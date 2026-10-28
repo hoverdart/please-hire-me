@@ -1,6 +1,7 @@
 """Compound saves must carry exactly the confirmed history, never an edit prefix."""
 import json
 import calendar
+import re
 from pathlib import Path
 
 import pytest
@@ -96,8 +97,8 @@ def test_changed_native_schema_is_rejected(key,value):
 @pytest.mark.parametrize('mode,record,renderer',
     [(mode,record,'repeat') for mode in ['live','prepare','rejected_ack','unknown_control','changed_title']
      for record in ['current','completed','optional_unknown']]+
-    [('live','current',renderer) for renderer in ['single','dates_only','two_rows','delete_extra','restored']]+
-    [(mode,'current','repeat') for mode in ['changed_month','outside_control']])
+    [('live','current',renderer) for renderer in ['single','dates_only','two_rows','delete_extra','restored','delayed_attachment']]+
+    [(mode,'current','repeat') for mode in ['changed_month','outside_control','attachment_rejected']])
 def test_browser_compound_history_suppresses_partial_edits_and_requires_exact_ack(store,monkeypatch,mode,record,renderer):
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     changes=({'current':False,'expected_end':None,'end':'2026-05'} if record=='completed' else
@@ -163,11 +164,20 @@ root.lastElementChild.onclick=()=>{items.push({});const row=template.cloneNode(t
 document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch(endpoint,{method:'POST',body:JSON.stringify(NATIVE)});document.body.innerHTML='Thank you for applying. Your application was received.'};
 ''' .replace('INITIAL',json.dumps(expected if renderer=='restored' else [{},{}] if renderer=='delete_extra' else [{}])).replace('SCHOOLQUERY',json.dumps(SCHOOL_QUERY)).replace('QUERY',json.dumps(QUERY)).replace('VARS',json.dumps(variables)).replace('PATH',json.dumps(PATH)).replace('REQ',json.dumps(REQ)).replace('SCHOOL',json.dumps(SCHOOL)).replace('NATIVE',json.dumps(native))+'</script></body></html>'
     html=documents.html(html)
+    if renderer=='delayed_attachment':
+        html=html.replace("await send({operationName:'ApiSetFormValueToFile'", "await new Promise(r=>setTimeout(r,500));await send({operationName:'ApiSetFormValueToFile'")
+        html=re.sub(r"(?m)^send\('ApiJobPosting'.*$",lambda match:'setTimeout(()=>{'+match[0]+'},250);',html)
     with Browser(store) as browser:
+        if renderer=='delayed_attachment':
+            wait=browser.page.wait_for_load_state
+            monkeypatch.setattr(browser.page,'wait_for_load_state',lambda state,*a,**kw:None if state=='networkidle' else wait(state,*a,**kw))
         class Route:
             def __init__(self,r):self.route=r;self.request=r.request
             def abort(self):self.route.abort()
             def continue_(self,**changes):
+                if (mode=='attachment_rejected' and '/api/non-user-graphql' in self.request.url
+                        and json.loads(self.request.post_data or '{}').get('operationName')=='ApiSetFormValueToFile'):
+                    self.route.fulfill(status=500,content_type='application/json',body='{"errors":[{"message":"Synthetic attachment failure"}]}');return
                 if documents.respond(browser,self.route,changes):return
                 data=json.loads(self.request.post_data);op=data['operationName']
                 if op=='ApiJobPosting':result={'data':{'jobPosting':{'id':REQ,'applicationForm':official()}}}
@@ -176,6 +186,7 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch
                     if any(v['path']==PATH for v in saves):violations.append('Post-ACK school lookup')
                     result={'data':{'result':[{'id':'canonical-id','name':SCHOOL}]}}
                 elif op=='ApiSetFormValue':
+                    if renderer=='delayed_attachment' and documents.file is None:violations.append('Text save before attachment acknowledgement')
                     if store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone():violations.append('Save after final intent')
                     v=data['variables'];saves.append(v)
                     if v['path']==PATH:assert v['value']==expected
@@ -190,8 +201,8 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch
             if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
             else:browser._route(Route(route))
         browser.page.route('**/*',serve)
-        if mode in {'unknown_control','changed_title','rejected_ack','changed_month','outside_control'}:
-            reason={'unknown_control':'unsupported_widget','changed_title':'form_changed','rejected_ack':'ashby_draft_save_failed','changed_month':'unsupported_widget','outside_control':'unsupported_widget'}[mode]
+        if mode in {'unknown_control','changed_title','rejected_ack','changed_month','outside_control','attachment_rejected'}:
+            reason={'unknown_control':'unsupported_widget','changed_title':'form_changed','rejected_ack':'ashby_draft_save_failed','changed_month':'unsupported_widget','outside_control':'unsupported_widget','attachment_rejected':'upload_verification_failed'}[mode]
             with pytest.raises(Blocked,match=reason):browser.apply(job,live=True)
             assert not final
             assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
@@ -200,8 +211,9 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch
     assert not violations
     if mode not in {'unknown_control','changed_title','changed_month','outside_control'}:
         # One discovery search, restoration to blank, then native selection.
-        if renderer=='repeat':assert searches==[SCHOOL,'',SCHOOL]
+        if renderer=='repeat':assert searches==([SCHOOL,''] if mode=='attachment_rejected' else [SCHOOL,'',SCHOOL])
         assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='ashby_school_lookup'").fetchone()[0]==1
     assert all(v['value']==expected for v in saves if v['path']==PATH)
     if mode=='live':assert len([v for v in saves if v['path']==PATH])==1
     if mode=='prepare':assert not saves and not documents.operations
+    if mode=='attachment_rejected':assert not saves
