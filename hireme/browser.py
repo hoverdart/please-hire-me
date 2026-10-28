@@ -861,6 +861,9 @@ class Browser:
 
     def _snapshot(self):
         fields=self.page.evaluate(SNAPSHOT,CONTROLS)
+        if self.ashby_draft:
+            from .ashby_education import snapshot
+            fields=snapshot(self,fields)
         # Custom dropdown option enumeration is a read task, before any personal value is filled.
         for f in fields:
             self.store.checkpoint()
@@ -1034,6 +1037,9 @@ class Browser:
 
     def _fill(self,answer):
         f=answer['field']; value=answer['value']; controls=self.page.locator(CONTROLS)
+        if f['type']=='ashby_education':
+            from .ashby_education import fill
+            return fill(self,answer)
         el=self._control(f)
         if f['type']=='select':
             from .ats_widgets import select_exact
@@ -1065,9 +1071,10 @@ class Browser:
             # The official response already acknowledged this exact approved
             # value. Re-entering it can race React's blur/debounce autosaves.
             return
+        if key:draft.saved.discard(key)
         self._fill(answer)
         if not key and not field.get('ashby_texting_consent'):return
-        self._control(field).blur()
+        if field['type']!='ashby_education':self._control(field).blur()
         deadline=time.monotonic()+20
         def acknowledged():
             if key:return key in draft.saved and not draft.pending
@@ -1105,6 +1112,9 @@ class Browser:
             self.store.event('form_changed',self.current_host,{'before':self._shape(remaining(fields)),'after':self._shape(remaining(fresh))})
             raise Blocked('form_changed')
         for a in answers:
+            if a['field']['type']=='ashby_education':
+                from .ashby_education import verify
+                verify(self,a);continue
             f=a['field']; el=self._control(f); value=a['value']
             if f['type']=='select':actual=el.locator('option:checked').inner_text().strip()
             elif f['type']=='radio':

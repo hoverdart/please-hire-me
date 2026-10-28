@@ -78,6 +78,7 @@ class AshbyDraft:
         self.package=None;self.remaining=0
         self.postings={};self.submission_contexts={};self.locations={};self.schools={};self.navigation_url=job['url']
         self.texting_contexts={};self.texting=None
+        self.school_searches={};self.education_lookups={};self.education_edited=set()
 
     def bind_page(self, url):
         """Follow a tenant rename only after the same official posting was read.
@@ -97,6 +98,7 @@ class AshbyDraft:
                 raise Blocked('unexpected_redirect','The renamed Ashby posting is unverified')
             self.forms=self.postings[tenant];self.identity=(tenant,self.identity[1])
             self.locations={};self.schools={}
+            self.school_searches={};self.education_lookups={};self.education_edited=set()
         self.navigation_url='https://jobs.ashbyhq.com/'+match[1]+'/'+match[2]
 
     def _remember_form(self, form, *, acknowledged=False):
@@ -235,6 +237,7 @@ class AshbyDraft:
                 observed.setdefault(name,set()).add(identifier)
             if len(self.schools.keys()|observed.keys())>500:return
             for name,identifiers in observed.items():self.schools.setdefault(name,set()).update(identifiers)
+            self.school_searches[variables['name']]=observed
         except (ValueError,TypeError,AttributeError,KeyError):return
 
     def enable(self, browser, answers, package):
@@ -261,7 +264,10 @@ class AshbyDraft:
             if normalize(metadata.get('title',''))!=normalize(field['label']):
                 raise Blocked('ashby_draft_unsupported','Ashby question identity changed')
             value=answer['value'];kind=field['type']
-            if kind=='combobox' and metadata.get('type')=='EducationHistory':
+            if kind=='ashby_education':
+                from .ashby_education import wire
+                value=wire(self,field,metadata,value)
+            elif kind=='combobox' and metadata.get('type')=='EducationHistory':
                 # This renderer saves one structured entry even when it only
                 # asks for a university. Additional history fields need their
                 # own approved values and a reviewed encoding.
@@ -314,7 +320,7 @@ class AshbyDraft:
             # React suppresses autosaves when a restored value already equals
             # the server's savedValue. The verified official form response is
             # an acknowledgement of that exact value; a DOM prefill is not.
-            if path in form['values'] and same(form['values'][path],value):saved.add(key)
+            if key not in self.education_edited and path in form['values'] and same(form['values'][path],value):saved.add(key)
         if len(texting)>1:raise Blocked('ashby_draft_unsupported','Multiple Ashby texting controls need review')
         from .ashby_texting import AshbyTexting
         consent=AshbyTexting(self,texting[0],answers,grants) if texting else None

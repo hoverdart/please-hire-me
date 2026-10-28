@@ -72,6 +72,7 @@ Set it up for the jobs you want and the way you want to apply:
 - **Your information:** upload your own resume, confirm extracted facts and save answers you're comfortable reusing. Missing personal details stay unanswered until you supply them.
 - **Your writing:** add project context and writing samples in **Profile → Materials**, then approve how each source can be used. Style examples help with wording; they don't establish qualifications.
 - **Your resumes:** confirm education and employment in **Your facts**, including complete experience lines under each role. Enable **Tailored resumes** to select relevant lines for each posting and generate a versioned PDF for supported browser applications. Your original stays available.
+- **Education forms:** confirmed education records can fill supported Ashby history sections, including degree, major, month/year dates and current-study status. Unknown required details stay queued for review.
 - **Your experience:** use **Import history from your resume** in Your facts to review exact PDF excerpts and proposed employment or education fields. Correct them and explicitly confirm each entry; previews do not become facts automatically.
 - **Your pace and budget:** choose the model connection, batch interval, company limits and attempt/request ceilings. Start paused and review prepared drafts before enabling submissions.
 
