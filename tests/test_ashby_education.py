@@ -165,8 +165,11 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch
 ''' .replace('INITIAL',json.dumps(expected if renderer=='restored' else [{},{}] if renderer=='delete_extra' else [{}])).replace('SCHOOLQUERY',json.dumps(SCHOOL_QUERY)).replace('QUERY',json.dumps(QUERY)).replace('VARS',json.dumps(variables)).replace('PATH',json.dumps(PATH)).replace('REQ',json.dumps(REQ)).replace('SCHOOL',json.dumps(SCHOOL)).replace('NATIVE',json.dumps(native))+'</script></body></html>'
     html=documents.html(html)
     if renderer=='delayed_attachment':
-        html=html.replace("await send({operationName:'ApiSetFormValueToFile'", "await new Promise(r=>setTimeout(r,500));await send({operationName:'ApiSetFormValueToFile'")
-        html=re.sub(r"(?m)^send\('ApiJobPosting'.*$",lambda match:'setTimeout(()=>{'+match[0]+'},250);',html)
+        needle="await send({operationName:'ApiSetFormValueToFile'"
+        assert html.count(needle)==1
+        html=html.replace(needle,"await new Promise(r=>setTimeout(r,500));"+needle)
+        html,count=re.subn(r"(?m)^send\('ApiJobPosting'.*$",lambda match:'setTimeout(()=>{'+match[0]+'},250);',html)
+        assert count==1
     with Browser(store) as browser:
         if renderer=='delayed_attachment':
             wait=browser.page.wait_for_load_state
