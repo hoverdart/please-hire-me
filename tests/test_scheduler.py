@@ -258,6 +258,60 @@ def test_systemd_loaded_timer_without_saved_unit_is_not_treated_as_no_schedule(s
     with pytest.raises(ValueError,match='cannot be verified'):check_owner(store)
 
 
+@pytest.mark.parametrize('case', ['valid','changed','extra_command','world_writable','wrong_owner','symlink','timer','other'])
+def test_systemd_allows_only_verified_vendor_timeout_dropin(store,tmp_path,monkeypatch,case):
+    from hireme import scheduler
+    from hireme.pi import service_units
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/systemctl' if name=='systemctl' else None)
+    directory=tmp_path/'.config/systemd/user';directory.mkdir(parents=True)
+    for name,content in service_units(store,tmp_path).items():(directory/name).write_text(content)
+    vendor=tmp_path/'10-timeout-abort.conf'
+    contents='# vendor comment\n[Service]\nTimeoutStopFailureMode=abort\n'
+    if case=='changed':contents=contents.replace('abort','kill')
+    if case=='extra_command':contents+='ExecStart=/unrelated/program\n'
+    vendor.write_text(contents);vendor.chmod(0o666 if case=='world_writable' else 0o644)
+    if case=='symlink':
+        target=tmp_path/'real.conf';vendor.rename(target);vendor.symlink_to(target)
+    monkeypatch.setattr(scheduler,'SYSTEMD_TIMEOUT_DROPIN',vendor)
+    monkeypatch.setattr(scheduler,'_trusted_vendor_parent',lambda _:True)
+    real_fstat=scheduler.os.fstat
+    inode=vendor.stat().st_ino
+    def fstat(fd):
+        info=real_fstat(fd)
+        if info.st_ino==inode:
+            return SimpleNamespace(st_mode=info.st_mode,st_uid=501 if case=='wrong_owner' else 0,st_size=info.st_size)
+        return info
+    monkeypatch.setattr(scheduler.os,'fstat',fstat)
+    def run(args,**kwargs):
+        if 'show' not in args:return systemd_fixture(args,tmp_path)
+        unit=args[-1]
+        dropin=(str(tmp_path/'other.conf') if case=='other' else str(vendor))
+        values={'DropInPaths':dropin} if unit.endswith('.timer' if case=='timer' else '.service') else {}
+        return systemd_fixture(args,tmp_path,change=values)
+    monkeypatch.setattr(scheduler.subprocess,'run',run)
+    result=status(store)
+    assert result['matches_applicant'] is (case=='valid')
+    if case!='valid':assert result['error']
+
+
+@pytest.mark.parametrize('case', ['valid','world_writable','wrong_owner','symlink'])
+def test_vendor_dropin_rejects_untrusted_parent(tmp_path,monkeypatch,case):
+    from hireme.scheduler import _trusted_vendor_parent
+    parent=tmp_path/'service.d';parent.mkdir()
+    if case=='world_writable':parent.chmod(0o777)
+    if case=='symlink':
+        target=tmp_path/'real';parent.rename(target);parent.symlink_to(target,target_is_directory=True)
+    real_lstat=Path.lstat
+    def lstat(path):
+        info=real_lstat(path)
+        mode=info.st_mode if path==parent else info.st_mode & ~0o022
+        return SimpleNamespace(st_mode=mode,st_uid=501 if case=='wrong_owner' and path==parent else 0)
+    monkeypatch.setattr(Path,'lstat',lstat)
+    assert _trusted_vendor_parent(parent/'10-timeout-abort.conf') is (case=='valid')
+
+
 @pytest.mark.parametrize('unit,line', [('service','ExecStart=/other/program run'),('timer','OnUnitInactiveSec=1h')])
 def test_systemd_status_rejects_multiple_commands_or_intervals(store,tmp_path,monkeypatch,unit,line):
     from hireme.pi import service_units

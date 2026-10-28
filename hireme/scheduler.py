@@ -5,6 +5,7 @@ import plistlib
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from pathlib import Path
 from .util import private_dir
 
 LABEL='com.pleasehireme.worker.v3'
+SYSTEMD_TIMEOUT_DROPIN=Path('/usr/lib/systemd/user/service.d/10-timeout-abort.conf')
 
 
 def _launchd_arguments(output):
@@ -182,6 +184,30 @@ def _query_schedule(args):
         raise ValueError('The system scheduler could not be checked. Check your OS services or use .venv/bin/python -m hireme daemon.') from error
 
 
+def _trusted_vendor_parent(path):
+    # A writable ancestor could replace an otherwise root-owned file.
+    for directory in path.parents:
+        info=directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode&0o022:return False
+    return True
+
+
+def _trusted_timeout_dropin(path):
+    """Accept only the known vendor timeout policy, not arbitrary overrides."""
+    try:
+        if not _trusted_vendor_parent(path):return False
+        descriptor=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        with os.fdopen(descriptor,'rb') as stream:
+            info=os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_mode&0o022
+                    or info.st_size>8192):return False
+            contents=stream.read(8193).decode('utf-8')
+        lines=[line.strip() for line in contents.splitlines() if line.strip() and not line.lstrip().startswith(('#',';'))]
+        return lines==['[Service]','TimeoutStopFailureMode=abort']
+    except (OSError,UnicodeError,ValueError):
+        return False
+
+
 def _systemd_loaded_matches(directory):
     """Reject stale, replaced or overridden units before trusting saved files."""
     properties=['LoadState','FragmentPath','NeedDaemonReload','DropInPaths']
@@ -197,9 +223,12 @@ def _systemd_loaded_matches(directory):
             if not separator or key not in fields or key in values:return False
             values[key]=value
         expected=directory/unit
+        dropins=values.get('DropInPaths')
+        allowed_dropins=(not dropins or suffix=='service' and dropins==str(SYSTEMD_TIMEOUT_DROPIN)
+                         and _trusted_timeout_dropin(SYSTEMD_TIMEOUT_DROPIN))
         if (set(values)!=set(fields) or expected.is_symlink()
                 or values['LoadState']!='loaded' or values['NeedDaemonReload']!='no'
-                or values['DropInPaths'] or values['FragmentPath']!=str(expected)
+                or not allowed_dropins or values['FragmentPath']!=str(expected)
                 or (suffix=='timer' and values['Unit']!='please-hire-me-worker.service')):
             return False
     return True

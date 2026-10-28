@@ -21,6 +21,8 @@ from .util import Blocked, application_identity, company_key, company_normalizer
 MAX_MESSAGES = 25
 FRESH_SECONDS = 15 * 60
 MAX_QUERY_BYTES = 1200
+AUTO_SCAN_SECONDS = 30
+AUTO_SCAN_PAGES = 25
 QUERY = 'in:anywhere -from:me {"your application" "you applied" "you have applied" "thank you for applying" "thanks for applying"}'
 PRIOR = re.compile(r'\b(?:your application|you(?: have)? applied|thank you for applying|thanks for applying|received your application|reviewing your application)\b', re.I)
 APPLIED = re.compile(r'\b(?:you(?: have)? applied|thank you for applying|thanks for applying|(?:received|reviewing) your application|your application (?:has been|was) (?:received|submitted))\b',re.I)
@@ -267,7 +269,7 @@ def _query(store, company):
     return query
 
 
-def scan(store, *, company=None, restart=False, client_factory=None):
+def scan(store, *, company=None, restart=False, client_factory=None, work_deadline=None):
     """One resumable page, including archived, spam and trash mail without an initial date cutoff."""
     from .store import worker_lock
     if company is not None and (not isinstance(company,str) or not 1<=len(company.strip())<=200 or not company_key(company)): raise ValueError('Choose a company name with letters or digits, up to 200 characters')
@@ -310,6 +312,7 @@ def scan(store, *, company=None, restart=False, client_factory=None):
                 if not isinstance(next_page,str) or len(next_page)>4096: raise ValueError('Invalid cursor')
                 save()
             processed=added=0;deadline=time.monotonic()+30
+            if work_deadline is not None:deadline=min(deadline,work_deadline)
             for identity in list(pending):
                 if time.monotonic()>=deadline: break
                 valid_owner()
@@ -377,10 +380,20 @@ def _preflight(store,job):
     check_saved(store,job)
     try: require_recent_check(store,job);return
     except Blocked: pass
-    result=scan(store,company=job['company'])
-    check_saved(store,job)
-    if result['more_available']: raise Blocked('prior_application_scan_incomplete','More application mail remains to scan for this company. Continue the scan before applying.')
-    require_recent_check(store,job)
+    deadline=time.monotonic()+AUTO_SCAN_SECONDS
+    for _ in range(AUTO_SCAN_PAGES):
+        store.checkpoint()
+        if time.monotonic()>=deadline:break
+        result=scan(store,company=job['company'],work_deadline=deadline)
+        check_saved(store,job)
+        if not result['more_available']:
+            try:require_recent_check(store,job);return
+            except Blocked as error:
+                # Only a successfully completed but stale scan can start an
+                # overlapping catch-up here. Other failures must remain held.
+                row=store.db.execute('SELECT completed FROM prior_application_scans WHERE owner_hash=? AND company_key=?',(_owner(store),scope)).fetchone()
+                if error.reason!='prior_application_check_required' or not row or row['completed'] is None or time.time()-row['completed']<=FRESH_SECONDS:raise
+    raise Blocked('prior_application_scan_incomplete','More application mail remains to scan for this company. Continue the scan before applying.')
 
 
 def _evidence_companies(store,row):

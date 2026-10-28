@@ -244,6 +244,75 @@ def test_fresh_scan_age_is_measured_from_first_page(store,optiver):
     prior.require_recent_check(store,optiver)
 
 
+def test_worker_catches_up_multiple_pages_after_slow_historical_scan(store,optiver,package,monkeypatch):
+    from hireme.worker import cycle
+    # Preserve an unrelated uncertain application throughout both cycles.
+    other=dict(store.db.execute('SELECT payload FROM jobs WHERE id!=? LIMIT 1',(optiver['id'],)).fetchone())
+    other=json.loads(other['payload'])
+    aid=store.prepare(other,{**package,'job_id':other['id'],'url':other['url']})
+    store.begin_submit(aid);store.finish(aid,'unknown');original=store.application_record(aid)
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver)
+    def search(**kwargs):
+        service.lists.append(kwargs);page=int(kwargs.get('pageToken','0'))
+        pages=([['h1'],['h2']] if not kwargs['q'].startswith('after:') else
+               [[f'catch-{i}' for i in range(25)],[f'catch-{i}' for i in range(25,35)]])
+        return Response({'messages':[{'id':item} for item in pages[page]],
+                         **({'nextPageToken':str(page+1)} if page+1<len(pages) else {})})
+    def receipt(**kwargs):
+        return Response(mail(optiver,identity=kwargs['id'],body='We received your application for the Data Scientist position at Optiver.'))
+    service.list=search;service.get=receipt
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    monkeypatch.setattr(prior,'AUTO_SCAN_PAGES',1)
+    first=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    assert first['attempts']==0 and first['reasons']['prior_application_scan_incomplete']==1
+    store.db.execute('UPDATE prior_application_scans SET started=?',(time.time()-prior.FRESH_SECONDS-60,))
+    monkeypatch.setattr(prior,'AUTO_SCAN_PAGES',25)
+    second=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    catchup=[options for options in service.lists if options['q'].startswith('after:')]
+    assert second['attempts']==1 and len(catchup)==2 and catchup[1]['pageToken']=='1'
+    assert store.application_record(aid)==original
+
+
+def test_catchup_page_and_time_budgets_leave_remaining_work_held(store,optiver,monkeypatch):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    prior.scan(store,company='Optiver',client_factory=factory)
+    old=time.time()-prior.FRESH_SECONDS-60
+    store.db.execute('UPDATE prior_application_scans SET started=?,completed=?',(old,old))
+    service.pages=[[],[],[]]
+    monkeypatch.setattr(prior,'GmailClient',factory);monkeypatch.setattr(prior,'AUTO_SCAN_PAGES',2)
+    with pytest.raises(Blocked,match='prior_application_scan_incomplete'):prior.preflight(store,optiver)
+    row=store.db.execute('SELECT next_page,completed FROM prior_application_scans').fetchone()
+    assert row['next_page']=='2' and row['completed'] is None and len(service.lists)==3
+    with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)
+    monkeypatch.setattr(prior,'AUTO_SCAN_SECONDS',0)
+    with pytest.raises(Blocked,match='prior_application_scan_incomplete'):prior.preflight(store,optiver)
+    assert len(service.lists)==3 and not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+def test_worker_checks_multiple_full_history_pages_in_one_bounded_preflight(store,optiver,monkeypatch):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver)
+    service.pages=[[f'history-{i}' for i in range(25)],['history-25']]
+    def receipt(**kwargs):
+        service.reads.append(kwargs)
+        return Response(mail(optiver,identity=kwargs['id'],body='We received your application for the Data Scientist position at Optiver.'))
+    service.get=receipt
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    prior.preflight(store,optiver)
+    assert len(service.lists)==2 and service.lists[1]['pageToken']=='1'
+    assert len(service.reads)==26 and not prior.matches(store,optiver)
+    prior.require_recent_check(store,optiver)
+
+
+def test_worker_rechecks_mail_holds_between_pages(store,optiver,monkeypatch):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[['receipt'],['later']]
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    with pytest.raises(Blocked,match='prior_application_email'):prior.preflight(store,optiver)
+    assert len(service.lists)==1 and prior.matches(store,optiver)
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
 def test_disconnecting_gmail_cannot_reuse_a_recent_check(store,optiver):
     store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[]]
     prior.scan(store,company='Optiver',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
@@ -271,6 +340,7 @@ def test_incomplete_company_check_does_not_open_browser_or_pin_next_cycle(store,
     from hireme.worker import cycle
     store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[],[]]
     monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    monkeypatch.setattr(prior,'AUTO_SCAN_PAGES',1)
     def forbidden(*args):pytest.fail('Incomplete mailbox scan opened a browser')
     result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=forbidden)
     assert result['attempts']==0 and result['reasons']['prior_application_scan_incomplete']==1
@@ -572,6 +642,35 @@ def test_upgrade_scans_spam_and_trash_from_full_history_across_pages(store,optiv
     prior.require_recent_check(store,optiver)
 
 
+@pytest.mark.parametrize('interrupted_read',[False,True])
+def test_upgrade_restarts_in_progress_old_query_without_reusing_its_cursor(store,optiver,monkeypatch,interrupted_read):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[['old-first'],['old-second']]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    original_get=service.get
+    if interrupted_read:
+        def fail(**kwargs):raise RuntimeError('Temporary Gmail read failure')
+        service.get=fail
+    with monkeypatch.context() as old:
+        old.setattr(prior,'QUERY',prior.QUERY.replace('in:anywhere ',''))
+        if interrupted_read:
+            with pytest.raises(Blocked,match='prior_application_mail_unavailable'):
+                prior.scan(store,company='Optiver',client_factory=factory)
+        else:
+            assert prior.scan(store,company='Optiver',client_factory=factory)['more_available']
+    old_scan=store.db.execute('SELECT pending,next_page,completed FROM prior_application_scans').fetchone()
+    assert old_scan['completed'] is None and old_scan['next_page']=='1'
+    assert json.loads(old_scan['pending'])==(['old-first'] if interrupted_read else [])
+    service.get=original_get;service.pages=[['new-spam'],['new-trash']]
+    first=prior.scan(store,company='Optiver',client_factory=factory)
+    assert first['more_available'] and 'pageToken' not in service.lists[-1]
+    assert 'after:' not in service.lists[-1]['q'] and 'in:anywhere' in service.lists[-1]['q']
+    assert service.lists[-1]['includeSpamTrash'] is True
+    assert not prior.scan(store,company='Optiver',client_factory=factory)['more_available']
+    assert service.lists[-1]['pageToken']=='1' and service.lists[-1]['includeSpamTrash'] is True
+    assert {row['message_id'] for row in prior.matches(store,optiver)} >= {'new-spam','new-trash'}
+    prior.require_recent_check(store,optiver)
+
+
 @pytest.mark.parametrize('body',[
     'If you have applied for the {title} position at Optiver, we will review your application.',
     'We have not received your application for the {title} position at Optiver.',
@@ -619,6 +718,7 @@ def test_incomplete_mail_scan_continues_before_continuously_fresh_lower_ranked_r
     monkeypatch.setattr('hireme.worker.eligible',lambda job,*args:(90 if job['id']==optiver['id'] else 60,{}))
     service=Mailbox(optiver);service.pages=[[],[]]
     monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    monkeypatch.setattr(prior,'AUTO_SCAN_PAGES',1)
     first=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
     assert first['attempts']==0 and first['reasons']['prior_application_scan_incomplete']==1
     assert store.db.execute('SELECT state FROM report_outbox ORDER BY rowid DESC LIMIT 1').fetchone()[0]=='suppressed'
@@ -638,6 +738,7 @@ def test_roles_at_one_company_share_the_actual_scan_failure_and_one_check_slot(s
         if not incomplete:raise Blocked('gmail_reconnect_required')
         return SimpleNamespace(email='test@candidate.invalid',service=service)
     monkeypatch.setattr(prior,'GmailClient',client)
+    monkeypatch.setattr(prior,'AUTO_SCAN_PAGES',1)
     result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
     reason='prior_application_scan_incomplete' if incomplete else 'prior_application_mail_unavailable'
     assert result['attempts']==0 and result['reasons']=={reason:2} and len(calls)==1
