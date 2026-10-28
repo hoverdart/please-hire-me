@@ -521,12 +521,54 @@ class GreenhouseSubmission:
         for section in self.metadata.get('eeoc_sections') or []:
             for question in section.get('questions', []):
                 name = question['fields'][0]['name']
-                value = answer(name, bool(question.get('required')), question)
+                # The reviewed renderer's So component displays an ethnicity
+                # helper but writes only race: Yes -> 4, decline -> 8, and No
+                # reveals the race picker. No standalone helper is transmitted.
+                helpers = [(i, a) for i, a in enumerate(answers)
+                           if 'hispanic_ethnicity' in _identity(a['field'])] if name == 'race' else []
+                if len(helpers) > 1:
+                    _unsupported()
+                helper = helpers[0] if helpers else None
+                helper_value = None
+                if helper:
+                    f = helper[1]['field']
+                    def normalize(v):
+                        if not isinstance(v, str):
+                            _unsupported()
+                        return ' '.join(v.casefold().split())
+                    if (helper[0] in consumed or _identity(f) != {'hispanic_ethnicity'}
+                            or normalize(f.get('label', '')).rstrip(' *✱?') != 'are you hispanic/latino'
+                            or len(f.get('options', [])) != 3
+                            or {normalize(v) for v in f.get('options', [])} != {'yes', 'no', 'decline to self identify'}):
+                        _unsupported()
+                    helper_value = normalize(helper[1]['value'])
+                    if helper_value not in {'yes', 'no', 'decline to self identify'}:
+                        _unsupported()
+                    choices = question['fields'][0].get('values', [])
+                    if (question['fields'][0].get('type') != 'multi_value_single_select'
+                            or not isinstance(choices, list) or not 2 <= len(choices) <= 500
+                            or not all(isinstance(v, dict) and isinstance(v.get('label'), str)
+                                       and isinstance(v.get('value'), str) for v in choices)):
+                        _unsupported()
+                    mapping = {str(v.get('value')): normalize(v.get('label', '')) for v in choices}
+                    if (mapping.get('4') != 'hispanic or latino'
+                            or mapping.get('8') != 'decline to self identify'
+                            or len(mapping) != len(choices)):
+                        _unsupported()
+                    consumed.add(helper[0])
+                value = answer(name, bool(question.get('required')) and helper_value not in {'yes', 'decline to self identify'}, question)
                 if value is not None:
                     values = selected(question, value)
                     if len(values) != 1:
                         _unsupported()
                     result[name] = values[0]
+                if helper_value in {'yes', 'decline to self identify'}:
+                    expected = '4' if helper_value == 'yes' else '8'
+                    if name in result and result[name] != expected:
+                        _unsupported()
+                    result[name] = expected
+                elif helper_value == 'no' and result.get(name) in {'4', '8'}:
+                    _unsupported()
         demographics = self.metadata.get('demographic_questions')
         for question in demographics.get('questions', []) if isinstance(demographics, dict) else []:
             identifier = question.get('id')
