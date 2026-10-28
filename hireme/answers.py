@@ -6,6 +6,10 @@ from .util import Blocked, digest
 from .field_context import binding as contextual_binding, save_binding, present, field_context,validate_numeric
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
+# Bump when deterministic resolution changes so unattempted holds can recheck.
+AUTOMATIC_ANSWER_VERSION = 3
+STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
+
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
 RULES = [
     (r"^first and last legal name\*?$", "full_name"),
@@ -32,7 +36,8 @@ RULES = [
     (r"^(desired salary|salary expectations|desired compensation)\*?$", "salary"),
     (r"^notice period\*?$", "notice_period"),
 ]
-RESTRICTED_WORK = r"do not use (?:ai|artificial intelligence)|don.t use ai|without (?:ai|artificial intelligence)|graded (?:test|work|assessment)|solve this|coding challenge"
+RESTRICTED_WORK = (r"do not use (?:ai|artificial intelligence)|don.t use ai|without (?:ai|artificial intelligence)|graded (?:test|work|assessment)|solve this|coding challenge"
+                   r"|\bnot\s+(?:been\s+)?(?:filled\s+out|completed|written|prepared)\b[^.!?\n]{0,180}\b(?:artificial\s+intelligence|ai)\b")
 AI_WRITING = (r"(?:ai|artificial\s+intelligence)(?:[-\s\u2010-\u2015]+(?:generated|assisted))?\s+"
               r"(?:applications?|answers?|responses?|submissions?)\b")
 APPLICANT_AI_AVOIDANCE = (r"\b(?:rather\s+than|instead\s+of)\s+(?:(?:using|submitting|providing)\s+)?"+AI_WRITING
@@ -328,6 +333,9 @@ def _discovery_answer(label, options, context):
     if not re.search(r"how (?:did|have) you (?:first )?(?:hear(?:d)?|find out|learn(?:ed)?|come across|discover(?:ed)?)\s+(?:about|of)\b|how did you (?:first )?(?:find|discover|come across)\s+(?:us|(?:this|the|our)\s+(?:job|role|position|posting|opening|opportunity|internship|program|company|team))\b|where did you (?:first )?(?:find|hear|learn|see|discover)\b|how did you connect with|what led you to apply for (?:this|the) opportunity",label,re.I) and not (len(options)>=3 and sum(bool(re.search(r'linkedin|indeed|search engine|social media|news article',x,re.I)) for x in options)>=3 and all(x.casefold() in label.casefold() for x in options)):return None
     source=context.get('source','')
     if not source or source=='user':return None
+    if (re.search(r'\bfirst\s+(?:hear|heard|learn|learned|discover)',label,re.I)
+            and not re.search(r'\b(?:job|role|position|posting|opening|opportunity|internship)\b',label,re.I)):
+        raise Blocked('missing_fact','Confirm how you first learned about this company')
     if not options:
         names={'gh':'Your Greenhouse careers page.','ash':'Your Ashby careers page.',
                'lv':'Your Lever careers page.','portal':'Your careers website.',
@@ -338,7 +346,14 @@ def _discovery_answer(label, options, context):
     preferred=['companywebsite','companycareerssite','companycareerspage'] if source.startswith(('gh:','ash:','lv:','portal:')) else ['jobboard','onlinejobboard']
     company=normal(context.get('company',''))
     if company and source.startswith(('gh:','ash:','lv:','portal:')):
-        preferred=[company+'careerswebsite',company+'careerssite',company+'careerspage',*preferred]
+        # ATS boards sometimes abbreviate their employer in the source choice:
+        # "grow-therapy" offers "Grow website/careers page". Match only an
+        # exact website/careers label using the full employer or its first
+        # named word, never an incidental employer mention or a referral.
+        first=normal(re.split(r'[\s_-]+',context.get('company','').strip())[0])
+        brands=[company]+([first] if len(first)>=4 and first!=company else [])
+        preferred=[brand+kind for brand in brands for kind in
+                   ('careerswebsite','careerssite','careerspage','websitecareerspage','website')]+preferred
     unions=[x for x in options if re.search(r'(?:/|\bor\b)\s*(?:online )?job board\s*$',x,re.I)]
     for candidate in preferred+['other']:
         matches=[x for x in options if normal(x)==candidate]
@@ -364,6 +379,17 @@ def _local_campus_answer(store,label):
 
 def _current_enrollment(store,label,options):
     """Enrollment follows from a confirmed university and today's date within its confirmed dates."""
+    if STUDENT_QUESTION.fullmatch(label.strip()):
+        if options and options.count('Yes')!=1:raise Blocked('option_mismatch',label)
+        from .util import now
+        month=now()[:7]
+        for entry in store.history_entries('education'):
+            values=entry['values']
+            if (entry['confirmed'] and values.get('current') is True and values.get('start') and values.get('expected_end')
+                    and values['start']<=month<=values['expected_end']):
+                return {'value':'Yes','provenance':{'current_student_history':{
+                    'id':entry['id'],'revision':entry['revision']}}}
+        raise Blocked('missing_fact','Confirm a current education history entry')
     if not re.fullmatch(r'(?:are you )?currently enrolled in (?:a |an )?(?:degree program|undergraduate (?:degree )?program|bachelor.s (?:degree )?program)(?: at (?:a |an )?(?:registered |accredited )?(?:college or university|university or college|university|college))?[? *]*',label.strip(),re.I):return None
     if options and options.count('Yes')!=1:return None
     facts=store.facts();school=facts.get('school');start=facts.get('college_start');graduation=facts.get('graduation')
@@ -760,8 +786,8 @@ def _work_status_answer(store, field, key, context):
     if not _us_location(work_country_location(context)):return None
     patterns={
         'work_authorized_us':{
-            'Yes':r'Yes, I am currently eligible to work in the location where this role is based\.?',
-            'No':r'No, I am not currently eligible to work in the location where this role is based\.?'},
+            'Yes':r'Yes, I am currently (?:eligible to work in the location where this role is based|legally authorized to work in the country where the jobs? is located)\.?',
+            'No':r'No, I am not currently (?:eligible to work in the location where this role is based|legally authorized to work in the country where the jobs? is located)\.?'},
         'needs_sponsorship':{
             'Yes':r'Yes, I will require visa sponsorship now or in the future to continue working in the country where this role is based\.?',
             'No':r'No, I do not require visa sponsorship now or in the future to continue working in the country where this role is based\.?'}}
@@ -956,10 +982,15 @@ def resolve(store, host, field, provider=None, context=None):
     source_hash=writing_context_hash(store,context)
     context.update(writing_context(store))
     if REFUSE.search(label):raise Blocked('human_work_sample',label)
+    student_confirmation=_current_enrollment(store,label,options) if STUDENT_QUESTION.fullmatch(label.strip()) else None
+    if student_confirmation:
+        if not _fits_writing_limits(student_confirmation['value'],field,context):raise Blocked('answer_too_long',label)
+        validate_numeric(student_confirmation['value'],field)
+        return {'field':field,**student_confirmation}
     # This historical date cannot be inferred from a college start date. It
     # must use the explicit fact, including when older model writing is cached.
     explicit_year=field_key(label)=='high_school_graduation_year'
-    writing=None if explicit_year else store.writing_answer(host,label,options)
+    writing=None if explicit_year or student_confirmation else store.writing_answer(host,label,options)
     if writing:
         try:
             _validate_writing(store,writing)
@@ -977,11 +1008,11 @@ def resolve(store, host, field, provider=None, context=None):
             return {'field':field,**writing}
     graduation_confirmation=_graduation_confirmation(store,field)
     # An old literal approval cannot override a comparison with the current date.
-    saved=None if graduation_confirmation else store.saved_answer(host,label,options,field=field,context=context)
+    saved=None if graduation_confirmation or student_confirmation else store.saved_answer(host,label,options,field=field,context=context)
     if field.get('section_entry',0)>0 and field.get('section') in {'education','employment'} and not saved:
         if field.get('required') or field.get('value'):raise Blocked('repeated_entry_review','Confirm the answer for this specific '+field['section']+' entry')
         return None
-    key=None;template=None;derived=None;draft_rejection=None
+    key=None;template=None;derived=student_confirmation;draft_rejection=None
     if saved:
         exact=_field_fact_key(store,label,context)
         if field.get('section')=='education' and re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I):
@@ -1008,7 +1039,7 @@ def resolve(store, host, field, provider=None, context=None):
         provenance=({'fact_key':key,'revision':fact['revision']} if key and fact['value']!=saved['value']
                     else {'answer_id':saved['id'],'revision':saved['revision']})
     else:
-        key=_field_fact_key(store,label,context)
+        key=None if student_confirmation else _field_fact_key(store,label,context)
         if key and not _compatible_field(key,field,context):raise Blocked('mapping_review',label)
         if key=='name_pronunciation' and key not in store.facts():
             derived=_context_pronunciation(store,field)
@@ -1216,13 +1247,18 @@ def validate_package(store, job, package):
     for index,answer in enumerate(package["answers"]):
         field=answer["field"]
         prov=answer.get("provenance",{})
+        if STUDENT_QUESTION.fullmatch(field['label'].strip()):
+            if 'current_student_history' not in prov:raise Blocked('unsupported_or_stale_answer',field['label'])
+            if resolve(store,job.get('answer_scope',job['host']),field,context=job)!=answer:
+                raise Blocked('unsupported_or_stale_answer',field['label'])
+            continue
         if not _fits_writing_limits(answer["value"],field,writing_context):raise Blocked("answer_too_long",field["label"])
         if 'history_entry_id' in prov:
             from .workday_history import validate_answer
             validate_answer(store,answer)
             continue
         if 'sample_parts' in prov:
-            if field_key(field['label'])=='high_school_graduation_year':
+            if field_key(field['label'])=='high_school_graduation_year' or STUDENT_QUESTION.fullmatch(field['label'].strip()):
                 raise Blocked('unsupported_or_stale_answer',field['label'])
             _validate_writing(store,answer)
             if prov.get('tailored') and prov.get('context_hash')!=writing_context_hash(store,job):raise Blocked('stale_writing_context')

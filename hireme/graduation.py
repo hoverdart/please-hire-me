@@ -37,9 +37,9 @@ def matches(value,bounds):
     if not re.fullmatch(r'20\d{2}(?:-(?:0[1-9]|1[0-2]))?',value):raise Blocked('graduation_window_review','Confirm a graduation date with sufficient precision')
     point=endpoint(value[:4]) if len(value)==4 else (int(value[:4])*12+int(value[5:])-1,)*2
     lo,hi=bounds
-    outcomes=[(lo is None or p>=lo) and (hi is None or p<=hi) for p in point]
-    if outcomes[0]!=outcomes[1]:raise Blocked('graduation_window_review','A month is required to compare this graduation cutoff')
-    return outcomes[0]
+    if (lo is not None and point[1]<lo) or (hi is not None and point[0]>hi):return False
+    if (lo is None or point[0]>=lo) and (hi is None or point[1]<=hi):return True
+    raise Blocked('graduation_window_review','A month is required to compare this graduation cutoff')
 
 def qualifies(value, text):
     """Compare discrete named graduation seasons without filling their gaps."""
