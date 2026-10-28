@@ -730,7 +730,12 @@ def test_ethnicity_helper_requires_its_exact_unique_native_definition(store,chan
     elif change=='integer_value':meta['eeoc_sections'][0]['questions'][0]['fields'][0]['values'][1]['value']=4
     else:
         if change=='duplicate_helper':package['answers'].append(dict(package['answers'][-1]))
-        else:package['answers'][-1]['field']['options'].append('Other')
+        else:
+            f=package['answers'][-1]['field']
+            f['options'].append('Other')
+            qid=store.ask(job['id'],job['host'],f['label'],f['options'],field=f,context=job)
+            store.answer_question(qid,'Yes')
+            package['answers'][-1]=resolve(store,job['host'],f,context=job)
         aid=store.prepare(job,package)
     with pytest.raises(Blocked):GreenhouseSubmission(browser,job,package,aid)
 
