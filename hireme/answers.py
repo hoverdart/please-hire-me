@@ -6,7 +6,8 @@ from .util import Blocked, digest
 from .field_context import binding as contextual_binding, save_binding, present, field_context,validate_numeric
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
-AUTOMATIC_ANSWER_VERSION = 2
+# Bump when deterministic resolution changes so unattempted holds can recheck.
+AUTOMATIC_ANSWER_VERSION = 3
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
 RULES = [
@@ -374,16 +375,16 @@ def _local_campus_answer(store,label):
 def _current_enrollment(store,label,options):
     """Enrollment follows from a confirmed university and today's date within its confirmed dates."""
     if re.fullmatch(r'(?:still student|are you (?:currently |still )?a student)[? *]*',label.strip(),re.I):
-        if options and options.count('Yes')!=1:return None
+        if options and options.count('Yes')!=1:raise Blocked('option_mismatch',label)
         from .util import now
         month=now()[:7]
         for entry in store.history_entries('education'):
             values=entry['values']
-            if (values.get('current') is True and values.get('start') and values.get('expected_end')
+            if (entry['confirmed'] and values.get('current') is True and values.get('start') and values.get('expected_end')
                     and values['start']<=month<=values['expected_end']):
                 return {'value':'Yes','provenance':{'current_student_history':{
                     'id':entry['id'],'revision':entry['revision']}}}
-        return None
+        raise Blocked('missing_fact','Confirm a current education history entry')
     if not re.fullmatch(r'(?:are you )?currently enrolled in (?:a |an )?(?:degree program|undergraduate (?:degree )?program|bachelor.s (?:degree )?program)(?: at (?:a |an )?(?:registered |accredited )?(?:college or university|university or college|university|college))?[? *]*',label.strip(),re.I):return None
     if options and options.count('Yes')!=1:return None
     facts=store.facts();school=facts.get('school');start=facts.get('college_start');graduation=facts.get('graduation')
@@ -780,8 +781,8 @@ def _work_status_answer(store, field, key, context):
     if not _us_location(work_country_location(context)):return None
     patterns={
         'work_authorized_us':{
-            'Yes':r'Yes, I am currently eligible to work in the location where this role is based\.?',
-            'No':r'No, I am not currently eligible to work in the location where this role is based\.?'},
+            'Yes':r'Yes, I am currently (?:eligible to work in the location where this role is based|legally authorized to work in the country where the jobs? is located)\.?',
+            'No':r'No, I am not currently (?:eligible to work in the location where this role is based|legally authorized to work in the country where the jobs? is located)\.?'},
         'needs_sponsorship':{
             'Yes':r'Yes, I will require visa sponsorship now or in the future to continue working in the country where this role is based\.?',
             'No':r'No, I do not require visa sponsorship now or in the future to continue working in the country where this role is based\.?'}}

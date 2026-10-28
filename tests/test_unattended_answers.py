@@ -39,8 +39,11 @@ def test_student_status_is_not_guessed(store, job, monkeypatch, confirmed, curre
         'institution': 'Fixture University', 'current': current,
         'start': start, 'expected_end': end,
     }, source='fixture', confirmed=confirmed)
-    with pytest.raises(Blocked):
-        resolve(store, job['host'], question('Still Student?'), context=job)
+    class ForbiddenModel:
+        def match_field(self,*args):raise AssertionError('Student status must not fall through to model inference')
+        def context_answer(self,*args):raise AssertionError('Student status must not fall through to writing')
+    with pytest.raises(Blocked,match='missing_fact'):
+        resolve(store, job['host'], question('Still Student?'), ForbiddenModel(), context=job)
 
 
 def test_branded_careers_source_uses_posting_provenance():
@@ -89,3 +92,26 @@ def test_year_only_graduation_cannot_answer_a_named_month_question():
     from hireme.graduation import qualifies
     with pytest.raises(Blocked,match='graduation_window_review'):
         qualifies('2028','Are you graduating in December 2027 or May/June 2028?')
+
+
+@pytest.mark.parametrize('label',[
+    'Open to graduating seniors. Can you start in December 2027 or May/June 2028?',
+    'Will you have graduated by December 2027 or May/June 2028?',
+    'Are you graduating before December 2027 or May/June 2028?',
+])
+def test_graduation_alternatives_do_not_change_the_question_relation(label):
+    from hireme.graduation import qualifies
+    assert qualifies('2028-03',label) is None
+
+
+@pytest.mark.parametrize('location,allowed',[('San Francisco, CA',True),('Toronto, Canada',False)])
+def test_descriptive_work_authorization_needs_us_posting_evidence(store,job,location,allowed):
+    f=question('Are you legally authorized to work in the country where the job is located?*')
+    f['options']=['Yes, I am currently legally authorized to work in the country where the jobs is located.',
+                  'No, I am not currently legally authorized to work in the country where the job is located.']
+    store.put_facts({'work_authorized_us':'Yes'})
+    context={**job,'location':location}
+    if allowed:
+        assert resolve(store,job['host'],f,context=context)['value']==f['options'][0]
+    else:
+        with pytest.raises(Blocked):resolve(store,job['host'],f,context=context)
