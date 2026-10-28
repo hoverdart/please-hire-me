@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from hireme.job_holds import hold, ready, recheck
@@ -73,3 +75,34 @@ def test_review_recheck_never_releases_uncertain_attempt(store, job, package, ar
     else:
         assert not recheck(store, job['id'])['ready']
     assert store.db.execute('SELECT state FROM application_records WHERE id=?', (aid,)).fetchone()[0] == 'unknown'
+
+
+@pytest.mark.parametrize('evidence', ['{', 'null', '[]', '{}', '{"stage":"application"}'])
+def test_malformed_or_non_screening_evidence_keeps_hold(store, job, evidence):
+    candidate = saved_candidate(store, job)
+    hold(store, candidate, 'ambiguous_experience', stage='screening')
+    store.db.execute('UPDATE job_holds SET evidence=? WHERE job_id=?', (evidence, job['id']))
+    assert not ready(store, candidate)
+    assert not recheck(store, job['id'])['ready']
+    assert store.db.execute('SELECT reason FROM job_holds WHERE job_id=?', (job['id'],)).fetchone()[0] == 'ambiguous_experience'
+
+
+@pytest.mark.parametrize('payload', ['{', 'null', '[]', '{"description":null}', '{"description":42}'])
+def test_malformed_posting_keeps_hold_in_worker_and_explicit_recheck(store, job, payload):
+    candidate = saved_candidate(store, job)
+    hold(store, candidate, 'ambiguous_experience', stage='screening')
+    store.db.execute('UPDATE jobs SET payload=? WHERE id=?', (payload, job['id']))
+    assert not ready(store, candidate)
+    assert recheck(store, job['id']) == {'ready':False,'reason':'invalid_posting'}
+    assert store.db.execute('SELECT reason FROM job_holds WHERE job_id=?', (job['id'],)).fetchone()[0] == 'ambiguous_experience'
+
+
+def test_posting_divergence_or_invalid_policy_input_does_not_release_hold(store, job):
+    candidate = saved_candidate(store, job)
+    hold(store, candidate, 'ambiguous_experience', stage='screening')
+    assert not ready(store, {**candidate, 'description': candidate['description'] + ' Requires three years of experience.'})
+    assert not ready(store, {**candidate, 'company': 'Another employer'})
+    invalid = {**candidate, 'min_years': 'not a number'}
+    store.db.execute('UPDATE jobs SET payload=? WHERE id=?', (json.dumps(invalid), job['id']))
+    assert not ready(store, invalid)
+    assert recheck(store, job['id']) == {'ready':False,'reason':'invalid_posting'}
