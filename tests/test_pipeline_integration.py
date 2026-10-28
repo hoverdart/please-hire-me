@@ -56,6 +56,9 @@ class Posting:
     region: str = 'us'
     parser_company: str | None = None
     initial_company: str = ''
+    parser_links: list | None = None
+    initial_other: str = ''
+    final_body: bytes | None = None
 
     def __post_init__(self):
         self.req = identifier(self.name)
@@ -124,6 +127,8 @@ class Posting:
                  '<input type="hidden" name="h-captcha-response" value="synthetic-native-token">' if self.platform == 'lever' else '')
         if self.platform=='lever' and self.parser_company is not None:
             lever+='<label for="org">Current company</label><input id="org" name="org" value="'+escape(self.initial_company,quote=True)+'">'
+        if self.platform=='lever' and self.parser_links is not None:
+            lever+='<label for="parser-other">'+escape(self.name)+'</label><input id="parser-other" name="urls[Other]" value="'+escape(self.initial_other,quote=True)+'">'
         resume_id = 'resume-upload-input' if self.platform == 'lever' else 'resume'
         base = {'organizationHostedJobsPageName': self.tenant, 'formRenderIdentifier': self.render,
                 'formDefinitionIdentifier': self.definition}
@@ -157,7 +162,9 @@ class Posting:
                 " if(platform==='lever'){data.append('resume',file);data.append('accountId',document.querySelector('[name=accountId]').value);\n"
                 "  const response=await fetch('/parseResume',{method:'POST',body:data});const result=await response.json();\n"
                 "  document.querySelector('[name=resumeStorageId]').value=result.resumeStorageId;\n"
-                "  if(result.position!==undefined)document.querySelector('[name=org]').value=outcome==='company_changed'?'Changed applicant entry':result.position;return;}\n"
+                "  if(result.position!==undefined)document.querySelector('[name=org]').value=outcome==='company_changed'?'Changed applicant entry':result.position;\n"
+                "  const urls=new Map();for(const link of result.links||[]){const kind=['LinkedIn','Twitter','Quora','GitHub'].find(name=>link.domain&&link.domain.toLowerCase().includes(name.toLowerCase()))||'Other';urls.set(kind,link.url)}\n"
+                "  for(const [kind,value] of urls){const el=document.querySelector('input[name=\"urls['+kind+']\"]');if(el)el.value=outcome==='links_changed'?'https://changed.invalid/':value}return;}\n"
                 " if(platform==='ashby'){const response=await send({operationName:'ApiCreateFileUploadHandle',"
                 "query:createFileQuery,variables:{organizationHostedJobsPageName:base.organizationHostedJobsPageName,fileUploadContext:'NonUserFormEngine',filename:file.name,contentType:'application/pdf',contentLength:file.size}});"
                 " const result=await response.json();window.fixtureUpload=result.data.fileUploadHandle;window.fixtureHandle=window.fixtureUpload.handle;\n"
@@ -341,10 +348,12 @@ class ClosedATS:
             payload = changes.get('post_data', request.post_data_buffer or b'')
             assert self.document_bytes in payload and posting.account.encode() in payload
             answer({'resumeStorageId': 'fixture-storage-' + posting.req,
+                    **({'links':posting.parser_links} if posting.parser_links is not None else {}),
                     **({'position':posting.parser_company} if posting.parser_company is not None else {})}); return
         if posting.platform in {'greenhouse', 'lever'} and (posting.platform=='greenhouse' and parsed.hostname==('boards.eu.greenhouse.io' if posting.region=='eu' else 'boards.greenhouse.io') and parsed.path==urlsplit(posting.url).path or posting.platform=='lever' and request.url==posting.url+'/apply'):
             assert browser.attempted
             payload = changes.get('post_data',request.post_data_buffer or b'')
+            posting.final_body=payload
             assert b'test@candidate.invalid' in payload
             assert (b'Test Person' in payload if posting.platform=='lever' else b'Test' in payload and b'Person' in payload)
             if posting.platform == 'lever': assert ('fixture-storage-' + posting.req).encode() in payload
@@ -423,6 +432,26 @@ def test_lever_parser_company_cannot_add_an_unapproved_claim_or_erase_existing_i
         app=store.db.execute('SELECT package FROM applications').fetchone()
         assert all(a['field'].get('ref',{}).get('name')!='org' for a in json.loads(app[0])['answers'])
         assert store.db.execute("SELECT 1 FROM events WHERE kind='parser_prefill_cleared'").fetchone()
+    assert not network.unexpected
+
+
+@pytest.mark.parametrize('initial_other,outcome',[('','confirmed'),('Existing applicant entry','confirmed'),('','links_changed')])
+def test_lever_parser_links_cannot_add_unapproved_urls_or_erase_existing_input(store,monkeypatch,initial_other,outcome):
+    posting=Posting('lever','Synthetic parser links',parser_links=[{'domain':'example.invalid','url':'https://parser-only.invalid/'}],
+                    initial_other=initial_other,outcome=outcome)
+    network=harness(store,monkeypatch,[posting]);result=network.run()
+    if initial_other or outcome=='links_changed':
+        assert result['confirmed']==0
+        assert result['reasons']=={'missing_answers' if initial_other else 'unsupported_form':1}
+        if initial_other:assert not any(request[2]=='/parseResume' for request in posting.requests)
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind IN ('submit_intent','parser_prefill_cleared')").fetchone()
+    else:
+        assert result['confirmed']==1,result
+        events=[json.loads(r[0]) for r in store.db.execute("SELECT detail FROM events WHERE kind='parser_prefill_cleared'")]
+        assert [e['field'] for e in events]==['urls[Other]']
+        final=[r for r in posting.requests if r[0]=='POST' and r[2].endswith('/apply')]
+        assert len(final)==1
+        assert posting.final_body and b'https://parser-only.invalid/' not in posting.final_body
     assert not network.unexpected
 
 

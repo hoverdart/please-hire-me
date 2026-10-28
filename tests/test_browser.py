@@ -1054,6 +1054,9 @@ def test_ashby_hydration_autosave_does_not_prevent_preparing_form(store,monkeypa
     store.upsert_job(job)
     html=(Path(__file__).parent/'fixtures/application.html').read_text()
     html=html.replace('</body>', '''<script>
+      fetch('/api/non-user-graphql', {method:'POST',body:JSON.stringify({operationName:'ApiJobPosting',
+        query:'query ApiJobPosting { jobPosting { id } }',variables:{organizationHostedJobsPageName:'acme',
+        jobPostingId:'11111111-1111-4111-8111-111111111111'}})});
       fetch('/api/non-user-graphql?op=ApiSetFormValue', {method:'POST',
         body:JSON.stringify({operationName:'ApiSetFormValue',
           query:'mutation ApiSetFormValue { setFormValue { id } }',variables:{value:null}})
@@ -1062,6 +1065,11 @@ def test_ashby_hydration_autosave_does_not_prevent_preparing_form(store,monkeypa
     with Browser(store) as b:
         def serve(route):
             if route.request.method=='GET':route.fulfill(status=200,content_type='text/html',body=html)
+            elif json.loads(route.request.post_data or '{}').get('operationName')=='ApiJobPosting':
+                route.fulfill(status=200,content_type='application/json',body=json.dumps({'data':{'jobPosting':{
+                    'id':'11111111-1111-4111-8111-111111111111','applicationForm':{
+                        'id':'22222222-2222-4222-8222-222222222222',
+                        'sourceFormDefinitionId':'33333333-3333-4333-8333-333333333333','sections':[]}}}}))
             else:b._route(route)
         b.page.route('**/*',serve)
         original_verify=b._verify

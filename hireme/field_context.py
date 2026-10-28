@@ -8,7 +8,7 @@ from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
 MAPPING_VERSION = 26
-ADAPTER_VERSION = 34
+ADAPTER_VERSION = 36
 CAPTCHA_DETECTION_VERSION = 4
 
 def field_context(host, field, context=None):

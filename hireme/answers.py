@@ -970,6 +970,9 @@ def _unanswered_demographic_decline(store, field):
 
 
 def resolve(store, host, field, provider=None, context=None):
+    if field.get('type')=='ashby_education':
+        from .ashby_education import resolve as education
+        return education(store,field)
     label=field['label'];options=field.get('options',[]);context=dict(context or {})
     context['max_sentences']=_sentence_cap(field,context)
     context['single_line']=field.get('type')=='text'

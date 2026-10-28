@@ -633,7 +633,9 @@ class Browser:
                                        or self._ashby_application_entry(self.ashby_draft.job) is not None)
                 body=self.page.evaluate("() => document.body?.innerText || ''")
                 stopped=bool(re.search(r'no longer|expired|not found|sign in|log in|captcha',body,re.I))
-                if self.page.url==url and (fields or entry or stopped):return
+                # DOM controls can precede the official form response. Native
+                # field identities must be available before taking a snapshot.
+                if self.page.url==url and (posting_read and (fields or entry) or stopped):return
             except Blocked as error:
                 if error.reason!='unexpected_redirect':raise
                 redirect=error
@@ -861,6 +863,9 @@ class Browser:
 
     def _snapshot(self):
         fields=self.page.evaluate(SNAPSHOT,CONTROLS)
+        if self.ashby_draft:
+            from .ashby_education import snapshot
+            fields=snapshot(self,fields)
         # Custom dropdown option enumeration is a read task, before any personal value is filled.
         for f in fields:
             self.store.checkpoint()
@@ -1034,6 +1039,9 @@ class Browser:
 
     def _fill(self,answer):
         f=answer['field']; value=answer['value']; controls=self.page.locator(CONTROLS)
+        if f['type']=='ashby_education':
+            from .ashby_education import fill
+            return fill(self,answer)
         el=self._control(f)
         if f['type']=='select':
             from .ats_widgets import select_exact
@@ -1065,9 +1073,10 @@ class Browser:
             # The official response already acknowledged this exact approved
             # value. Re-entering it can race React's blur/debounce autosaves.
             return
+        if key:draft.saved.discard(key)
         self._fill(answer)
         if not key and not field.get('ashby_texting_consent'):return
-        self._control(field).blur()
+        if field['type']!='ashby_education':self._control(field).blur()
         deadline=time.monotonic()+20
         def acknowledged():
             if key:return key in draft.saved and not draft.pending
@@ -1105,6 +1114,9 @@ class Browser:
             self.store.event('form_changed',self.current_host,{'before':self._shape(remaining(fields)),'after':self._shape(remaining(fresh))})
             raise Blocked('form_changed')
         for a in answers:
+            if a['field']['type']=='ashby_education':
+                from .ashby_education import verify
+                verify(self,a);continue
             f=a['field']; el=self._control(f); value=a['value']
             if f['type']=='select':actual=el.locator('option:checked').inner_text().strip()
             elif f['type']=='radio':
@@ -1353,6 +1365,15 @@ class Browser:
                     deadline=time.monotonic()+20
                     while any(h not in self.uploaded_files for h in expected_uploads) and time.monotonic()<deadline:
                         self.store.checkpoint();self.page.wait_for_timeout(250)
+                if live and self.ashby_draft:
+                    from .ashby_attachments import attached
+                    # S3 receiving bytes is earlier than the native form's
+                    # attachment ACK. Do not race text autosaves against it.
+                    deadline=time.monotonic()+20
+                    while not all(attached(self,d) for d in documents) and time.monotonic()<deadline:
+                        self.store.checkpoint();self.page.wait_for_timeout(100)
+                    if not all(attached(self,d) for d in documents):
+                        raise Blocked('upload_verification_failed','The approved PDF is not acknowledged at its intended employer form field')
             if live and self.ashby_draft:
                 proof={'job_id':job['id'],'url':job['url'],'answers':all_answers+answers,'documents':all_docs+documents,
                        'facts_hash':digest(self.store.facts()),'steps':steps+[{'step':step,'fields':fields,'url':self.page.url}]}
@@ -1362,7 +1383,7 @@ class Browser:
                 self.store.event('field_filling',job['id'],{'label':a['field']['label']})
                 if live and self.ashby_draft:self._fill_ashby_answer(a)
                 else:self._fill(a)
-            if live and self.lever_resume:self.lever_resume.clear_unapproved_company(fields,answers,job['id'])
+            if live and self.lever_resume:self.lever_resume.clear_unapproved_prefills(fields,answers,job['id'])
             try:self._verify(answers,documents,fields)
             except Blocked as error:
                 if error.reason!='form_changed':raise
