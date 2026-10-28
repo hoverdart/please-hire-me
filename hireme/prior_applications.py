@@ -20,7 +20,8 @@ from .util import Blocked, application_identity, company_key, company_normalizer
 
 MAX_MESSAGES = 25
 FRESH_SECONDS = 15 * 60
-QUERY = '-from:me {"your application" "you applied" "you have applied" "thank you for applying" "thanks for applying"}'
+MAX_QUERY_BYTES = 1200
+QUERY = 'in:anywhere -from:me {"your application" "you applied" "you have applied" "thank you for applying" "thanks for applying"}'
 PRIOR = re.compile(r'\b(?:your application|you(?: have)? applied|thank you for applying|thanks for applying|received your application|reviewing your application)\b', re.I)
 APPLIED = re.compile(r'\b(?:you(?: have)? applied|thank you for applying|thanks for applying|(?:received|reviewing) your application|your application (?:has been|was) (?:received|submitted))\b',re.I)
 APPLICATION_INVITATION = re.compile(r'\b(?:start|begin|submit|complete|finish|create)\s+(?:your|an?)\s+application\b',re.I)
@@ -255,12 +256,19 @@ def _query(store, company):
     official={row['name'] for row in store.db.execute('SELECT company_key,email_company_key,name FROM prior_application_company_names')
               if row['company_key'] in keys or row['email_company_key'] in keys}
     labels=dict.fromkeys([company,*sorted(official),*sorted(preferred),*sorted(aliases)])
-    terms = ['"'+' '.join(re.findall(r'[^\W_]+',label))+'"' for label in list(labels)[:10]]
-    return QUERY+' {'+' '.join(terms)+'}'
+    terms = ['"'+' '.join(re.findall(r'[^\W_]+',label))+'"' for label in labels if company_key(label)]
+    query=QUERY+' {'+' '.join(terms)+'}'
+    # A successful search must cover every confirmed name. Silently omitting
+    # aliases can incorrectly certify a company as checked. Keep oversized
+    # searches scoped and fail closed rather than dropping names or searching
+    # the whole mailbox.
+    if len(query.encode('utf-8'))>MAX_QUERY_BYTES:
+        raise Blocked('prior_application_company_review','Too many or too-long company names for a complete email search. Consolidate the confirmed company aliases and retry.')
+    return query
 
 
 def scan(store, *, company=None, restart=False, client_factory=None):
-    """One resumable page. The first scan has no date cutoff, including archived mail."""
+    """One resumable page, including archived, spam and trash mail without an initial date cutoff."""
     from .store import worker_lock
     if company is not None and (not isinstance(company,str) or not 1<=len(company.strip())<=200 or not company_key(company)): raise ValueError('Choose a company name with letters or digits, up to 200 characters')
     if type(restart) is not bool: raise ValueError('Choose whether to restart the scan')
@@ -293,7 +301,7 @@ def scan(store, *, company=None, restart=False, client_factory=None):
             if digest(client.email.casefold())!=owner: raise Blocked('gmail_account_mismatch')
             messages=client.service.users().messages()
             if not pending:
-                options={'userId':'me','q':query,'maxResults':MAX_MESSAGES}
+                options={'userId':'me','q':query,'maxResults':MAX_MESSAGES,'includeSpamTrash':True}
                 if next_page: options['pageToken']=next_page
                 page=messages.list(**options).execute();valid_owner()
                 pending=[item['id'] for item in page.get('messages',[])[:MAX_MESSAGES]
@@ -317,7 +325,11 @@ def scan(store, *, company=None, restart=False, client_factory=None):
                     added+=int(ingest(store,message,company=company))
                 pending.remove(identity);processed+=1;save()
             more=bool(pending or next_page)
-            if not more: save(time.time())
+            # A paginated search may miss messages arriving after its first
+            # page. Freshness therefore starts when the search began, not when
+            # its last page finally completed. A slow scan must catch up via
+            # the overlapping incremental search before it can authorize work.
+            if not more: save(started)
             return {'processed':processed,'added':added,'more_available':more,'scope':company or 'All companies'}
         except Blocked: raise
         except Exception:

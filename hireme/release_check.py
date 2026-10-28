@@ -236,7 +236,17 @@ def _scheduler(view):
                 ['launchctl', 'print', f'gui/{os.getuid()}/{scheduler.LABEL}'],
                 capture_output=True, text=True, timeout=5,
             )
-            result['active'] = result['enabled'] = active.returncode == 0
+            disabled = subprocess.run(
+                ['launchctl', 'print-disabled', f'gui/{os.getuid()}'],
+                capture_output=True, text=True, timeout=5,
+            )
+            result['active'] = active.returncode == 0
+            result['enabled'] = (disabled.returncode == 0
+                                 and scheduler.launchd_persistently_enabled(disabled.stdout))
+            result['loaded_matches_saved'] = (active.returncode == 0
+                                              and scheduler.launchd_matches_loaded(active.stdout))
+            if not result['loaded_matches_saved'] or not result['enabled']:
+                result['ready'] = False
         elif installed and sys.platform == 'linux' and shutil.which('systemctl'):
             active = subprocess.run(['systemctl', 'is-active', 'cron'], capture_output=True, text=True, timeout=5)
             result['active'] = result['enabled'] = active.returncode == 0 and active.stdout.strip() == 'active'

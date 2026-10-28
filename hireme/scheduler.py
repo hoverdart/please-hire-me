@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -12,6 +13,75 @@ from pathlib import Path
 from .util import private_dir
 
 LABEL='com.pleasehireme.worker.v3'
+
+
+def _launchd_arguments(output):
+    blocks=re.findall(r'^\s*arguments = \{\s*\n(.*?)^\s*\}',output,re.MULTILINE|re.DOTALL)
+    return [line.strip() for line in blocks[0].splitlines()] if len(blocks)==1 else None
+
+
+def _is_worker_command(arguments):
+    return (isinstance(arguments,list) and len(arguments)==6
+            and all(isinstance(value,str) for value in arguments)
+            and arguments[1:4]==['-m','hireme','--data-dir'] and arguments[5]=='run')
+
+
+def launchd_persistently_enabled(output):
+    """Resolve launchd's persistent override, falling back to the plist default."""
+    try:
+        match=re.fullmatch(r'\s*disabled services = \{\s*(.*?)\s*\}\s*',output,re.DOTALL)
+        if not match:return False
+        overrides={}
+        for line in match.group(1).splitlines():
+            if not line.strip():continue
+            entry=re.fullmatch(r'\s*"([^"\r\n]+)"\s*=>\s*(enabled|disabled)\s*',line)
+            if not entry or entry[1] in overrides:return False
+            overrides[entry[1]]=entry[2]
+        path=Path.home()/'Library/LaunchAgents'/(LABEL+'.plist')
+        if path.is_symlink() or path.stat().st_size>65536:return False
+        saved=plistlib.loads(path.read_bytes())
+        default=saved.get('Disabled',False)
+        if saved.get('Label')!=LABEL or type(default) is not bool:return False
+        return overrides.get(LABEL,'disabled' if default else 'enabled')=='enabled'
+    except (OSError,ValueError,TypeError,plistlib.InvalidFileException):
+        return False
+
+
+def launchd_matches_loaded(output):
+    """Check the loaded job, not merely the plist that may have changed since bootstrap."""
+    path=Path.home()/'Library/LaunchAgents'/(LABEL+'.plist')
+    try:
+        if path.is_symlink() or path.stat().st_size>65536:return False
+        saved=plistlib.loads(path.read_bytes())
+        arguments=saved.get('ProgramArguments')
+        interval=saved.get('StartInterval')
+        directory=saved.get('WorkingDirectory')
+        environment=saved.get('EnvironmentVariables')
+        if (saved.get('Label')!=LABEL or not _is_worker_command(arguments)
+                or type(interval) is not int or not isinstance(directory,str)
+                or not isinstance(environment,dict)
+                or any(not isinstance(key,str) or not isinstance(value,str) for key,value in environment.items())):
+            return False
+        directories=re.findall(r'^\s*working directory = (.+)$',output,re.MULTILINE)
+        intervals=re.findall(r'^\s*run interval = (\d+) seconds$',output,re.MULTILINE)
+        blocks=re.findall(r'^\s*environment = \{\s*\n(.*?)^\s*\}',output,re.MULTILINE|re.DOTALL)
+        if len(blocks)!=1:return False
+        loaded_environment={}
+        for line in blocks[0].splitlines():
+            entry=re.fullmatch(r'\s*([A-Za-z_][A-Za-z0-9_]*) => (.*)',line)
+            if not entry or entry[1] in loaded_environment:return False
+            loaded_environment[entry[1]]=entry[2]
+        # launchd adds its own variables; only compare the complete set of
+        # connection paths our installer can propagate, without exposing them.
+        keys=('PATH','CLAUDE_CONFIG_DIR','CODEX_HOME','XDG_CONFIG_HOME')
+        expected_environment={key:environment[key] for key in keys if key in environment}
+        actual_environment={key:loaded_environment[key] for key in keys if key in loaded_environment}
+        return (len(directories)==len(intervals)==1
+                and _launchd_arguments(output)==arguments
+                and directories[0]==directory and int(intervals[0])==interval
+                and actual_environment==expected_environment)
+    except (OSError,ValueError,TypeError,plistlib.InvalidFileException):
+        return False
 
 
 def _crontab(arguments, **kwargs):
@@ -112,6 +182,29 @@ def _query_schedule(args):
         raise ValueError('The system scheduler could not be checked. Check your OS services or use .venv/bin/python -m hireme daemon.') from error
 
 
+def _systemd_loaded_matches(directory):
+    """Reject stale, replaced or overridden units before trusting saved files."""
+    properties=['LoadState','FragmentPath','NeedDaemonReload','DropInPaths']
+    for suffix in ('service','timer'):
+        unit='please-hire-me-worker.'+suffix
+        fields=properties+(['Unit'] if suffix=='timer' else [])
+        result=_query_schedule(['systemctl','--user','show','--all',
+                                *('--property='+name for name in fields),unit])
+        if result.returncode:return False
+        values={}
+        for line in result.stdout.splitlines():
+            key,separator,value=line.partition('=')
+            if not separator or key not in fields or key in values:return False
+            values[key]=value
+        expected=directory/unit
+        if (set(values)!=set(fields) or expected.is_symlink()
+                or values['LoadState']!='loaded' or values['NeedDaemonReload']!='no'
+                or values['DropInPaths'] or values['FragmentPath']!=str(expected)
+                or (suffix=='timer' and values['Unit']!='please-hire-me-worker.service')):
+            return False
+    return True
+
+
 def status(store=None,cron_only=False):
     if sys.platform=='darwin' and not cron_only:
         p=Path.home()/'Library/LaunchAgents'/(LABEL+'.plist')
@@ -119,7 +212,10 @@ def status(store=None,cron_only=False):
         try:
             data=plistlib.loads(p.read_bytes())
             interval=data.get('StartInterval')
-            return _details(data.get('ProgramArguments',[]),store,interval / 3600 if isinstance(interval,(int,float)) else None,path=str(p),kind='launchd')
+            arguments=data.get('ProgramArguments',[])
+            if data.get('Label')!=LABEL or not _is_worker_command(arguments):
+                return {'installed':True,'matches_applicant':False,'path':str(p),'kind':'launchd','error':'The saved schedule could not be verified.'}
+            return _details(arguments,store,interval / 3600 if isinstance(interval,(int,float)) else None,path=str(p),kind='launchd')
         except (ValueError,TypeError,plistlib.InvalidFileException):
             return {'installed':True,'matches_applicant':False,'path':str(p),'error':'The saved schedule could not be read.'}
     if sys.platform=='linux' and not cron_only and shutil.which('systemctl'):
@@ -127,11 +223,23 @@ def status(store=None,cron_only=False):
         directory=Path.home()/'.config/systemd/user'
         if not r.returncode or (directory/'please-hire-me-worker.timer').exists():
             try:
-                command=next(line.split('=',1)[1] for line in (directory/'please-hire-me-worker.service').read_text().splitlines() if line.startswith('ExecStart='))
-                interval=next(line.split('=',1)[1] for line in (directory/'please-hire-me-worker.timer').read_text().splitlines() if line.startswith('OnUnitInactiveSec='))
-                return _details(shlex.split(command.replace('%%','%')),store,float(interval[:-1]) if interval.endswith('h') else None,kind='systemd',enabled=not r.returncode,timer='please-hire-me-worker.timer')
+                commands=[line.split('=',1)[1] for line in (directory/'please-hire-me-worker.service').read_text().splitlines() if line.startswith('ExecStart=')]
+                intervals=[line.split('=',1)[1] for line in (directory/'please-hire-me-worker.timer').read_text().splitlines() if line.startswith('OnUnitInactiveSec=')]
+                if len(commands)!=1 or len(intervals)!=1:raise ValueError('Ambiguous worker unit')
+                command=commands[0];interval=intervals[0]
+                arguments=shlex.split(command.replace('%%','%'))
+                if not _is_worker_command(arguments) or not _systemd_loaded_matches(directory):
+                    return {'installed':True,'matches_applicant':False,'kind':'systemd',
+                            'error':'The loaded service or timer could not be verified.'}
+                return _details(arguments,store,float(interval[:-1]) if interval.endswith('h') else None,kind='systemd',enabled=not r.returncode,timer='please-hire-me-worker.timer',loaded_matches_saved=True)
             except (OSError,ValueError,StopIteration):
                 return {'installed':True,'matches_applicant':False,'kind':'systemd','error':'The saved service could not be read.'}
+        # A loaded timer can outlive a removed or replaced unit file. Do not
+        # silently install cron alongside it or claim its ownership is known.
+        loaded=_query_schedule(['systemctl','--user','show','--property=LoadState','please-hire-me-worker.timer'])
+        if loaded.returncode==0 and loaded.stdout.strip()=='LoadState=loaded':
+            return {'installed':True,'matches_applicant':False,'kind':'systemd',
+                    'error':'The loaded timer has no verifiable saved schedule.'}
     if not shutil.which('crontab'):return {'installed':False}
     r=_query_schedule(['crontab','-l'])
     records=[]
@@ -179,6 +287,14 @@ def apply_saved_interval(store, repo):
 
 def check_owner(store,cron_only=False):
     current=status(store,cron_only=cron_only)
+    if sys.platform=='darwin' and not cron_only:
+        loaded=_query_schedule(['launchctl','print',f'gui/{os.getuid()}/{LABEL}'])
+        if loaded.returncode==0:
+            arguments=_launchd_arguments(loaded.stdout)
+            if not _is_worker_command(arguments) or not _details(arguments,store).get('matches_applicant'):
+                raise ValueError('The loaded schedule belongs to another applicant or cannot be verified. Remove that schedule from its original instance before replacing it.')
+        elif loaded.returncode!=113:
+            raise ValueError('The loaded schedule could not be checked. Check your OS services before replacing it.')
     records=[current]
     if current.get('kind')=='systemd' and shutil.which('crontab'):
         records.append(status(store,cron_only=True))

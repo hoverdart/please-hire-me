@@ -154,6 +154,7 @@ def test_full_history_scan_is_opt_in_and_resumes_pages_without_model_or_attachme
     assert first['more_available'] and not second['more_available'] and first['added']==second['added']==1
     assert service.lists[1]['pageToken']=='1' and all('after:' not in options['q'] for options in service.lists)
     assert all(options['maxResults']==prior.MAX_MESSAGES for options in service.lists)
+    assert all(options['includeSpamTrash'] is True and 'in:anywhere' in options['q'] for options in service.lists)
     assert all(options['format']=='full' for options in service.reads)
     prior.require_recent_check(store,optiver)
     assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
@@ -212,6 +213,35 @@ def test_failed_refresh_revokes_previous_scan_freshness(store,optiver):
     def disconnected(_):raise Blocked('gmail_reconnect_required')
     with pytest.raises(Blocked):prior.scan(store,company='Optiver',client_factory=disconnected)
     with pytest.raises(Blocked):prior.require_recent_check(store,optiver)
+
+
+def test_slow_paginated_scan_must_catch_up_before_it_can_be_fresh(store,optiver):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[],[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    assert prior.scan(store,company='Optiver',client_factory=factory)['more_available']
+    started=time.time()-prior.FRESH_SECONDS-60
+    store.db.execute('UPDATE prior_application_scans SET started=?',(started,))
+    assert not prior.scan(store,company='Optiver',client_factory=factory)['more_available']
+    assert store.db.execute('SELECT completed FROM prior_application_scans').fetchone()[0]==started
+    with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)
+    # Model a receipt arriving after the first paginated search began. The
+    # overlapping incremental search must find it before fresh work starts.
+    service.pages=[['arrived-during-scan']]
+    assert not prior.scan(store,company='Optiver',client_factory=factory)['more_available']
+    assert service.lists[-1]['q'].startswith(f'after:{int(started)-86400} ')
+    assert prior.matches(store,optiver) and not store.db.execute('SELECT 1 FROM applications').fetchone()
+    prior.require_recent_check(store,optiver)
+
+
+def test_fresh_scan_age_is_measured_from_first_page(store,optiver):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[],[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    prior.scan(store,company='Optiver',client_factory=factory)
+    started=time.time()-60
+    store.db.execute('UPDATE prior_application_scans SET started=?',(started,))
+    prior.scan(store,company='Optiver',client_factory=factory)
+    assert store.db.execute('SELECT completed FROM prior_application_scans').fetchone()[0]==started
+    prior.require_recent_check(store,optiver)
 
 
 def test_disconnecting_gmail_cannot_reuse_a_recent_check(store,optiver):
@@ -513,6 +543,35 @@ def test_expanded_receipt_search_restarts_old_completed_cursors(store,optiver,mo
     assert 'after:' not in service.lists[-1]['q'] and prior.matches(store,optiver)
 
 
+def test_upgrade_scans_spam_and_trash_from_full_history_across_pages(store,optiver,monkeypatch):
+    store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    with monkeypatch.context() as old:
+        old.setattr(prior,'QUERY',prior.QUERY.replace('in:anywhere ',''))
+        prior.scan(store,company='Optiver',client_factory=factory)
+    with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)
+    service.pages=[['old-spam'],['old-trash']]
+    original_list,original_get=service.list,service.get
+    def restricted_list(**kwargs):
+        if 'in:anywhere' not in kwargs['q'] or kwargs.get('includeSpamTrash') is not True:
+            pytest.fail('Spam and Trash must be included on every page')
+        return original_list(**kwargs)
+    def folder_message(**kwargs):
+        item=original_get(**kwargs).value
+        item['labelIds']=['SPAM' if kwargs['id']=='old-spam' else 'TRASH']
+        return Response(item)
+    service.list=restricted_list;service.get=folder_message
+    first=prior.scan(store,company='Optiver',client_factory=factory)
+    with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)
+    second=prior.scan(store,company='Optiver',client_factory=factory)
+    assert first['more_available'] and not second['more_available']
+    assert len(prior.matches(store,optiver))==2
+    assert all('in:anywhere' in options['q'] and options['includeSpamTrash'] is True and 'after:' not in options['q']
+               for options in service.lists[1:])
+    assert service.lists[-1]['pageToken']=='1'
+    prior.require_recent_check(store,optiver)
+
+
 @pytest.mark.parametrize('body',[
     'If you have applied for the {title} position at Optiver, we will review your application.',
     'We have not received your application for the {title} position at Optiver.',
@@ -696,6 +755,43 @@ def test_alias_ceiling_never_discards_the_employer_being_checked(store):
     store.update_settings({'company_aliases':{**{f'Alpha {i}':'Zeta Group' for i in range(20)},'Zeta':'Zeta Group'}})
     query=prior._query(store,'Zeta')
     assert '"Zeta"' in query and '"Zeta Group"' in query
+    assert all(f'"Alpha {i}"' in query for i in range(20))
+
+
+def test_alias_added_after_completed_scan_rechecks_old_mail_for_that_company(store,optiver,monkeypatch):
+    target={**optiver,'company':'Zeta','id':digest('zeta-role')};store.upsert_job(target)
+    store.update_settings({'gmail_prior_applications':True,'company_aliases':{'Zeta':'Zeta Group'}})
+    service=Mailbox(target)
+    def search(**kwargs):
+        service.lists.append(kwargs)
+        # This receipt predates the incremental-search window and mentions
+        # only the newly added alias, just as Gmail's search index might.
+        found='"Legacy 19"' in kwargs['q'] and 'after:' not in kwargs['q']
+        return Response({'messages':[{'id':'old-receipt'}] if found else []})
+    def receipt(**kwargs):
+        return Response(mail(target,identity=kwargs['id'],body=f'We received your application for the {target["title"]} position at Legacy 19.'))
+    service.list=search;service.get=receipt
+    client=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    prior.scan(store,company='Zeta',client_factory=client)
+    prior.require_recent_check(store,target)
+    store.update_settings({'company_aliases':{**{f'Legacy {i}':'Zeta Group' for i in range(20)},'Zeta':'Zeta Group'}})
+    with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,target)
+    monkeypatch.setattr(prior,'GmailClient',client)
+    with pytest.raises(Blocked,match='prior_application_email'):prior.preflight(store,target)
+    assert '"Legacy 19"' in service.lists[-1]['q'] and 'after:' not in service.lists[-1]['q']
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+def test_oversized_alias_search_never_reuses_a_completed_scan_or_drops_names(store,optiver):
+    target={**optiver,'company':'Zeta','id':digest('zeta-oversized')};store.upsert_job(target)
+    store.update_settings({'gmail_prior_applications':True,'company_aliases':{'Zeta':'Zeta Group'}})
+    service=Mailbox(target);service.pages=[[]]
+    prior.scan(store,company='Zeta',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    store.update_settings({'company_aliases':{**{f'Long employer alias {i:03}':'Zeta Group' for i in range(100)},'Zeta':'Zeta Group'}})
+    with pytest.raises(Blocked,match='prior_application_company_review'):prior.require_recent_check(store,target)
+    with pytest.raises(Blocked,match='prior_application_company_review'):
+        prior.scan(store,company='Zeta',client_factory=lambda _:pytest.fail('Oversized search contacted Gmail'))
+    assert len(service.lists)==1 and not store.db.execute('SELECT 1 FROM applications').fetchone()
 
 
 @pytest.mark.parametrize('body',[
