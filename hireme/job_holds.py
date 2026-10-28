@@ -174,6 +174,24 @@ def ready(store, job, at=None):
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':
+        if row['reason']=='ambiguous_experience':
+            # Legacy screening holds were classified as manual reviews. Only
+            # revalidate this one policy reason, never an application attempt
+            # or a different review. Archived attempts also remain held.
+            try:evidence=json.loads(row['evidence'])
+            except (ValueError,TypeError):return False
+            if (not isinstance(evidence,dict) or evidence.get('stage')!='screening'
+                    or store.db.execute("SELECT 1 FROM application_records WHERE job_id=? AND state!='prepared' LIMIT 1",(job['id'],)).fetchone()):
+                return False
+            from .policy import COMPETITIVE_TIMELINE,eligible
+            saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
+            if not saved:return False
+            try:posting=json.loads(saved['payload'])
+            except (ValueError,TypeError):return False
+            if not COMPETITIVE_TIMELINE.search(posting.get('description','')):return False
+            try:eligible(posting,store.settings(),store.facts())
+            except Blocked:return False
+            return True
         return (row['reason']=='remote_draft_uncertain'
                 and bool(store.db.execute("SELECT 1 FROM workday_drafts WHERE job_id=? AND state='acknowledged'",(job['id'],)).fetchone())
                 and row['dependency']!=dependency(store,job,'review',row['reason']))
