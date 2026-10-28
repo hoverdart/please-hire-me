@@ -333,6 +333,9 @@ def _discovery_answer(label, options, context):
     if not re.search(r"how (?:did|have) you (?:first )?(?:hear(?:d)?|find out|learn(?:ed)?|come across|discover(?:ed)?)\s+(?:about|of)\b|how did you (?:first )?(?:find|discover|come across)\s+(?:us|(?:this|the|our)\s+(?:job|role|position|posting|opening|opportunity|internship|program|company|team))\b|where did you (?:first )?(?:find|hear|learn|see|discover)\b|how did you connect with|what led you to apply for (?:this|the) opportunity",label,re.I) and not (len(options)>=3 and sum(bool(re.search(r'linkedin|indeed|search engine|social media|news article',x,re.I)) for x in options)>=3 and all(x.casefold() in label.casefold() for x in options)):return None
     source=context.get('source','')
     if not source or source=='user':return None
+    if (re.search(r'\bfirst\s+(?:hear|heard|learn|learned|discover)',label,re.I)
+            and not re.search(r'\b(?:job|role|position|posting|opening|opportunity|internship)\b',label,re.I)):
+        raise Blocked('missing_fact','Confirm how you first learned about this company')
     if not options:
         names={'gh':'Your Greenhouse careers page.','ash':'Your Ashby careers page.',
                'lv':'Your Lever careers page.','portal':'Your careers website.',
@@ -980,6 +983,10 @@ def resolve(store, host, field, provider=None, context=None):
     context.update(writing_context(store))
     if REFUSE.search(label):raise Blocked('human_work_sample',label)
     student_confirmation=_current_enrollment(store,label,options) if STUDENT_QUESTION.fullmatch(label.strip()) else None
+    if student_confirmation:
+        if not _fits_writing_limits(student_confirmation['value'],field,context):raise Blocked('answer_too_long',label)
+        validate_numeric(student_confirmation['value'],field)
+        return {'field':field,**student_confirmation}
     # This historical date cannot be inferred from a college start date. It
     # must use the explicit fact, including when older model writing is cached.
     explicit_year=field_key(label)=='high_school_graduation_year'
@@ -1240,6 +1247,11 @@ def validate_package(store, job, package):
     for index,answer in enumerate(package["answers"]):
         field=answer["field"]
         prov=answer.get("provenance",{})
+        if STUDENT_QUESTION.fullmatch(field['label'].strip()):
+            if 'current_student_history' not in prov:raise Blocked('unsupported_or_stale_answer',field['label'])
+            if resolve(store,job.get('answer_scope',job['host']),field,context=job)!=answer:
+                raise Blocked('unsupported_or_stale_answer',field['label'])
+            continue
         if not _fits_writing_limits(answer["value"],field,writing_context):raise Blocked("answer_too_long",field["label"])
         if 'history_entry_id' in prov:
             from .workday_history import validate_answer

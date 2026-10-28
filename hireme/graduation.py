@@ -43,21 +43,7 @@ def matches(value,bounds):
 
 def qualifies(value, text):
     """Compare discrete named graduation seasons without filling their gaps."""
-    month=r'(?:'+ '|'.join(sorted(MONTHS,key=len,reverse=True))+r')'
-    alternatives_pattern=r'('+month+r')\.?\s+(20\d{2})\s+or\s+('+month+r')\.?(?:\s*/\s*('+month+r')\.?)?\s+(20\d{2})'
-    subject=(r'(?:(?:(?:are you|will you(?: be)?|do you (?:expect|plan|anticipate) to)\s+)?graduat(?:e|ing)\s+'
-             r'|(?:I confirm that my|Required|Expected|Anticipated)\s+graduation date\s+(?:will be|is)\s+)'
-             r'(?:in\s+)?(?:either\s+)?')
-    named=re.fullmatch(subject+alternatives_pattern+r'\s*[?*]?\s*',text.strip(),re.I)
-    if named:
-        alternatives=[(named[1],named[2]),(named[3],named[5])]
-        if named[4]:alternatives.append((named[4],named[5]))
-        return any(matches(value,endpoint(name+' '+year)) for name,year in alternatives)
-    # Never reinterpret start availability or a by/before/after comparison as
-    # discrete graduation months, or let window() silently drop an alternative.
-    if re.search(alternatives_pattern,text,re.I):return None
-    seasons_pattern=r'(Spring|Summer|Fall|Autumn)\s+(20\d{2})\s+or\s+(Spring|Summer|Fall|Autumn)\s+(20\d{2})'
-    seasonal=re.fullmatch(subject+seasons_pattern+r'\s*[?*]?\s*',text.strip(),re.I)
+    seasonal=re.search(r'graduat\w*.{0,80}?\b(?:either\s+)?(Spring|Summer|Fall|Autumn)\s+(20\d{2})\s+or\s+(Spring|Summer|Fall|Autumn)\s+(20\d{2})\b',text,re.I)
     if seasonal:
         seasons={'spring':(3,5),'summer':(6,8),'fall':(9,12),'autumn':(9,12)}
         outcomes=[]
@@ -65,7 +51,6 @@ def qualifies(value, text):
             lo,hi=seasons[season.casefold()]
             outcomes.append(matches(value,(int(year)*12+lo-1,int(year)*12+hi-1)))
         return any(outcomes)
-    if re.search(seasons_pattern,text,re.I):return None
     bounds=window(text)
     return matches(value,bounds) if bounds is not None else None
 

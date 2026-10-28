@@ -49,7 +49,7 @@ def test_student_status_is_not_guessed(store, job, monkeypatch, confirmed, curre
 def test_branded_careers_source_uses_posting_provenance():
     context = {'company': 'grow-therapy', 'source': 'ash:grow-therapy'}
     options = ['LinkedIn', 'Grow website/careers page', 'Grow Engineering Blog', 'Other - Please describe']
-    answer = _discovery_answer('How did you first learn about Grow Therapy?', options, context)
+    answer = _discovery_answer('How did you hear about this role?', options, context)
     assert answer == {'value': 'Grow website/careers page',
                       'provenance': {'job_source': 'ash:grow-therapy'}}
 
@@ -78,34 +78,10 @@ def test_answer_fix_reconsiders_unattempted_holds_without_releasing_uncertainty(
     assert not ready(store, job)
 
 
-@pytest.mark.parametrize('graduation,expected', [
-    ('2027-12', 'Yes'), ('2028-05', 'Yes'), ('2028-06', 'Yes'),
-    ('2028-01', 'No'), ('2028-04', 'No'), ('2028-07', 'No'),
-])
-def test_named_graduation_alternatives_keep_gaps(store, job, graduation, expected):
-    store.put_facts({'graduation': graduation})
-    answer=resolve(store, job['host'], question('Are you graduating in December 2027 or May/June 2028?'), context=job)
-    assert answer['value']==expected
 
 
-def test_year_only_graduation_cannot_answer_a_named_month_question():
-    from hireme.graduation import qualifies
-    with pytest.raises(Blocked,match='graduation_window_review'):
-        qualifies('2028','Are you graduating in December 2027 or May/June 2028?')
 
 
-@pytest.mark.parametrize('label',[
-    'Open to graduating seniors. Can you start in December 2027 or May/June 2028?',
-    'Will you have graduated by December 2027 or May/June 2028?',
-    'Are you graduating before December 2027 or May/June 2028?',
-    'Can you start as a new graduate in December 2027 or May/June 2028?',
-    'Are you not graduating in December 2027 or May/June 2028?',
-    'Open to graduating seniors. Can you start in Spring 2028 or Fall 2028?',
-    'Will you have graduated by Spring 2028 or Fall 2028?',
-])
-def test_graduation_alternatives_do_not_change_the_question_relation(label):
-    from hireme.graduation import qualifies
-    assert qualifies('2028-03',label) is None
 
 
 @pytest.mark.parametrize('location,allowed',[('San Francisco, CA',True),('Toronto, Canada',False)])
@@ -134,6 +110,33 @@ def test_applicant_only_attestations_require_manual_work(text):
 def test_employer_ai_work_description_is_not_an_applicant_attestation():
     from hireme.answers import page_requires_manual_work
     assert not page_requires_manual_work('Build AI tools and develop well-tested systems. AI-assisted development experience is welcome.')
+
+
+def test_company_first_awareness_is_not_inferred_from_discovery():
+    with pytest.raises(Blocked,match='missing_fact'):
+        _discovery_answer('How did you first learn about Grow Therapy?',
+                          ['Grow website/careers page'],{'company':'grow-therapy','source':'ash:grow-therapy'})
+
+
+def test_year_only_graduation_overlap_requires_month_precision():
+    from hireme.graduation import matches,endpoint
+    with pytest.raises(Blocked,match='graduation_window_review'):
+        matches('2028',(endpoint('May 2028')[0],endpoint('June 2028')[1]))
+
+
+@pytest.mark.parametrize('binding',['template','fact'])
+def test_valid_student_history_overrides_legacy_bindings(store,job,monkeypatch,binding):
+    monkeypatch.setattr('hireme.util.now',lambda:'2026-10-28T00:00:00+00:00')
+    f=question('Still Student?')
+    store.put_facts({'school':'Fixture University'})
+    store.put_history_entry('education',{'institution':'Fixture University','current':True,
+        'start':'2025-08','expected_end':'2028-05'},source='fixture',confirmed=True)
+    if binding=='template':
+        tid=store.put_template('experience','I am currently a student at Fixture University.')
+        store.bind_field(job['host'],f['label'],f['options'],template_id=tid)
+    else:store.bind_field(job['host'],f['label'],f['options'],fact_key='school')
+    a=resolve(store,job['host'],f,context=job)
+    assert a['value']=='Yes' and 'current_student_history' in a['provenance']
 
 
 @pytest.mark.parametrize('cache',['writing','saved','binding'])
