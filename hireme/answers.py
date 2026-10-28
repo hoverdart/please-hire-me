@@ -8,6 +8,7 @@ from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, w
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
 AUTOMATIC_ANSWER_VERSION = 3
+STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
 RULES = [
@@ -35,7 +36,8 @@ RULES = [
     (r"^(desired salary|salary expectations|desired compensation)\*?$", "salary"),
     (r"^notice period\*?$", "notice_period"),
 ]
-RESTRICTED_WORK = r"do not use (?:ai|artificial intelligence)|don.t use ai|without (?:ai|artificial intelligence)|graded (?:test|work|assessment)|solve this|coding challenge"
+RESTRICTED_WORK = (r"do not use (?:ai|artificial intelligence)|don.t use ai|without (?:ai|artificial intelligence)|graded (?:test|work|assessment)|solve this|coding challenge"
+                   r"|\bnot\s+(?:been\s+)?(?:filled\s+out|completed|written|prepared)\b[^.!?\n]{0,180}\b(?:artificial\s+intelligence|ai)\b")
 AI_WRITING = (r"(?:ai|artificial\s+intelligence)(?:[-\s\u2010-\u2015]+(?:generated|assisted))?\s+"
               r"(?:applications?|answers?|responses?|submissions?)\b")
 APPLICANT_AI_AVOIDANCE = (r"\b(?:rather\s+than|instead\s+of)\s+(?:(?:using|submitting|providing)\s+)?"+AI_WRITING
@@ -374,7 +376,7 @@ def _local_campus_answer(store,label):
 
 def _current_enrollment(store,label,options):
     """Enrollment follows from a confirmed university and today's date within its confirmed dates."""
-    if re.fullmatch(r'(?:still student|are you (?:currently |still )?a student)[? *]*',label.strip(),re.I):
+    if STUDENT_QUESTION.fullmatch(label.strip()):
         if options and options.count('Yes')!=1:raise Blocked('option_mismatch',label)
         from .util import now
         month=now()[:7]
@@ -977,10 +979,11 @@ def resolve(store, host, field, provider=None, context=None):
     source_hash=writing_context_hash(store,context)
     context.update(writing_context(store))
     if REFUSE.search(label):raise Blocked('human_work_sample',label)
+    student_confirmation=_current_enrollment(store,label,options) if STUDENT_QUESTION.fullmatch(label.strip()) else None
     # This historical date cannot be inferred from a college start date. It
     # must use the explicit fact, including when older model writing is cached.
     explicit_year=field_key(label)=='high_school_graduation_year'
-    writing=None if explicit_year else store.writing_answer(host,label,options)
+    writing=None if explicit_year or student_confirmation else store.writing_answer(host,label,options)
     if writing:
         try:
             _validate_writing(store,writing)
@@ -998,11 +1001,11 @@ def resolve(store, host, field, provider=None, context=None):
             return {'field':field,**writing}
     graduation_confirmation=_graduation_confirmation(store,field)
     # An old literal approval cannot override a comparison with the current date.
-    saved=None if graduation_confirmation else store.saved_answer(host,label,options,field=field,context=context)
+    saved=None if graduation_confirmation or student_confirmation else store.saved_answer(host,label,options,field=field,context=context)
     if field.get('section_entry',0)>0 and field.get('section') in {'education','employment'} and not saved:
         if field.get('required') or field.get('value'):raise Blocked('repeated_entry_review','Confirm the answer for this specific '+field['section']+' entry')
         return None
-    key=None;template=None;derived=None;draft_rejection=None
+    key=None;template=None;derived=student_confirmation;draft_rejection=None
     if saved:
         exact=_field_fact_key(store,label,context)
         if field.get('section')=='education' and re.fullmatch(r'(start|end) date (month|year)\s*\*?',label,re.I):
@@ -1029,7 +1032,7 @@ def resolve(store, host, field, provider=None, context=None):
         provenance=({'fact_key':key,'revision':fact['revision']} if key and fact['value']!=saved['value']
                     else {'answer_id':saved['id'],'revision':saved['revision']})
     else:
-        key=_field_fact_key(store,label,context)
+        key=None if student_confirmation else _field_fact_key(store,label,context)
         if key and not _compatible_field(key,field,context):raise Blocked('mapping_review',label)
         if key=='name_pronunciation' and key not in store.facts():
             derived=_context_pronunciation(store,field)
@@ -1243,7 +1246,7 @@ def validate_package(store, job, package):
             validate_answer(store,answer)
             continue
         if 'sample_parts' in prov:
-            if field_key(field['label'])=='high_school_graduation_year':
+            if field_key(field['label'])=='high_school_graduation_year' or STUDENT_QUESTION.fullmatch(field['label'].strip()):
                 raise Blocked('unsupported_or_stale_answer',field['label'])
             _validate_writing(store,answer)
             if prov.get('tailored') and prov.get('context_hash')!=writing_context_hash(store,job):raise Blocked('stale_writing_context')

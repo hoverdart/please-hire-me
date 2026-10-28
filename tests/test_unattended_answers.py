@@ -98,6 +98,10 @@ def test_year_only_graduation_cannot_answer_a_named_month_question():
     'Open to graduating seniors. Can you start in December 2027 or May/June 2028?',
     'Will you have graduated by December 2027 or May/June 2028?',
     'Are you graduating before December 2027 or May/June 2028?',
+    'Can you start as a new graduate in December 2027 or May/June 2028?',
+    'Are you not graduating in December 2027 or May/June 2028?',
+    'Open to graduating seniors. Can you start in Spring 2028 or Fall 2028?',
+    'Will you have graduated by Spring 2028 or Fall 2028?',
 ])
 def test_graduation_alternatives_do_not_change_the_question_relation(label):
     from hireme.graduation import qualifies
@@ -115,3 +119,34 @@ def test_descriptive_work_authorization_needs_us_posting_evidence(store,job,loca
         assert resolve(store,job['host'],f,context=context)['value']==f['options'][0]
     else:
         with pytest.raises(Blocked):resolve(store,job['host'],f,context=context)
+
+
+@pytest.mark.parametrize('text',[
+    'I certify that I personally completed this application and that it was not filled out, in whole or in part, by another person or by an artificial intelligence (AI) tool on my behalf.',
+    'I confirm this application was not written by an AI tool.',
+    'I confirm this application has not been prepared by artificial intelligence.',
+])
+def test_applicant_only_attestations_require_manual_work(text):
+    from hireme.answers import page_requires_manual_work
+    assert page_requires_manual_work(text)
+
+
+def test_employer_ai_work_description_is_not_an_applicant_attestation():
+    from hireme.answers import page_requires_manual_work
+    assert not page_requires_manual_work('Build AI tools and develop well-tested systems. AI-assisted development experience is welcome.')
+
+
+@pytest.mark.parametrize('cache',['writing','saved','binding'])
+def test_legacy_student_answers_cannot_bypass_expired_history(store,job,monkeypatch,cache):
+    monkeypatch.setattr('hireme.util.now',lambda:'2026-10-28T00:00:00+00:00')
+    f=question('Still Student?')
+    store.put_history_entry('education',{'institution':'Fixture University','current':True,
+        'start':'2024-08','expected_end':'2025-05'},source='fixture',confirmed=True)
+    if cache=='writing':store.save_writing_answer(job['host'],f['label'],f['options'],{'value':'Yes','provenance':{'sample_parts':[]}})
+    elif cache=='saved':
+        qid=store.ask(job['id'],job['host'],f['label'],f['options'],'missing_fact',field=f,context=job)
+        store.answer_question(qid,'Yes')
+    else:
+        tid=store.put_template('experience','I am currently a student at Fixture University.')
+        store.bind_field(job['host'],f['label'],f['options'],template_id=tid)
+    with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],f,context=job)
