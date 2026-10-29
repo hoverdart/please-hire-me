@@ -913,12 +913,29 @@ def school_draft(store,job,package,*,observe=True,restored=None,title='College/U
     return d,proof,read,result,official
 
 
-def test_school_only_history_accepts_exact_current_university_question(store,job,package):
+def test_school_only_history_accepts_exact_current_university_question(store,job,package,monkeypatch):
+    monkeypatch.setattr('hireme.util.now',lambda:'2027-01-01T00:00:00+00:00')
+    store.put_facts({'college_start':'2025-08','graduation':'2028-05'})
     d,proof,_,_,_=school_draft(store,job,package,title='Which university/college do you attend?')
     d.enable(None,proof['answers'],proof)
     value=[{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL}]
     r,data=request(value,path=SCHOOL_PATH)
     assert d.allow(r,data,'school') and not d.complete
+
+
+@pytest.mark.parametrize('dates',[
+    {},
+    {'college_start':'2022-08','graduation':'2026-05'},
+    {'college_start':'2027-08','graduation':'2028-05'},
+])
+def test_current_university_question_requires_confirmed_current_enrollment(store,job,package,monkeypatch,dates):
+    monkeypatch.setattr('hireme.util.now',lambda:'2027-01-01T00:00:00+00:00')
+    if dates:store.put_facts(dates)
+    d,proof,_,_,_=school_draft(store,job,package,title='Which university/college do you attend?')
+    with pytest.raises(Blocked,match='missing_fact'):
+        d.enable(None,proof['answers'],proof)
+    r,data=request([{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL}],path=SCHOOL_PATH)
+    assert not d.allow(r,data,'school')
 
 
 @pytest.mark.parametrize('title',[
