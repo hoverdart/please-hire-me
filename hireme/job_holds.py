@@ -125,6 +125,9 @@ def dependency(store, job, kind, reason=None):
     if reason=='ashby_submission_unsupported':
         from .ashby_submission import VERSION
         data['ashby_submission']=VERSION
+    if reason=='ashby_draft_unsupported':
+        from .ashby_drafts import VERSION
+        data['ashby_draft']=VERSION
     if workday is not None:data['workday']=workday
     if reason in {'captcha','captcha_blocked'}:data['captcha_detection']=CAPTCHA_DETECTION_VERSION
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})
