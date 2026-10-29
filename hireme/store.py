@@ -695,7 +695,9 @@ class Store:
         if any(r["state"] in ("submitting","unknown") for r in active):
             raise Blocked("company_uncertain","Reconcile the earlier attempt first")
         spam_ids={row[0] for row in self.db.execute("SELECT id FROM application_records WHERE state='not_submitted' AND LOWER(confirmation) LIKE '%possible spam%'")}
-        if any(row['id'] in spam_ids and ck in row['company_keys'] for row in self.application_history(s,('not_submitted',))):
+        if any(row['id'] in spam_ids and ck in row['company_keys']
+                and not permits(self,row,job['id'],application_id)
+                for row in self.application_history(s,('not_submitted',))):
             raise Blocked('company_submission_rejected','An earlier submission was rejected as possible spam; complete manually or explicitly review the earlier attempt')
         if s["max_per_company"] and len(active)>=s["max_per_company"]:
             raise Blocked("company_limit")

@@ -82,6 +82,37 @@ def test_first_retry_can_bind_a_new_explicitly_approved_package(store,job,packag
     assert store.prepare(job,updated)!=aid
 
 
+def test_explicit_retry_exempts_only_its_own_definitive_rejection(store,job,package):
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'not_submitted','Employer rejected this attempt as possible spam')
+    store.retry_not_submitted(aid,'Independently reviewed rejection and approved one exact retry')
+    following=store.prepare(job,package)
+    assert following!=aid
+    store.begin_submit(following)
+    with pytest.raises(Blocked):store.prepare(job,package)
+    store.finish(following,'not_submitted','Employer rejected this later attempt as possible spam')
+    with pytest.raises(Blocked,match='retry_authorization_changed'):store.prepare(job,package)
+    assert store.application_record(aid)['state']=='not_submitted'
+
+
+def test_retry_does_not_release_an_unrelated_company_rejection(store,job,package):
+    from hireme.util import digest
+    other={**job,'id':digest('other-rejected-posting'),'url':job['url']+'-other'}
+    store.upsert_job(other)
+    other_package={**package,'job_id':other['id'],'url':other['url']}
+    old=store.prepare(other,other_package);store.begin_submit(old);store.finish(old,'not_submitted','Employer rejected as possible spam')
+    # Create the target's already-recorded definitive outcome without relaxing
+    # the earlier employer hold or dispatching any fixture transport.
+    aid=digest('target-not-submitted')
+    import json
+    from hireme.util import now
+    store.db.execute("INSERT INTO applications VALUES(?,?,?,'not_submitted',?,?,?,?,?,?,?)",
+        (aid,job['id'],store.company(job['company']),json.dumps(package),digest(package),now(),now(),now(),'Synthetic definitive rejection',None))
+    store.retry_not_submitted(aid,'Approved the target only after independent reconciliation')
+    with pytest.raises(Blocked,match='company_submission_rejected'):store.prepare(job,package)
+    assert store.application_record(old)['state']=='not_submitted'
+    assert store.db.execute('SELECT state FROM retry_authorizations').fetchone()[0]=='available'
+
+
 def test_archive_and_authorization_rollback_atomically(store,job,package,monkeypatch):
     aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'not_submitted')
     monkeypatch.setattr(store,'event',lambda *a,**k:(_ for _ in ()).throw(RuntimeError('crash')))
