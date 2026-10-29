@@ -31,6 +31,44 @@ def test_experience_requirements_and_unreviewed_timelines_remain_blocked(store, 
         eligible(candidate, store.settings(), store.facts())
 
 
+@pytest.mark.parametrize('number', ['one', 'eleven', 'twelve'])
+@pytest.mark.parametrize('statement', [
+    'Candidates must have {number} year of experience.',
+    'The role requires {number} years of relevant software experience.',
+    '<li>Minimum of {number} years of industry experience</li>',
+    '<li>{number} years of professional experience</li>',
+    '- {number} years of Python experience',
+    '{number} years of work experience is required.',
+])
+def test_additional_written_applicant_experience_requires_review(store, job, number, statement):
+    candidate = {**job, 'description': job['description'] + '\n' + statement.format(number=number)}
+    with pytest.raises(Blocked, match='ambiguous_experience'):
+        eligible(candidate, store.settings(), store.facts())
+
+
+@pytest.mark.parametrize('statement', [
+    'Our company has one year of experience serving customers.',
+    'Our company has at least one year of experience in this market.',
+    'Our company was founded eleven years ago.',
+    'The platform has been running for twelve years.',
+    'We are two to three years ahead of everyone else in government approvals.',
+])
+def test_additional_written_numbers_do_not_block_company_history(store, job, statement):
+    candidate = {**job, 'description': job['description'] + ' ' + statement}
+    eligible(candidate, store.settings(), store.facts())
+
+
+def test_reviewed_company_timeline_cannot_hide_an_explicit_applicant_requirement(store, job):
+    candidate = {**job, 'description': job['description']
+                 + ' We are two to three years ahead of everyone else in government approvals.'
+                 + ' Candidates must have one year of software experience.'}
+    store.upsert_job(candidate)
+    hold(store, candidate, 'ambiguous_experience', stage='screening')
+    assert not ready(store, candidate)
+    with pytest.raises(Blocked, match='ambiguous_experience'):
+        eligible(candidate, store.settings(), store.facts())
+
+
 def saved_candidate(store, job, suffix=''):
     candidate = {**job, 'description': job['description']
                  + ' We are two to three years ahead of everyone else in government approvals.' + suffix}

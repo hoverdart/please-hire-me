@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 7
+ELIGIBILITY_VERSION = 8
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -18,6 +18,17 @@ LOCATIONS = {
 SENIOR=re.compile(r"\bsenior\b|\bsr\.?\b|\bprincipal\b|\blead\b|\bmanager\b|\bdirector\b|\bhead of\b|\barchitect\b|\bstaff\b",re.I)
 YEARS=re.compile(r"(?:at least|minimum(?: of)?|requires?|must have|\b)(\d+)(?:\s*[-–]\s*\d+)?\+?\s+years?(?: of)?\s+(?:professional|relevant|industry|work|software|engineering|experience)",re.I)
 WRITTEN_YEARS=re.compile(r"(?:two|three|four|five|six|seven|eight|nine|ten)\s+(?:or more\s+)?years?",re.I)
+# Recognize the written numbers omitted by the legacy broad review check only
+# when the posting identifies an applicant experience requirement. A company
+# describing its age or its own experience is not such a requirement.
+_EXPLICIT_EXPERIENCE=r"\b(?:one|eleven|twelve)\s+(?:or more\s+)?years?(?:\s+of)?\s+(?:[a-z][\w+/#.-]*\s+){0,6}experience\b"
+ADDITIONAL_APPLICANT_EXPERIENCE=re.compile(
+    r"(?:\b(?:must have|must possess|requires?|required to have|"
+    r"you (?:have|need)|candidates? (?:must|should) have)\b[^.!?;\n<>]{0,50}"
+    +_EXPLICIT_EXPERIENCE+r"|(?:^|\n|<li\b[^>]*>)\s*(?:[-*•]\s*)?"
+    r"(?:at least|minimum(?: of)?)\s+"+_EXPLICIT_EXPERIENCE+r"|"
+    r"(?:<li\b[^>]*>\s*|(?:^|\n)\s*[-*•]\s*)"+_EXPLICIT_EXPERIENCE+r"|"
+    +_EXPLICIT_EXPERIENCE+r"\s+(?:is\s+)?(?:required|mandatory)\b)",re.I)
 # Only a company-to-company competitive lead is known to be unrelated to an
 # applicant's experience. Other written-out years continue to require review.
 COMPETITIVE_TIMELINE=re.compile(
@@ -200,8 +211,9 @@ def eligible(job,s,facts):
     allowed=min(s["max_years_required"],float(facts.get("professional_years",{}).get("value","0")))
     if required is not None and required>allowed: raise Blocked("experience_mismatch")
     milestones=[m.span() for m in COMPETITIVE_TIMELINE.finditer(desc)]
-    if any(not any(start<=m.start() and m.end()<=end for start,end in milestones)
-           for m in WRITTEN_YEARS.finditer(desc)):
+    if (ADDITIONAL_APPLICANT_EXPERIENCE.search(desc)
+            or any(not any(start<=m.start() and m.end()<=end for start,end in milestones)
+                   for m in WRITTEN_YEARS.finditer(desc))):
         raise Blocked("ambiguous_experience","Written-out experience gate needs verification")
     if NO_SPONSOR.search(desc) and facts.get("needs_sponsorship",{}).get("value")!="No":
         raise Blocked("sponsorship_mismatch")
