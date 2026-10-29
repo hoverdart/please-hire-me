@@ -10,13 +10,25 @@ from hireme.util import Blocked
 import pytest
 
 
+def systemd_fixture(args, home, *, disabled=False, change=None):
+    if 'show' not in args:return SimpleNamespace(returncode=int(disabled),stdout='')
+    unit=args[-1]
+    values={'LoadState':'loaded','FragmentPath':str(home/'.config/systemd/user'/unit),
+            'NeedDaemonReload':'no','DropInPaths':''}
+    if unit.endswith('.timer'):values['Unit']='please-hire-me-worker.service'
+    if change:values.update(change)
+    return SimpleNamespace(returncode=0,stdout=''.join(f'{key}={value}\n' for key,value in values.items()))
+
+
 def test_mac_schedule_excludes_api_key_from_private_plist(store,tmp_path,monkeypatch):
     monkeypatch.setattr('hireme.scheduler.sys.platform','darwin')
     monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
     monkeypatch.setenv('ANTHROPIC_API_KEY','synthetic-key')
     monkeypatch.setenv('UNRELATED_SECRET','must-not-forward')
     calls=[]
-    def run(args,**kwargs):calls.append(args);return SimpleNamespace(returncode=0)
+    def run(args,**kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=113 if 'print' in args else 0,stdout='')
     monkeypatch.setattr('hireme.scheduler.subprocess.run',run)
     path=Path(install(store,tmp_path/'repo with spaces'))
     data=plistlib.loads(path.read_bytes())
@@ -32,7 +44,7 @@ def test_mac_schedule_excludes_api_key_from_private_plist(store,tmp_path,monkeyp
 def test_schedule_interval_can_be_applied_without_resuming_or_running(store, tmp_path, monkeypatch):
     monkeypatch.setattr('hireme.scheduler.sys.platform', 'darwin')
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
-    monkeypatch.setattr('hireme.scheduler.subprocess.run', lambda *a, **kw: SimpleNamespace(returncode=0))
+    monkeypatch.setattr('hireme.scheduler.subprocess.run', lambda args, **kw: SimpleNamespace(returncode=113 if 'print' in args else 0,stdout=''))
     monkeypatch.chdir(tmp_path)
     store.root = Path('private')
     store.update_settings({'live_enabled': False, 'schedule_hours': 6})
@@ -55,6 +67,46 @@ def test_schedule_interval_can_be_applied_without_resuming_or_running(store, tmp
         with pytest.raises(ValueError, match='another applicant'): uninstall(store=other)
         assert status(store)['matches_applicant'] and status(store)['interval_hours'] == 3
     finally: other.close()
+
+
+@pytest.mark.parametrize('saved_plist', [True, False])
+@pytest.mark.parametrize('loaded', ['other', 'unrelated', 'unreadable', 'query_error'])
+def test_mac_schedule_does_not_replace_or_remove_an_unverified_loaded_job(store, tmp_path, monkeypatch, saved_plist, loaded):
+    from hireme.scheduler import uninstall
+    monkeypatch.setattr('hireme.scheduler.sys.platform','darwin')
+    monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
+    if saved_plist:
+        path=tmp_path/'Library/LaunchAgents'/f'{LABEL}.plist'
+        path.parent.mkdir(parents=True)
+        path.write_bytes(plistlib.dumps({'Label':LABEL,'ProgramArguments':['python','-m','hireme','--data-dir',str(store.root),'run'],'StartInterval':21600}))
+    if loaded in {'other','unrelated'}:
+        module='unrelated' if loaded=='unrelated' else 'hireme'
+        applicant=store.root if loaded=='unrelated' else tmp_path/'other'
+        output='arguments = {\n python\n -m\n '+module+'\n --data-dir\n '+str(applicant)+'\n run\n}\n'
+    else:output='unparseable'
+    calls=[]
+    def run(args,**kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=1 if loaded=='query_error' else 0,stdout=output)
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',run)
+    with pytest.raises(ValueError,match='loaded schedule'):install(store,tmp_path)
+    with pytest.raises(ValueError,match='loaded schedule'):uninstall(store=store)
+    assert calls and all('print' in args for args in calls)
+    assert path.exists() if saved_plist else True
+
+
+def test_mac_schedule_can_reapply_a_verified_loaded_job_for_same_applicant(store,tmp_path,monkeypatch):
+    monkeypatch.setattr('hireme.scheduler.sys.platform','darwin')
+    monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
+    arguments=['/old/python','-m','hireme','--data-dir',str(store.root),'run']
+    output='arguments = {\n'+''.join('\t'+arg+'\n' for arg in arguments)+'}\n'
+    calls=[]
+    def run(args,**kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0,stdout=output if 'print' in args else '')
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',run)
+    assert Path(install(store,tmp_path)).exists()
+    assert any('bootout' in args for args in calls) and any('bootstrap' in args for args in calls)
 
 
 def test_running_worker_blocks_schedule_changes(store, tmp_path):
@@ -155,12 +207,125 @@ def test_systemd_status_reads_interval_and_applicant_from_generated_units(store,
     monkeypatch.setattr('hireme.scheduler.sys.platform', 'linux')
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
     monkeypatch.setattr('hireme.scheduler.shutil.which', lambda binary: '/usr/bin/systemctl' if binary == 'systemctl' else None)
-    monkeypatch.setattr('hireme.scheduler.subprocess.run', lambda *a, **kw: SimpleNamespace(returncode=0))
+    monkeypatch.setattr('hireme.scheduler.subprocess.run', lambda args, **kw: systemd_fixture(args,tmp_path))
     directory = tmp_path / '.config/systemd/user'; directory.mkdir(parents=True)
     for name, content in service_units(store, tmp_path / 'repo with % spaces').items(): (directory / name).write_text(content)
     result = status(store)
     assert result['installed'] and result['matches_applicant']
     assert result['interval_hours'] == store.settings()['schedule_hours']
+
+
+@pytest.mark.parametrize('change', ['stale_service','stale_timer','other_fragment','dropin','other_target','unreadable'])
+def test_systemd_status_rejects_unverified_loaded_units_without_changing_them(store,tmp_path,monkeypatch,change):
+    from hireme.pi import service_units
+    from hireme.scheduler import check_owner,uninstall
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/systemctl' if name=='systemctl' else None)
+    directory=tmp_path/'.config/systemd/user';directory.mkdir(parents=True)
+    for name,content in service_units(store,tmp_path).items():(directory/name).write_text(content)
+    calls=[]
+    def run(args,**kwargs):
+        calls.append(args)
+        if 'show' not in args:return systemd_fixture(args,tmp_path)
+        unit=args[-1]
+        if change=='unreadable':return SimpleNamespace(returncode=1,stdout='')
+        values={}
+        if change=='stale_service' and unit.endswith('.service'):values['NeedDaemonReload']='yes'
+        if change=='stale_timer' and unit.endswith('.timer'):values['NeedDaemonReload']='yes'
+        if change=='other_fragment':values['FragmentPath']='/different/worker'
+        if change=='dropin':values['DropInPaths']='/different/override.conf'
+        if change=='other_target' and unit.endswith('.timer'):values['Unit']='other.service'
+        return systemd_fixture(args,tmp_path,change=values)
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',run)
+    result=status(store)
+    assert result['installed'] and not result['matches_applicant'] and result['error']
+    with pytest.raises(ValueError,match='cannot be verified'):check_owner(store)
+    with pytest.raises(ValueError,match='cannot be verified'):uninstall(store=store)
+    assert calls and all('is-enabled' in args or 'show' in args for args in calls)
+
+
+def test_systemd_loaded_timer_without_saved_unit_is_not_treated_as_no_schedule(store,tmp_path,monkeypatch):
+    from hireme.scheduler import check_owner
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/systemctl' if name=='systemctl' else None)
+    def run(args,**kwargs):
+        return SimpleNamespace(returncode=0 if 'show' in args else 1,
+                               stdout='LoadState=loaded\n' if 'show' in args else '')
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',run)
+    assert status(store)['error']=='The loaded timer has no verifiable saved schedule.'
+    with pytest.raises(ValueError,match='cannot be verified'):check_owner(store)
+
+
+@pytest.mark.parametrize('case', ['valid','changed','extra_command','world_writable','wrong_owner','symlink','timer','other'])
+def test_systemd_allows_only_verified_vendor_timeout_dropin(store,tmp_path,monkeypatch,case):
+    from hireme import scheduler
+    from hireme.pi import service_units
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/systemctl' if name=='systemctl' else None)
+    directory=tmp_path/'.config/systemd/user';directory.mkdir(parents=True)
+    for name,content in service_units(store,tmp_path).items():(directory/name).write_text(content)
+    vendor=tmp_path/'10-timeout-abort.conf'
+    contents='# vendor comment\n[Service]\nTimeoutStopFailureMode=abort\n'
+    if case=='changed':contents=contents.replace('abort','kill')
+    if case=='extra_command':contents+='ExecStart=/unrelated/program\n'
+    vendor.write_text(contents);vendor.chmod(0o666 if case=='world_writable' else 0o644)
+    if case=='symlink':
+        target=tmp_path/'real.conf';vendor.rename(target);vendor.symlink_to(target)
+    monkeypatch.setattr(scheduler,'SYSTEMD_TIMEOUT_DROPIN',vendor)
+    monkeypatch.setattr(scheduler,'_trusted_vendor_parent',lambda _:True)
+    real_fstat=scheduler.os.fstat
+    inode=vendor.stat().st_ino
+    def fstat(fd):
+        info=real_fstat(fd)
+        if info.st_ino==inode:
+            return SimpleNamespace(st_mode=info.st_mode,st_uid=501 if case=='wrong_owner' else 0,st_size=info.st_size)
+        return info
+    monkeypatch.setattr(scheduler.os,'fstat',fstat)
+    def run(args,**kwargs):
+        if 'show' not in args:return systemd_fixture(args,tmp_path)
+        unit=args[-1]
+        dropin=(str(tmp_path/'other.conf') if case=='other' else str(vendor))
+        values={'DropInPaths':dropin} if unit.endswith('.timer' if case=='timer' else '.service') else {}
+        return systemd_fixture(args,tmp_path,change=values)
+    monkeypatch.setattr(scheduler.subprocess,'run',run)
+    result=status(store)
+    assert result['matches_applicant'] is (case=='valid')
+    if case!='valid':assert result['error']
+
+
+@pytest.mark.parametrize('case', ['valid','world_writable','wrong_owner','symlink'])
+def test_vendor_dropin_rejects_untrusted_parent(tmp_path,monkeypatch,case):
+    from hireme.scheduler import _trusted_vendor_parent
+    parent=tmp_path/'service.d';parent.mkdir()
+    if case=='world_writable':parent.chmod(0o777)
+    if case=='symlink':
+        target=tmp_path/'real';parent.rename(target);parent.symlink_to(target,target_is_directory=True)
+    real_lstat=Path.lstat
+    def lstat(path):
+        info=real_lstat(path)
+        mode=info.st_mode if path==parent else info.st_mode & ~0o022
+        return SimpleNamespace(st_mode=mode,st_uid=501 if case=='wrong_owner' and path==parent else 0)
+    monkeypatch.setattr(Path,'lstat',lstat)
+    assert _trusted_vendor_parent(parent/'10-timeout-abort.conf') is (case=='valid')
+
+
+@pytest.mark.parametrize('unit,line', [('service','ExecStart=/other/program run'),('timer','OnUnitInactiveSec=1h')])
+def test_systemd_status_rejects_multiple_commands_or_intervals(store,tmp_path,monkeypatch,unit,line):
+    from hireme.pi import service_units
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/systemctl' if name=='systemctl' else None)
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',lambda args,**kw:systemd_fixture(args,tmp_path))
+    directory=tmp_path/'.config/systemd/user';directory.mkdir(parents=True)
+    for name,content in service_units(store,tmp_path).items():(directory/name).write_text(content)
+    path=directory/f'please-hire-me-worker.{unit}'
+    contents=path.read_text()
+    path.write_text(contents.replace('\n[Install]', '\n'+line+'\n\n[Install]') if unit=='timer' else contents+line+'\n')
+    result=status(store)
+    assert result['installed'] and not result['matches_applicant'] and result['error']
 
 
 def test_pi_schedule_update_activates_worker_timer_without_starting_dashboard(store, tmp_path, monkeypatch):
@@ -170,7 +335,7 @@ def test_pi_schedule_update_activates_worker_timer_without_starting_dashboard(st
     calls = []
     def run(args, **kwargs):
         calls.append(args)
-        return SimpleNamespace(returncode=1 if 'is-enabled' in args else 0)
+        return SimpleNamespace(returncode=1 if 'is-enabled' in args else 0,stdout='LoadState=not-found\n' if 'show' in args else '')
     monkeypatch.setattr('hireme.scheduler.subprocess.run', run)
     store.update_settings({'deployment': 'pi', 'live_enabled': False})
     apply_saved_interval(store, tmp_path / 'repo')
@@ -184,7 +349,7 @@ def test_disabled_systemd_schedule_still_protects_its_applicant(store, tmp_path,
     monkeypatch.setattr('hireme.scheduler.sys.platform', 'linux')
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
     monkeypatch.setattr('hireme.scheduler.shutil.which', lambda binary: '/usr/bin/systemctl' if binary == 'systemctl' else None)
-    monkeypatch.setattr('hireme.scheduler.subprocess.run', lambda *a, **kw: SimpleNamespace(returncode=1))
+    monkeypatch.setattr('hireme.scheduler.subprocess.run', lambda args, **kw: systemd_fixture(args,tmp_path,disabled=True))
     directory = tmp_path / '.config/systemd/user'; directory.mkdir(parents=True)
     for name, content in service_units(store, tmp_path).items(): (directory / name).write_text(content)
     other = Store(tmp_path / 'other')

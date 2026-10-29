@@ -1434,10 +1434,18 @@ def test_demo_is_read_only_and_export_requires_auth(tmp_path):
 
 def launch_schedule_fixture(root, repo, port):
     from hireme import scheduler
+    from types import SimpleNamespace
     def fixture_status(store=None, **kwargs):
         row = store.db.execute("SELECT detail FROM events WHERE kind='schedule_installed' ORDER BY seq DESC LIMIT 1").fetchone()
         return {'installed': True, 'matches_applicant': True, 'interval_hours': json.loads(row[0])['interval_hours'] if row else 6}
+    def fixture_query(args):
+        # No real user launchd job belongs to this disposable applicant.
+        # Keep ownership checks exercised without inspecting the host service.
+        if args[:2]==['launchctl','print']:
+            return SimpleNamespace(returncode=113,stdout='')
+        raise AssertionError('Unexpected host scheduler query in dashboard fixture')
     scheduler.status = fixture_status
+    scheduler._query_schedule = fixture_query
     scheduler.install = lambda store, repo: 'synthetic schedule; no OS services changed'
     serve(Path(root), Path(repo), port, token='fixture-capability')
 

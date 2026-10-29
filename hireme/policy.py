@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 6
+ELIGIBILITY_VERSION = 7
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -17,6 +17,13 @@ LOCATIONS = {
 }
 SENIOR=re.compile(r"\bsenior\b|\bsr\.?\b|\bprincipal\b|\blead\b|\bmanager\b|\bdirector\b|\bhead of\b|\barchitect\b|\bstaff\b",re.I)
 YEARS=re.compile(r"(?:at least|minimum(?: of)?|requires?|must have|\b)(\d+)(?:\s*[-–]\s*\d+)?\+?\s+years?(?: of)?\s+(?:professional|relevant|industry|work|software|engineering|experience)",re.I)
+WRITTEN_YEARS=re.compile(r"(?:two|three|four|five|six|seven|eight|nine|ten)\s+(?:or more\s+)?years?",re.I)
+# Only a company-to-company competitive lead is known to be unrelated to an
+# applicant's experience. Other written-out years continue to require review.
+COMPETITIVE_TIMELINE=re.compile(
+    r"\b(?:we are|our company is)\s+(?:two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"(?:to|[-–])\s+(?:two|three|four|five|six|seven|eight|nine|ten)\s+years?\s+ahead\s+of\s+"
+    r"(?:everyone else|(?:our )?competitors|the competition)\b",re.I)
 GRAD=re.compile(r"(?:graduat\w*.{0,35}(?:between|from)\s+)(\d{4})(?:.{0,20}(?:and|to|[-–])\s*)(\d{4})",re.I)
 NO_SPONSOR=re.compile(r"(?:do(?:es)? not|cannot|can.t|will not|unable to|not (?:available|offered)).{0,35}sponsor|sponsorship.{0,30}(?:not (?:available|offered)|unavailable)|without.{0,15}sponsorship",re.I)
 CITIZEN=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:us citizen|u\.s\. citizen|us person|u\.s\. person)|(?:us citizen|u\.s\. citizen|us person).{0,25}(?:required|only)|\bitar\b|(?:active|must have|requires?).{0,20}security clearance",re.I)
@@ -192,7 +199,9 @@ def eligible(job,s,facts):
     if matches: required=max([required or 0,*matches])
     allowed=min(s["max_years_required"],float(facts.get("professional_years",{}).get("value","0")))
     if required is not None and required>allowed: raise Blocked("experience_mismatch")
-    if re.search(r"(?:two|three|four|five|six|seven|eight|nine|ten)\s+(?:or more\s+)?years?",desc,re.I):
+    milestones=[m.span() for m in COMPETITIVE_TIMELINE.finditer(desc)]
+    if any(not any(start<=m.start() and m.end()<=end for start,end in milestones)
+           for m in WRITTEN_YEARS.finditer(desc)):
         raise Blocked("ambiguous_experience","Written-out experience gate needs verification")
     if NO_SPONSOR.search(desc) and facts.get("needs_sponsorship",{}).get("value")!="No":
         raise Blocked("sponsorship_mismatch")

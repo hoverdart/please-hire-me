@@ -20,7 +20,10 @@ from .util import Blocked, application_identity, company_key, company_normalizer
 
 MAX_MESSAGES = 25
 FRESH_SECONDS = 15 * 60
-QUERY = '-from:me {"your application" "you applied" "you have applied" "thank you for applying" "thanks for applying"}'
+MAX_QUERY_BYTES = 1200
+AUTO_SCAN_SECONDS = 30
+AUTO_SCAN_PAGES = 25
+QUERY = 'in:anywhere -from:me {"your application" "you applied" "you have applied" "thank you for applying" "thanks for applying"}'
 PRIOR = re.compile(r'\b(?:your application|you(?: have)? applied|thank you for applying|thanks for applying|received your application|reviewing your application)\b', re.I)
 APPLIED = re.compile(r'\b(?:you(?: have)? applied|thank you for applying|thanks for applying|(?:received|reviewing) your application|your application (?:has been|was) (?:received|submitted))\b',re.I)
 APPLICATION_INVITATION = re.compile(r'\b(?:start|begin|submit|complete|finish|create)\s+(?:your|an?)\s+application\b',re.I)
@@ -255,12 +258,19 @@ def _query(store, company):
     official={row['name'] for row in store.db.execute('SELECT company_key,email_company_key,name FROM prior_application_company_names')
               if row['company_key'] in keys or row['email_company_key'] in keys}
     labels=dict.fromkeys([company,*sorted(official),*sorted(preferred),*sorted(aliases)])
-    terms = ['"'+' '.join(re.findall(r'[^\W_]+',label))+'"' for label in list(labels)[:10]]
-    return QUERY+' {'+' '.join(terms)+'}'
+    terms = ['"'+' '.join(re.findall(r'[^\W_]+',label))+'"' for label in labels if company_key(label)]
+    query=QUERY+' {'+' '.join(terms)+'}'
+    # A successful search must cover every confirmed name. Silently omitting
+    # aliases can incorrectly certify a company as checked. Keep oversized
+    # searches scoped and fail closed rather than dropping names or searching
+    # the whole mailbox.
+    if len(query.encode('utf-8'))>MAX_QUERY_BYTES:
+        raise Blocked('prior_application_company_review','Too many or too-long company names for a complete email search. Consolidate the confirmed company aliases and retry.')
+    return query
 
 
-def scan(store, *, company=None, restart=False, client_factory=None):
-    """One resumable page. The first scan has no date cutoff, including archived mail."""
+def scan(store, *, company=None, restart=False, client_factory=None, work_deadline=None):
+    """One resumable page, including archived, spam and trash mail without an initial date cutoff."""
     from .store import worker_lock
     if company is not None and (not isinstance(company,str) or not 1<=len(company.strip())<=200 or not company_key(company)): raise ValueError('Choose a company name with letters or digits, up to 200 characters')
     if type(restart) is not bool: raise ValueError('Choose whether to restart the scan')
@@ -293,7 +303,7 @@ def scan(store, *, company=None, restart=False, client_factory=None):
             if digest(client.email.casefold())!=owner: raise Blocked('gmail_account_mismatch')
             messages=client.service.users().messages()
             if not pending:
-                options={'userId':'me','q':query,'maxResults':MAX_MESSAGES}
+                options={'userId':'me','q':query,'maxResults':MAX_MESSAGES,'includeSpamTrash':True}
                 if next_page: options['pageToken']=next_page
                 page=messages.list(**options).execute();valid_owner()
                 pending=[item['id'] for item in page.get('messages',[])[:MAX_MESSAGES]
@@ -302,6 +312,7 @@ def scan(store, *, company=None, restart=False, client_factory=None):
                 if not isinstance(next_page,str) or len(next_page)>4096: raise ValueError('Invalid cursor')
                 save()
             processed=added=0;deadline=time.monotonic()+30
+            if work_deadline is not None:deadline=min(deadline,work_deadline)
             for identity in list(pending):
                 if time.monotonic()>=deadline: break
                 valid_owner()
@@ -317,7 +328,11 @@ def scan(store, *, company=None, restart=False, client_factory=None):
                     added+=int(ingest(store,message,company=company))
                 pending.remove(identity);processed+=1;save()
             more=bool(pending or next_page)
-            if not more: save(time.time())
+            # A paginated search may miss messages arriving after its first
+            # page. Freshness therefore starts when the search began, not when
+            # its last page finally completed. A slow scan must catch up via
+            # the overlapping incremental search before it can authorize work.
+            if not more: save(started)
             return {'processed':processed,'added':added,'more_available':more,'scope':company or 'All companies'}
         except Blocked: raise
         except Exception:
@@ -365,10 +380,20 @@ def _preflight(store,job):
     check_saved(store,job)
     try: require_recent_check(store,job);return
     except Blocked: pass
-    result=scan(store,company=job['company'])
-    check_saved(store,job)
-    if result['more_available']: raise Blocked('prior_application_scan_incomplete','More application mail remains to scan for this company. Continue the scan before applying.')
-    require_recent_check(store,job)
+    deadline=time.monotonic()+AUTO_SCAN_SECONDS
+    for _ in range(AUTO_SCAN_PAGES):
+        store.checkpoint()
+        if time.monotonic()>=deadline:break
+        result=scan(store,company=job['company'],work_deadline=deadline)
+        check_saved(store,job)
+        if not result['more_available']:
+            try:require_recent_check(store,job);return
+            except Blocked as error:
+                # Only a successfully completed but stale scan can start an
+                # overlapping catch-up here. Other failures must remain held.
+                row=store.db.execute('SELECT completed FROM prior_application_scans WHERE owner_hash=? AND company_key=?',(_owner(store),scope)).fetchone()
+                if error.reason!='prior_application_check_required' or not row or row['completed'] is None or time.time()-row['completed']<=FRESH_SECONDS:raise
+    raise Blocked('prior_application_scan_incomplete','More application mail remains to scan for this company. Continue the scan before applying.')
 
 
 def _evidence_companies(store,row):

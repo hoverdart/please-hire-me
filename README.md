@@ -127,7 +127,7 @@ Gmail is optional and requires its own OAuth connection under **Connections → 
 
 With **Check Gmail for past applications** enabled, the worker checks an employer's historical email before applying. Exact posting links or a complete company and role match hold duplicates, including applications made outside HireMeMaybe. Matching preserves internship year, seniority and location when they appear in the role title. A generic company acknowledgement stays available for review rather than marking every role at that company as applied.
 
-Use **Past applications from email** to scan an employer or build a broader historical index. The first scan includes archived mail, and each page saves its position. Continue when more mail remains; if Gmail limits access, retry later from the saved position. Review the original message and select an exact saved role when needed. These email records remain separate from the worker's submission outcomes. Email text stays out of model prompts.
+Use **Past applications from email** to scan an employer or build a broader historical index. The first scan includes archived mail, Spam and Trash, and each page saves its position. Continue when more mail remains; if Gmail limits access, retry later from the saved position. Review the original message and select an exact saved role when needed. These email records remain separate from the worker's submission outcomes. Email text stays out of model prompts.
 
 ## What to expect
 
@@ -139,11 +139,11 @@ Use **Past applications from email** to scan an employer or build a broader hist
 - Login walls, CAPTCHA, unknown questions, unsupported controls and ambiguous receipts need manual review. Discovering an ATS posting does not establish support for its application form.
 - An optional visible-browser wait lets you complete a post-click challenge on compatible Ashby forms within the existing attempt. It starts disabled and is capped at 600 seconds. The worker does not solve the challenge or retry an uncertain application.
 - Optional Gmail handles recognized Greenhouse verification codes, batch reports and recruiting-feedback suggestions. Review matching acknowledgements, assessments, interviews, rejections and offers against an exact application attempt. Inbox text stays out of models, and reviewed feedback never changes submission status or authorizes a retry.
-- Opt-in Gmail history checks find past applications made outside this app. Exact posting or company/role matches hold duplicate applications before the browser opens; company-only mail can be linked to an exact saved role after review. The first scan includes archived mail without a date cutoff.
+- Opt-in Gmail history checks find past applications made outside this app. Exact posting or company/role matches hold duplicate applications before the browser opens; company-only mail can be linked to an exact saved role after review. The first scan includes archived mail, Spam and Trash without a date cutoff.
 - **Answers & evidence** joins an attempt's posting identity, exact document references, submission outcome, reviewed recruiting feedback and next action. Export its private JSON record or download the original recorded PDFs. New attempts capture posting identity; older records clearly label unavailable historical context.
 - **Recruiting Insights** in Applications compares reviewed responses by company, exact role title, source and resume PDF. Choose a response window and inspect the attempts behind each metric. Recent or uncertain submissions do not enter mature-response denominators; missing feedback is not a rejection.
 
-The configured release-candidate version is **0.5.0rc8**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
+The configured release-candidate version is **0.5.0rc9**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
 
 ## Guides and development
 

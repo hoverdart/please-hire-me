@@ -174,6 +174,28 @@ def ready(store, job, at=None):
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':
+        if row['reason']=='ambiguous_experience':
+            # Legacy screening holds were classified as manual reviews. Only
+            # revalidate this one policy reason, never an application attempt
+            # or a different review. Archived attempts also remain held.
+            try:evidence=json.loads(row['evidence'])
+            except (ValueError,TypeError):return False
+            if (not isinstance(evidence,dict) or evidence.get('stage')!='screening'
+                    or store.db.execute("SELECT 1 FROM application_records WHERE job_id=? AND state!='prepared' LIMIT 1",(job['id'],)).fetchone()):
+                return False
+            from .policy import COMPETITIVE_TIMELINE,eligible
+            saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
+            if not saved:return False
+            try:posting=json.loads(saved['payload'])
+            except (ValueError,TypeError):return False
+            if (not isinstance(posting,dict) or not isinstance(posting.get('description'),str)
+                    or {k:v for k,v in posting.items() if k!='_listing_hash'}
+                       != {k:v for k,v in job.items() if k!='_listing_hash'}
+                    or not COMPETITIVE_TIMELINE.search(posting['description'])):
+                return False
+            try:eligible(posting,store.settings(),store.facts())
+            except (Blocked,TypeError,ValueError,KeyError,AttributeError):return False
+            return True
         return (row['reason']=='remote_draft_uncertain'
                 and bool(store.db.execute("SELECT 1 FROM workday_drafts WHERE job_id=? AND state='acknowledged'",(job['id'],)).fetchone())
                 and row['dependency']!=dependency(store,job,'review',row['reason']))
@@ -237,11 +259,16 @@ def recheck(store,job_id):
     store.check_job_decision(job_id)
     if not safe_state(store,job_id):raise ValueError('Verify the existing submission outcome; another attempt is not authorized')
     if _uncertain_draft(store,job_id):return {'ready':False,'reason':'remote_draft_uncertain'}
-    job=json.loads(row['payload'])
+    try:job=json.loads(row['payload'])
+    except (ValueError,TypeError):return {'ready':False,'reason':'invalid_posting'}
+    if not isinstance(job,dict) or job.get('id')!=job_id or not isinstance(job.get('description'),str):
+        return {'ready':False,'reason':'invalid_posting'}
     from .policy import eligible
     try:eligible(job,store.settings(),store.facts())
     except Blocked as error:
         hold(store,job,error.reason,error.detail,'screening');return {'ready':False,'reason':error.reason}
+    except (TypeError,ValueError,KeyError,AttributeError):
+        return {'ready':False,'reason':'invalid_posting'}
     available=ready(store,job)
     previous=store.db.execute('SELECT category,retry_at,retry_count,reason,dependency FROM job_holds WHERE job_id=?',(job_id,)).fetchone()
     if not available and previous and previous['reason'] in {'workday_session_unverified','workday_identity_mismatch'}:

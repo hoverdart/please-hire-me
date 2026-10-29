@@ -246,6 +246,77 @@ def test_duplicate_cron_schedules_fail_release_gate_even_for_the_same_applicant(
     assert result['installed_count'] == 2 and result['matches_applicant'] and not result['ready']
 
 
+@pytest.mark.parametrize('changed', [None, 'applicant', 'interval', 'directory', 'environment', 'extra_connection', 'unreadable'])
+def test_launchd_release_check_verifies_loaded_job_not_only_saved_plist(store, tmp_path, monkeypatch, changed):
+    import plistlib
+    from hireme import scheduler
+    monkeypatch.setattr('hireme.scheduler.sys.platform', 'darwin')
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
+    path=tmp_path/'Library/LaunchAgents'/f'{scheduler.LABEL}.plist'
+    path.parent.mkdir(parents=True)
+    arguments=['/fixture/python','-m','hireme','--data-dir',str(store.root),'run']
+    saved={'Label':scheduler.LABEL,'ProgramArguments':arguments,'WorkingDirectory':'/fixture/repo',
+           'EnvironmentVariables':{'PATH':'/fixture/bin','CLAUDE_CONFIG_DIR':'/fixture/claude'},
+           'StartInterval':store.settings()['schedule_hours']*3600}
+    path.write_bytes(plistlib.dumps(saved))
+    loaded=list(arguments)
+    if changed=='applicant':loaded[4]=str(tmp_path/'other-applicant')
+    directory='/fixture/old-repo' if changed=='directory' else saved['WorkingDirectory']
+    interval=1800 if changed=='interval' else saved['StartInterval']
+    claude='/fixture/old-claude' if changed=='environment' else '/fixture/claude'
+    extra='\t\tCODEX_HOME => /fixture/old-codex\n' if changed=='extra_connection' else ''
+    output=('arguments = {\n'+''.join('\t\t'+arg+'\n' for arg in loaded)
+            +'\t}\n\tworking directory = '+directory+'\n\trun interval = '+str(interval)+' seconds\n'
+            +'\tenvironment = {\n\t\tPATH => /fixture/bin\n\t\tCLAUDE_CONFIG_DIR => '+claude+'\n'+extra
+            +'\t\tXPC_SERVICE_NAME => '+scheduler.LABEL+'\n\t}\n')
+    if changed=='unreadable':output='unexpected launchctl output'
+    monkeypatch.setattr(release_check.subprocess,'run',lambda args,**kw:SimpleNamespace(
+        returncode=0,stdout='disabled services = {\n}\n' if 'print-disabled' in args else output))
+    view=release_check.ReadOnlyLedger(store.root)
+    try:result=release_check._scheduler(view)
+    finally:view.close()
+    assert result['active'] and result['enabled'] and result['matches_applicant']
+    assert result['loaded_matches_saved'] is (changed is None)
+    assert result['ready'] is (changed is None)
+
+
+@pytest.mark.parametrize('override,default,available,expected', [
+    ('enabled',False,True,True),('disabled',False,True,False),
+    (None,False,True,True),(None,True,True,False),('enabled',True,True,True),
+    ('malformed',False,True,False),('duplicate',False,True,False),
+    (None,False,False,False),
+])
+def test_launchd_release_check_requires_persistent_enabled_state(store,tmp_path,monkeypatch,override,default,available,expected):
+    import plistlib
+    from hireme import scheduler
+    monkeypatch.setattr('hireme.scheduler.sys.platform','darwin')
+    monkeypatch.setattr(Path,'home',classmethod(lambda cls:tmp_path))
+    path=tmp_path/'Library/LaunchAgents'/f'{scheduler.LABEL}.plist'
+    path.parent.mkdir(parents=True)
+    arguments=['/fixture/python','-m','hireme','--data-dir',str(store.root),'run']
+    interval=store.settings()['schedule_hours']*3600
+    path.write_bytes(plistlib.dumps({'Label':scheduler.LABEL,'ProgramArguments':arguments,
+        'WorkingDirectory':'/fixture/repo','StartInterval':interval,'Disabled':default,
+        'EnvironmentVariables':{'PATH':'/fixture/bin'}}))
+    output=('arguments = {\n'+''.join('\t'+arg+'\n' for arg in arguments)
+            +'}\nworking directory = /fixture/repo\nrun interval = '+str(interval)+' seconds\n'
+            +'environment = {\n PATH => /fixture/bin\n}\n')
+    if override=='malformed':disabled='unreadable launchctl output'
+    else:
+        entry=f'"{scheduler.LABEL}" => {override}\n' if override else ''
+        if override=='duplicate':entry=f'"{scheduler.LABEL}" => enabled\n"{scheduler.LABEL}" => disabled\n'
+        disabled='disabled services = {\n'+entry+'}\n'
+    def run(args,**kwargs):
+        if 'print-disabled' in args:return SimpleNamespace(returncode=0 if available else 1,stdout=disabled)
+        return SimpleNamespace(returncode=0,stdout=output)
+    monkeypatch.setattr(release_check.subprocess,'run',run)
+    view=release_check.ReadOnlyLedger(store.root)
+    try:result=release_check._scheduler(view)
+    finally:view.close()
+    assert result['active'] and result['loaded_matches_saved']
+    assert result['enabled'] is expected and result['ready'] is expected
+
+
 def test_scheduler_status_never_creates_a_missing_daemon_lock(store, monkeypatch):
     from hireme import scheduler
     monkeypatch.setattr(scheduler, 'status', lambda _: {'installed': False})
