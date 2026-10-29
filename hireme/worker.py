@@ -70,13 +70,15 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             while not screening_done:
                 batch_started=time.monotonic()
                 with store.transaction():
+                    from .ashby_guard import screening_snapshot
+                    ashby_snapshot=screening_snapshot(store)
                     for _ in range(100):
                         store.checkpoint()
                         try:row=next(pending)
                         except StopIteration:
                             screening_done=True;break
                         job=json.loads(row['payload'])
-                        if ready(store,job):
+                        if ready(store,job,ashby_snapshot=ashby_snapshot):
                             try:
                                 score,evidence=eligible(job,s,store.facts())
                                 store._check_budget(job,s)

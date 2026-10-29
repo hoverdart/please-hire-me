@@ -13,7 +13,7 @@ MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_veri
 DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed','writing_link_unverified'}
 ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','account_fields_unavailable','captcha_blocked','account_or_verification_blocked','account_automation_disabled','account_result_uncertain','account_creation_held','account_credentials_unavailable','company_verification_pending','account_blocked','account_required','company_uncertain','email_verification_required','captcha','email_verification_failed'}
 WORKDAY_ACCOUNT_REASONS = {'workday_session_unverified','workday_identity_mismatch','workday_acceptance_unverified','remote_draft_permission_required'}
-TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output','writing_unsupported','ashby_draft_save_failed'}
+TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output','writing_unsupported'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
 
 ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review'}
@@ -162,11 +162,19 @@ def _uncertain_draft(store,job_id):
     return bool(store.db.execute("SELECT 1 FROM remote_draft_steps WHERE job_id=? AND state IN ('intent','unknown') LIMIT 1",(job_id,)).fetchone()
                 or store.db.execute("SELECT 1 FROM workday_drafts WHERE job_id=? AND state='unknown'",(job_id,)).fetchone())
 
-def ready(store, job, at=None):
+def ready(store, job, at=None, ashby_snapshot=None):
     if not safe_state(store,job['id']):return False
     if _uncertain_draft(store,job['id']):return False
+    if ashby_snapshot is not None:
+        if ashby_snapshot.blocks(job):return False
+    elif job.get('host')=='jobs.ashbyhq.com':
+        from .ashby_guard import uncertain,legacy_failed
+        if uncertain(store,job['id']) or legacy_failed(store,job['id']):return False
     row=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
     if not row:return True
+    # Legacy transient holds cannot tell a suppressed write from a request
+    # that reached Ashby without a trustworthy acknowledgement.
+    if row['reason']=='ashby_draft_save_failed':return False
     if mail_screening_hold(row):return True
     if row['reason']=='model_budget_exhausted' and model_available(store,at):return True
     if row['category']=='limits':return True # Existing policy checks the current day/company limits.
@@ -236,7 +244,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
         'limits':'Wait for existing company or daily limits to clear.',
         'review':'Review this failure before allowing another attempt.'}
     if reason=='model_budget_exhausted':guidance[kind]='Approve the unanswered fields, or wait for the next model allowance. Request limits remain unchanged.'
-    if reason in REASON_GUIDANCE and (reason.startswith(('workday_','prior_application_')) or reason in {'remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
+    if reason in REASON_GUIDANCE and (reason.startswith(('workday_','prior_application_')) or reason in {'ashby_draft_save_failed','ashby_draft_uncertain','remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
         guidance[kind]=REASON_GUIDANCE[reason][1]
     # References and field labels only: no answer values, passwords, or OTPs.
     evidence={'stage':stage,'category':kind,'field':str(detail)[:300] if reason in FACT_REASONS|MAPPING_REASONS else '',
@@ -255,6 +263,13 @@ def annotate(store,jobs):
         row=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
         if row:
             job['hold']={**json.loads(row['evidence']),'reason':row['reason'],'retry_at':row['retry_at'],'retry_count':row['retry_count']}
+            from .ashby_guard import uncertain,legacy_failed
+            ashby_uncertain=uncertain(store,job['id']) or legacy_failed(store,job['id'])
+            if ashby_uncertain:
+                job['hold'].update(reason='ashby_draft_uncertain',category='review',retry_at=None,next_action=REASON_GUIDANCE['ashby_draft_uncertain'][1])
+            elif row['reason']=='ashby_draft_save_failed':
+                # Old transient evidence must not advertise a retry that is no longer safe.
+                job['hold'].update(category='review',retry_at=None,next_action=REASON_GUIDANCE[row['reason']][1])
     return jobs
 
 def recheck(store,job_id):
@@ -262,6 +277,11 @@ def recheck(store,job_id):
     if not row:raise ValueError('Opportunity not found')
     store.check_job_decision(job_id)
     if not safe_state(store,job_id):raise ValueError('Verify the existing submission outcome; another attempt is not authorized')
+    existing=store.db.execute('SELECT reason FROM job_holds WHERE job_id=?',(job_id,)).fetchone()
+    if existing and existing['reason']=='ashby_draft_save_failed':return {'ready':False,'reason':'ashby_draft_save_failed'}
+    from .ashby_guard import uncertain,legacy_failed
+    if uncertain(store,job_id) or legacy_failed(store,job_id):
+        return {'ready':False,'reason':'ashby_draft_uncertain'}
     if _uncertain_draft(store,job_id):return {'ready':False,'reason':'remote_draft_uncertain'}
     try:job=json.loads(row['payload'])
     except (ValueError,TypeError):return {'ready':False,'reason':'invalid_posting'}

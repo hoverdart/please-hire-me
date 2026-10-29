@@ -767,6 +767,8 @@ class Store:
 
     def recover(self):
         with self.transaction():
+            from .ashby_legacy_guard import protect_legacy_ashby
+            protect_legacy_ashby(self)
             from .workday_commission_state import recover_commission
             recover_commission(self)
             from .workday_state import recover_drafts

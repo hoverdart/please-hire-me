@@ -509,7 +509,7 @@ def test_real_pipeline_draft_rejection_has_no_submit_intent_and_reports_its_hold
     assert not store.db.execute('SELECT 1 FROM applications').fetchone()
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
     body = network.mailbox.messages_sent[0].get_body(preferencelist=('plain',)).get_content()
-    assert 'The employer did not save every field' in body and posting.url in body
+    assert 'Ashby draft save needs review' in body and posting.url in body
     before = copy.deepcopy(posting.requests)
     assert network.run()['attempts'] == 0
     assert posting.requests == before and not network.unexpected
@@ -807,7 +807,7 @@ def test_ten_job_email_regression_reuses_confirmed_facts_and_keeps_real_manual_b
     assert all(body.count(p.url) == 1 for p in postings)
     assert '  • Privacy — A personal answer is missing' in body
     assert 'University of Waterloo student?' not in body and 'Have you served in the military?' not in body
-    assert 'The employer did not save every field' in body
+    assert 'Ashby draft save needs review' in body
     assert 'Submission outcome is uncertain.' in body and 'not_submitted' in body
     before = copy.deepcopy([p.requests for p in postings])
     assert network.run()['attempts'] == 0

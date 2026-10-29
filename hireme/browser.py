@@ -220,7 +220,7 @@ class Browser:
         self.workday_grant=None
         self.workday_read_scope=None
         self.submission_requests={}
-        self.ashby_draft=None;self.ashby_submission=None
+        self.ashby_draft=None;self.ashby_submission=None;self.ashby_draft_fence=None
         self.native_submission=None;self.greenhouse_uploads={};self.greenhouse_upload_fields={};self.greenhouse_native_options={};self.greenhouse_upload_pending={}
         self.greenhouse_native_locations={}
         self.write_boundary=None
@@ -380,7 +380,7 @@ class Browser:
                 from .ashby_attachments import grant_upload
                 try:grant=grant_upload(self,route.request,self._request_key(route.request))
                 except Blocked:grant=False
-                return (self._continue_route(route,**grant) if isinstance(grant,dict) else self._continue_route(route)) if grant else route.abort()
+                return (self._continue_route(route,_ashby_draft_write=True,**grant) if isinstance(grant,dict) else self._continue_route(route,_ashby_draft_write=True)) if grant else route.abort()
             if self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
                 from .greenhouse_submission import grant_upload
                 try:grant=grant_upload(self,route.request,self._request_key(route.request))
@@ -478,7 +478,7 @@ class Browser:
                     from .ashby_attachments import grant_attachment
                     try:
                         if grant_attachment(self,route.request,data,self._request_key(route.request)):
-                            return self._continue_route(route)
+                            return self._continue_route(route,_ashby_draft_write=True)
                     except Blocked:pass
                     self.denied_write=True
                     self.denied_request={'host':host,'path':p.path,'method':route.request.method}
@@ -486,7 +486,7 @@ class Browser:
                 if host==self.current_host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql' and self.ashby_draft:
                     try:
                         if self.ashby_draft.allow(route.request,data,self._request_key(route.request)):
-                            return self._continue_route(route)
+                            return self._continue_route(route,_ashby_draft_write=True)
                     except Blocked as error:
                         self.denied_write=True;self.denied_request={'host':host,'path':p.path,'method':route.request.method,'reason':error.reason}
                         return route.abort()
@@ -494,6 +494,11 @@ class Browser:
                 reading=reading or p.path=='/uncacheable_attributes/presigned_fields'
                 passive_check=p.path.startswith("/cdn-cgi/challenge-platform/")
                 uploading=bool(re.search(r'/(?:upload|uploads|files|attachments|documents)(?:/|\?|$)',p.path,re.I))
+                if self.current_host=='jobs.ashbyhq.com':
+                    # The generic ATS upload and challenge path exceptions do
+                    # not authorize Ashby guest-draft writes. Only the reviewed
+                    # field/attachment/upload grants above may transport them.
+                    reading=ashby_read;passive_check=False;uploading=False
                 if not reading and not uploading and not passive_check:
                     # Ashby autosaves even untouched/null fields on form hydration,
                     # and saves the texting selection in its form-render draft.
@@ -520,7 +525,7 @@ class Browser:
         self._record_submission_request(route.request)
         return self._continue_route(route)
 
-    def _continue_route(self,route,*,_reviewed_read=False,**overrides):
+    def _continue_route(self,route,*,_reviewed_read=False,_ashby_draft_write=False,**overrides):
         """Last local authority check, after native payload validation."""
         request=route.request
         reading=_reviewed_read or request.method in ('GET','HEAD','OPTIONS')
@@ -553,6 +558,22 @@ class Browser:
                 self.denied_write=True
                 self.denied_request={'host':urlsplit(request.url).hostname,'path':urlsplit(request.url).path,
                                      'method':request.method,'reason':'approval_changed'}
+                self._record_post_submit_denial()
+                return route.abort()
+        if _ashby_draft_write or (self.current_host=='jobs.ashbyhq.com' and self.attempted and self.ashby_submission
+                                  and self.ashby_submission.used):
+            try:
+                from .ashby_guard import begin,check
+                job=self.ashby_draft.job
+                if _ashby_draft_write and not self.ashby_draft_fence:
+                    package=self.write_boundary.package if self.write_boundary else self.ashby_draft.package
+                    self.ashby_draft_fence=begin(self.store,job,package,request,overrides)
+                check(self.store,job['id'],self.ashby_draft_fence)
+            except Exception:
+                # A failed commit/check must never release the request.
+                self.denied_write=True
+                self.denied_request={'host':urlsplit(request.url).hostname,'path':urlsplit(request.url).path,
+                                     'method':request.method,'reason':'ashby_draft_uncertain'}
                 self._record_post_submit_denial()
                 return route.abort()
         return route.continue_(**overrides)
@@ -1176,6 +1197,20 @@ class Browser:
         }))''',self.preparing):raise Blocked('invalid_fields')
 
     def apply(self,job,live=True):
+        # A normal return still cannot prove a remote guest draft absent. Close
+        # this session's marker as unknown; a hard crash leaves intent for
+        # worker recovery. Never modify another session's marker.
+        self.ashby_draft_fence=None
+        try:
+            return self._apply(job,live=live)
+        finally:
+            if self.ashby_draft_fence:
+                from .ashby_guard import finish
+                # A failed close leaves the durable intent for recovery. It
+                # must not replace a confirmed outcome or the original error.
+                with contextlib.suppress(Exception):finish(self.store,self.ashby_draft_fence)
+
+    def _apply(self,job,live=True):
         self.workday_grant=None
         self.workday_read_scope=None
         self.preparing=not live
@@ -1183,7 +1218,7 @@ class Browser:
         # unavailable destinations at the next attempt, retaining actual denials.
         self.host_cache={host:allowed for host,allowed in self.host_cache.items() if allowed is not None}
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
-        self.ashby_attachment_state=None;self.post_submit_denial_recorded=False
+        self.ashby_attachment_state=None;self.post_submit_denial_recorded=False;self.ashby_draft_fence=None
         self.ashby_submission=None;self.human_verification_seconds=0
         self.native_submission=None;self.greenhouse_uploads={};self.greenhouse_upload_fields={};self.greenhouse_native_options={};self.greenhouse_upload_pending={}
         self.greenhouse_native_locations={}
@@ -1191,6 +1226,16 @@ class Browser:
         self.lever_resume=None
         self.store.check_job_decision(job['id'])
         if live:
+            if job['host']=='jobs.ashbyhq.com' and not self.test_url:
+                saved=self.store.db.execute('SELECT url,host FROM jobs WHERE id=?',(job['id'],)).fetchone()
+                if not saved or saved['url']!=job.get('url') or saved['host']!='jobs.ashbyhq.com':
+                    raise Blocked('ashby_draft_uncertain','Save the exact posting before checking its draft history')
+                from .ashby_legacy_guard import protect_legacy_ashby
+                protect_legacy_ashby(self.store)
+                from .ashby_guard import check
+                check(self.store,job['id'])
+                from .job_holds import safe_state
+                if not safe_state(self.store,job['id']):raise Blocked('duplicate_or_uncertain','This requisition already has a recorded attempt')
             previous=self.store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
             if previous and previous[0]!='prepared':raise Blocked('duplicate_or_uncertain','This requisition already has a recorded attempt')
             self.store._check_budget(job,self.store.settings())
@@ -1473,7 +1518,15 @@ class Browser:
                 from .greenhouse_submission import GreenhouseSubmission
                 self.native_submission=GreenhouseSubmission(self,job,package,self.aid,submit)
             if self.write_boundary:self.write_boundary.check()
-            self.store.begin_submit(self.aid); self.attempted=True
+            if self.ashby_draft:
+                from .ashby_guard import check
+                # Make the fence check and final submission intent atomic with
+                # respect to another process recovering an interrupted draft.
+                with self.store.transaction():
+                    check(self.store,job['id'],self.ashby_draft_fence)
+                    self.store.begin_submit(self.aid)
+            else:self.store.begin_submit(self.aid)
+            self.attempted=True
             requested=time.time()
             stage='submit_click'
             try:
