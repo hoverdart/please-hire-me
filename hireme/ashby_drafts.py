@@ -8,6 +8,9 @@ from urllib.parse import urlsplit,parse_qsl
 
 from .util import Blocked, digest
 
+# Reevaluate only Ashby draft mapping holds when this reviewed protocol changes.
+VERSION = 1
+
 # Reviewed public ApiSetFormValue operation, including its read-only fragments.
 # A vendor query change needs review instead of granting another mutation.
 SET_VALUE_QUERY = '8dd80bd14717a189f21c3fbd38f8c6a5fff93c3e559b22d790b55195cfc41171'
@@ -272,12 +275,17 @@ class AshbyDraft:
                 # asks for a university. Additional history fields need their
                 # own approved values and a reviewed encoding.
                 if (answer.get('provenance',{}).get('fact_key')!='school'
-                        or normalize(metadata.get('title','')) not in {'college/university','college / university','school','university'}
+                        or normalize(metadata.get('title','')) not in {'college/university','college / university','school','university',
+                            'which university/college do you attend?'}
                         or metadata.get('schoolName')!='required'
                         or any(metadata.get(key)!='excluded' for key in ('degree','major','startDate','endDate'))
                         or type(metadata.get('minRepeat')) is not int or not 0<=metadata['minRepeat']<=1
                         or metadata.get('maxRepeat') is not None and (type(metadata['maxRepeat']) is not int or metadata['maxRepeat']<1)):
                     raise Blocked('ashby_draft_unsupported','Ashby education history requires additional verified fields')
+                if normalize(metadata.get('title',''))=='which university/college do you attend?':
+                    from .answers import _current_enrollment
+                    if not _current_enrollment(self.store,'Are you currently enrolled in a degree program?',[]):
+                        raise Blocked('missing_fact','Confirm current enrollment before answering this university question')
                 choices=set(self.schools.get(value,set()))
                 restored=form['values'].get(path)
                 if (isinstance(restored,list) and len(restored)==1 and isinstance(restored[0],dict)

@@ -297,6 +297,47 @@ def test_submission_protocol_upgrade_does_not_release_unrelated_mapping_hold(sto
     assert not ready(store,job)
 
 
+@pytest.mark.parametrize('state',['prepared','submitting','unknown','awaiting_verification','confirmed','not_submitted'])
+def test_draft_protocol_upgrade_rechecks_only_unattempted_drafts(store,job,package,monkeypatch,state):
+    from hireme.job_holds import hold,ready
+    monkeypatch.setattr('hireme.ashby_drafts.VERSION',1)
+    aid=store.prepare(job,package)
+    hold(store,job,'ashby_draft_unsupported')
+    if state!='prepared':
+        store.begin_submit(aid)
+        if state!='submitting':store.finish(aid,state,'Synthetic retained outcome')
+    before=dict(store.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone())
+    assert not ready(store,job)
+    monkeypatch.setattr('hireme.ashby_drafts.VERSION',2)
+    assert ready(store,job)==(state=='prepared')
+    assert dict(store.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone())==before
+
+
+def test_draft_protocol_upgrade_does_not_release_unrelated_mapping_hold(store,job,package,monkeypatch):
+    from hireme.job_holds import hold,ready
+    monkeypatch.setattr('hireme.ashby_drafts.VERSION',1)
+    store.prepare(job,package)
+    hold(store,job,'ashby_submission_unsupported')
+    monkeypatch.setattr('hireme.ashby_drafts.VERSION',2)
+    assert not ready(store,job)
+
+
+def test_legacy_draft_mapping_hold_is_rechecked_after_version_added(store,job,package,monkeypatch):
+    import hireme.job_holds as holds
+    store.prepare(job,package)
+    original_digest=holds.digest
+    def legacy_digest(data):
+        if isinstance(data,dict) and 'ashby_draft' in data:
+            data={key:value for key,value in data.items() if key!='ashby_draft'}
+        return original_digest(data)
+    with monkeypatch.context() as old:
+        old.setattr(holds,'digest',legacy_digest)
+        holds.hold(store,job,'ashby_draft_unsupported')
+        assert not holds.ready(store,job)
+    assert holds.ready(store,job)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('change',['value','missing_value','definition','unacknowledged','action_title','duplicate_control'])
 def test_native_submission_grant_requires_current_field_acknowledgements_and_submit_action(store,job,package,change):
     from hireme.ashby_submission import AshbySubmission
@@ -848,12 +889,12 @@ fetch('/api/non-user-graphql',{method:'POST',body:JSON.stringify({...envelope,va
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
-def school_draft(store,job,package,*,observe=True,restored=None):
+def school_draft(store,job,package,*,observe=True,restored=None,title='College/University'):
     from hireme.answers import resolve
     store.put_facts({'school':SCHOOL})
     package={**package,'facts_hash':digest(store.facts())}
     d,_=draft(store,job,package)
-    field={'index':0,'indices':[0],'label':'College/University','type':'combobox','required':True,
+    field={'index':0,'indices':[0],'label':title,'type':'combobox','required':True,
            'options':[SCHOOL],'maxlength':-1,'value':'','ashby_path':SCHOOL_PATH,
            'ashby_entry_id':RENDER+'_'+SCHOOL_PATH}
     proof={**d.package,'answers':[resolve(store,d.job['host'],field)]}
@@ -870,6 +911,43 @@ def school_draft(store,job,package,*,observe=True,restored=None):
     result={'data':{'result':[{'id':'fixture-school','name':SCHOOL,'__typename':'CanonicalSchool'}]}}
     if observe:d.observe_schools(read,SimpleNamespace(status=200,json=lambda:result))
     return d,proof,read,result,official
+
+
+def test_school_only_history_accepts_exact_current_university_question(store,job,package,monkeypatch):
+    monkeypatch.setattr('hireme.util.now',lambda:'2027-01-01T00:00:00+00:00')
+    store.put_facts({'college_start':'2025-08','graduation':'2028-05'})
+    d,proof,_,_,_=school_draft(store,job,package,title='Which university/college do you attend?')
+    d.enable(None,proof['answers'],proof)
+    value=[{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL}]
+    r,data=request(value,path=SCHOOL_PATH)
+    assert d.allow(r,data,'school') and not d.complete
+
+
+@pytest.mark.parametrize('dates',[
+    {},
+    {'college_start':'2022-08','graduation':'2026-05'},
+    {'college_start':'2027-08','graduation':'2028-05'},
+])
+def test_current_university_question_requires_confirmed_current_enrollment(store,job,package,monkeypatch,dates):
+    monkeypatch.setattr('hireme.util.now',lambda:'2027-01-01T00:00:00+00:00')
+    if dates:store.put_facts(dates)
+    d,proof,_,_,_=school_draft(store,job,package,title='Which university/college do you attend?')
+    with pytest.raises(Blocked,match='missing_fact'):
+        d.enable(None,proof['answers'],proof)
+    r,data=request([{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL}],path=SCHOOL_PATH)
+    assert not d.allow(r,data,'school')
+
+
+@pytest.mark.parametrize('title',[
+    'Which university/college did you attend?',
+    'Which university/college do you attend for your graduate degree?',
+])
+def test_school_only_history_rejects_unreviewed_question_wording(store,job,package,title):
+    d,proof,_,_,_=school_draft(store,job,package,title=title)
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):
+        d.enable(None,proof['answers'],proof)
+    r,data=request([{'canonicalSchoolId':'fixture-school','schoolName':SCHOOL}],path=SCHOOL_PATH)
+    assert not d.allow(r,data,'school')
 
 
 @pytest.mark.parametrize('restored',[False,True])
