@@ -9,7 +9,7 @@ from urllib.parse import urlsplit,parse_qsl
 from .util import Blocked, digest, textarea_value
 
 # Reevaluate only Ashby draft mapping holds when this reviewed protocol changes.
-VERSION = 1
+VERSION = 2
 
 # Reviewed public ApiSetFormValue operation, including its read-only fragments.
 # A vendor query change needs review instead of granting another mutation.
@@ -22,6 +22,16 @@ UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
 
 def same(left, right):
     return json.dumps(left, sort_keys=True, separators=(',',':')) == json.dumps(right, sort_keys=True, separators=(',',':'))
+
+
+def number_wire(value, label):
+    """Encode only a lossless, canonical nonnegative JavaScript integer."""
+    if not isinstance(value,str) or not re.fullmatch(r'(?:0|[1-9][0-9]*)',value) or len(value)>16:
+        raise Blocked('ashby_draft_unsupported',label+' — Ashby number encoding needs review')
+    number=int(value)
+    if number>9007199254740991:
+        raise Blocked('ashby_draft_unsupported',label+' — Ashby number encoding needs review')
+    return number
 
 
 def official_choices(metadata, field, selected):
@@ -268,6 +278,10 @@ class AshbyDraft:
                 raise Blocked('ashby_draft_unsupported','Ashby question identity changed')
             value=answer['value'];kind=field['type']
             if kind=='textarea':value=textarea_value(value)
+            if kind=='number' or metadata.get('type')=='Number':
+                if kind!='number' or metadata.get('type')!='Number':
+                    raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby number control changed')
+                value=number_wire(value,field['label'])
             if kind=='ashby_education':
                 from .ashby_education import wire
                 value=wire(self,field,metadata,value)

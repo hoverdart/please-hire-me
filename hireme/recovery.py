@@ -10,6 +10,7 @@ def _unfinished(store):
         'interrupted_runs': store.db.execute("SELECT COUNT(*) FROM runs WHERE status='running'").fetchone()[0],
         'unfinished_submissions': store.db.execute("SELECT COUNT(*) FROM application_records WHERE state='submitting'").fetchone()[0],
         'unfinished_accounts': store.db.execute("SELECT COUNT(*) FROM employer_accounts WHERE state IN ('creating','signing_in')").fetchone()[0],
+        'unfinished_drafts': store.db.execute("SELECT COUNT(DISTINCT d.job_id) FROM remote_draft_steps d WHERE d.state='intent' AND NOT EXISTS (SELECT 1 FROM application_records a WHERE a.job_id=d.job_id AND a.state!='prepared')").fetchone()[0],
     }
 
 
@@ -21,7 +22,7 @@ def worker_status(store):
     except Blocked as error:
         if error.reason != 'worker_busy': raise
         return {'running': True, 'recovery_needed': False,
-                'interrupted_runs': 0, 'unfinished_submissions': 0, 'unfinished_accounts': 0}
+                'interrupted_runs': 0, 'unfinished_submissions': 0, 'unfinished_accounts': 0, 'unfinished_drafts': 0}
 
 
 def recover_interrupted(store):

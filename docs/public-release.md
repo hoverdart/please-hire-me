@@ -1,6 +1,6 @@
 # Release status
 
-The configured release-candidate version is **0.5.0rc12**. Published candidates are available from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases), for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
+The configured release-candidate version is **0.5.0rc13**. Published candidates are available from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases), for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
 
 ## Capability boundaries
 
@@ -16,6 +16,8 @@ The configured release-candidate version is **0.5.0rc12**. Published candidates 
 | Gmail | Owner-bound OAuth, recognized Greenhouse codes, independent batch-report outbox and opt-in recruiting-feedback suggestions with reviewed attempt links | Actual authorization, code binding, mailbox matching and delivery; suggested email classifications require review and cannot establish submission or permit retries |
 | Employer accounts | Optional supported native signup/sign-in, exact credential readback, separate intents and manual reconciliation | Verified account transport and agreements; JavaScript/SSO and unsupported verification remain manual |
 | Unknown portals / controls | Discovery where recognized, with actionable holds for unsupported application behavior | A bounded adapter with matching form and outcome evidence |
+
+Ashby guest-draft interruptions remain held across posting aliases, including after a confirmed outcome. Older recorded attempts are held conservatively on upgrade; unrecorded historical direct writes cannot be reconstructed. An interrupted guest draft does not yet have an automated readback or resume flow.
 
 ## What the worker protects
 

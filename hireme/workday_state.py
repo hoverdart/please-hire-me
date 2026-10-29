@@ -234,14 +234,17 @@ def recover_drafts(store):
     """Project crashed native saves without replacing final submission outcomes."""
     store.db.execute("UPDATE remote_draft_steps SET state='unknown',updated=? WHERE state='intent'",(now(),))
     rows=list(store.db.execute("""SELECT DISTINCT j.id,j.payload,j.status,j.reason FROM jobs j
-        LEFT JOIN applications a ON a.job_id=j.id
-        WHERE (a.id IS NULL OR a.state='prepared') AND
+        WHERE NOT EXISTS(SELECT 1 FROM application_records a WHERE a.job_id=j.id AND a.state!='prepared') AND
           (EXISTS(SELECT 1 FROM remote_draft_steps d WHERE d.job_id=j.id AND d.state='unknown')
            OR EXISTS(SELECT 1 FROM workday_drafts d WHERE d.job_id=j.id AND d.state='unknown'))"""))
     from .job_holds import hold
     for row in rows:
-        if row['status']=='blocked' and row['reason'].startswith('remote_draft_uncertain'):
+        ashby=store.db.execute("SELECT 1 FROM remote_draft_steps WHERE job_id=? AND step LIKE 'ashby:%' AND state='unknown'",(row['id'],)).fetchone()
+        reason='ashby_draft_uncertain' if ashby else 'remote_draft_uncertain'
+        if row['status']=='blocked' and row['reason'].startswith(reason):
             continue
         job=json.loads(row['payload'])
-        store.block(row['id'],'remote_draft_uncertain','Read back the existing employer draft before any further write')
-        hold(store,job,'remote_draft_uncertain','An interrupted native save needs owner-bound reconciliation','recovery')
+        detail=('The Ashby guest draft may have reached the employer; automatic retry and owner-bound readback are unavailable'
+                if ashby else 'Read back the existing employer draft before any further write')
+        store.block(row['id'],reason,detail)
+        hold(store,job,reason,detail,'recovery')

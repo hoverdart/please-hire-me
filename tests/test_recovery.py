@@ -42,3 +42,20 @@ def test_recovery_cli_is_explicit_and_paused(store, job, package, capsys):
     assert main(['--data-dir', str(store.root), 'recover']) == 0
     assert 'Applications remain paused' in capsys.readouterr().out
     assert not store.settings()['live_enabled']
+
+
+def test_interrupted_draft_is_visible_and_recovery_never_retries_it(store, job, package):
+    from hireme.job_holds import annotate, hold, ready, recheck
+    store.prepare(job, package)
+    store.db.execute("INSERT INTO remote_draft_steps VALUES(?,?,?,?,?,?,?,?,?,?)",
+        ('draft-intent',job['id'],job['host'],'ashby:attempt','hash','sources','intent','2020','2020',''))
+    hold(store,job,'network_error')
+    store.block(job['id'],'network_error')
+    displayed=annotate(store,[{**job,'status':'blocked'}])[0]['hold']
+    assert displayed['reason']=='ashby_draft_uncertain' and displayed['retry_at'] is None
+    assert 'cannot currently read back' in displayed['next_action']
+    assert recheck(store,job['id'])=={'ready':False,'reason':'ashby_draft_uncertain'}
+    assert worker_status(store)['unfinished_drafts']==1
+    assert recover_interrupted(store)['unfinished_drafts']==1
+    assert store.db.execute("SELECT state FROM remote_draft_steps WHERE id='draft-intent'").fetchone()[0]=='unknown'
+    assert not worker_status(store)['recovery_needed'] and not ready(store,job,at=10**9)

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hireme.ashby_drafts import AshbyDraft,VARIABLES
+from hireme.ashby_drafts import AshbyDraft,VARIABLES,number_wire,same
 from hireme.browser import Browser
 from hireme.util import Blocked,digest
 from tests.ashby_document_fixture import AshbyDocuments
@@ -338,6 +338,25 @@ def test_legacy_draft_mapping_hold_is_rechecked_after_version_added(store,job,pa
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
+@pytest.mark.parametrize('legacy',[False,True])
+def test_draft_save_failure_does_not_retry_on_time_or_adapter_change(store,job,package,monkeypatch,legacy):
+    from hireme import job_holds
+    from hireme.ashby_drafts import VERSION
+    store.prepare(job,package)
+    job_holds.hold(store,job,'ashby_draft_save_failed',at=100)
+    if legacy:
+        store.db.execute("UPDATE job_holds SET category='transient',retry_at=101 WHERE job_id=?",(job['id'],))
+    monkeypatch.setattr('hireme.ashby_drafts.VERSION',VERSION+1)
+    monkeypatch.setattr(job_holds,'ADAPTER_VERSION',job_holds.ADAPTER_VERSION+1)
+    assert not job_holds.ready(store,job,at=10**9)
+    assert job_holds.recheck(store,job['id'])=={'ready':False,'reason':'ashby_draft_save_failed'}
+    assert store.db.execute('SELECT reason FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()[0]=='ashby_draft_save_failed'
+    visible=job_holds.annotate(store,[{**job,'status':'blocked'}])[0]['hold']
+    assert visible['category']=='review' and visible['retry_at'] is None
+    assert 'will not retry automatically' in visible['next_action']
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('change',['value','missing_value','definition','unacknowledged','action_title','duplicate_control'])
 def test_native_submission_grant_requires_current_field_acknowledgements_and_submit_action(store,job,package,change):
     from hireme.ashby_submission import AshbySubmission
@@ -577,6 +596,87 @@ def test_exact_field_save_requires_verified_form_sources_and_acknowledgement(sto
     d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':form({'_systemfield_email':'test@candidate.invalid'})}}),'request')
     assert d.complete
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('value,expected',[('0',0),('1',1),('5551234567',5551234567),('9007199254740991',9007199254740991)])
+def test_number_wire_accepts_only_exact_safe_integers(value,expected):
+    assert number_wire(value,'Number')==expected
+
+
+@pytest.mark.parametrize('value',['00','0123','-1','+1','1.0','1e3',' 1','1 ','１２','9007199254740992','99999999999999999',True,None])
+def test_number_wire_rejects_lossy_or_ambiguous_values(value):
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):number_wire(value,'Number')
+
+
+@pytest.mark.parametrize('change',['none','wrong_metadata','wrong_control'])
+def test_number_grant_binds_approved_fact_to_official_number_field(store,job,package,change):
+    from hireme.answers import resolve
+    d,_=draft(store,job,package)
+    field={'index':0,'indices':[0],'label':'Phone','type':'number','required':True,'options':[],
+           'maxlength':-1,'value':'','ashby_path':'fixture-number','ashby_entry_id':RENDER+'_fixture-number'}
+    official=form();official['sections'][0]['fieldEntries'].append({'id':field['ashby_entry_id'],
+        'field':{'path':'fixture-number','title':'Phone','type':'Number'},'fieldValue':None})
+    if change=='wrong_metadata':official['sections'][0]['fieldEntries'][-1]['field']['type']='String'
+    if change=='wrong_control':field['type']='text'
+    d._remember_form(official)
+    answer=resolve(store,d.job['host'],field,context=d.job)
+    proof={**d.package,'answers':[answer]}
+    if change!='none':
+        with pytest.raises(Blocked,match='ashby_draft_unsupported'):d.enable(None,proof['answers'],proof)
+        return
+    d.enable(None,proof['answers'],proof)
+    assert answer['value']=='5551234567' and answer['provenance']['fact_key']=='phone'
+    for value in ('5551234567',5551234568,True,5551234567.0):
+        r,data=request(value,path='fixture-number');assert not d.allow(r,data,'changed')
+    r,data=request(5551234567,path='fixture-number');assert d.allow(r,data,'number')
+    official['sections'][0]['fieldEntries'][-1]['fieldValue']={'value':5551234567}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'number')
+    assert d.complete and proof['answers'][0]['value']=='5551234567'
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('ack',['string','different','boolean'])
+def test_number_ack_requires_exact_derived_integer(store,job,package,ack):
+    from hireme.answers import resolve
+    d,_=draft(store,job,package)
+    field={'index':0,'indices':[0],'label':'Phone','type':'number','required':True,'options':[],
+           'maxlength':-1,'value':'','ashby_path':'fixture-number','ashby_entry_id':RENDER+'_fixture-number'}
+    official=form();entry={'id':field['ashby_entry_id'],'field':{'path':'fixture-number','title':'Phone','type':'Number'},'fieldValue':None}
+    official['sections'][0]['fieldEntries'].append(entry);d._remember_form(official)
+    answer=resolve(store,d.job['host'],field,context=d.job);proof={**d.package,'answers':[answer]}
+    d.enable(None,proof['answers'],proof)
+    r,data=request(5551234567,path='fixture-number');assert d.allow(r,data,'number')
+    entry['fieldValue']={'value':{'string':'5551234567','different':5551234568,'boolean':True}[ack]}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'number')
+    assert d.failed and not d.complete
+
+
+@pytest.mark.parametrize('approved,actual',[('1',True),('0',False),('1',1.0),('0',0.0)])
+def test_number_ack_rejects_boolean_and_float_for_exact_integer(store,job,package,approved,actual):
+    from hireme.answers import resolve
+    store.put_facts({'professional_years':approved})
+    d,_=draft(store,job,{**package,'facts_hash':digest(store.facts())})
+    field={'index':0,'indices':[0],'label':'How many years of professional experience do you have?',
+           'type':'number','required':True,'options':[],'maxlength':-1,'value':'',
+           'ashby_path':'fixture-number','ashby_entry_id':RENDER+'_fixture-number'}
+    official=form();entry={'id':field['ashby_entry_id'],'field':{'path':'fixture-number','title':field['label'],'type':'Number'},'fieldValue':None}
+    official['sections'][0]['fieldEntries'].append(entry);d._remember_form(official)
+    class Model:
+        def match_field(self,*args):return {'fact_key':'professional_years','template_id':None}
+    answer=resolve(store,d.job['host'],field,Model(),context=d.job)
+    assert answer['value']==approved and answer['provenance']['fact_key']=='professional_years'
+    proof={**d.package,'answers':[answer]};d.enable(None,proof['answers'],proof)
+    wire=int(approved)
+    r,data=request(wire,path='fixture-number');assert d.allow(r,data,'number')
+    entry['fieldValue']={'value':actual}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'number')
+    assert d.failed and not d.complete
+
+
+@pytest.mark.parametrize('left,right',[(1,True),(0,False),(1,1.0),(0,0.0),('1',1),('0',0)])
+def test_ashby_json_equality_preserves_numeric_types(left,right):
+    assert left==right or isinstance(left,str)
+    assert not same(left,right)
 
 
 @pytest.mark.parametrize('newline',['\r\n','\r','\n'])
