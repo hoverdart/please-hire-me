@@ -31,6 +31,76 @@ def test_experience_requirements_and_unreviewed_timelines_remain_blocked(store, 
         eligible(candidate, store.settings(), store.facts())
 
 
+@pytest.mark.parametrize('number', ['one', 'eleven', 'twelve'])
+@pytest.mark.parametrize('statement', [
+    'Candidates must have {number} year of experience.',
+    'The role requires {number} years of relevant software experience.',
+    '<li>Minimum of {number} years of industry experience</li>',
+    '<li>{number} years of professional experience</li>',
+    '- {number} years of Python experience',
+    '{number} years of work experience is required.',
+])
+def test_additional_written_applicant_experience_requires_review(store, job, number, statement):
+    candidate = {**job, 'description': job['description'] + '\n' + statement.format(number=number)}
+    with pytest.raises(Blocked, match='ambiguous_experience'):
+        eligible(candidate, store.settings(), store.facts())
+
+
+@pytest.mark.parametrize('statement', [
+    'Our company has one year of experience serving customers.',
+    'Our company has at least one year of experience in this market.',
+    'Our company was founded eleven years ago.',
+    'The platform has been running for twelve years.',
+    'We are two to three years ahead of everyone else in government approvals.',
+])
+def test_additional_written_numbers_do_not_block_company_history(store, job, statement):
+    candidate = {**job, 'description': job['description'] + ' ' + statement}
+    eligible(candidate, store.settings(), store.facts())
+
+
+def test_reviewed_company_timeline_cannot_hide_an_explicit_applicant_requirement(store, job):
+    candidate = {**job, 'description': job['description']
+                 + ' We are two to three years ahead of everyone else in government approvals.'
+                 + ' Candidates must have one year of software experience.'}
+    store.upsert_job(candidate)
+    hold(store, candidate, 'ambiguous_experience', stage='screening')
+    assert not ready(store, candidate)
+    with pytest.raises(Blocked, match='ambiguous_experience'):
+        eligible(candidate, store.settings(), store.facts())
+
+
+@pytest.mark.parametrize('number', ['one', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+                                     'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'])
+@pytest.mark.parametrize('statement', [
+    'Candidates need {number}+ years of C++, Python, or Java experience.',
+    'Applicants should have {number} years+ of relevant industry experience.',
+    'A candidate needs {number} years of JavaScript, React, and Python experience.',
+])
+def test_explicit_requirements_handle_plus_signs_skill_lists_and_candidate_phrasing(store, job, number, statement):
+    candidate = {**job, 'description': job['description'] + ' ' + statement.format(number=number)}
+    with pytest.raises(Blocked, match='ambiguous_experience'):
+        eligible(candidate, store.settings(), store.facts())
+
+
+@pytest.mark.parametrize('statement', [
+    'We do not require one year of experience.',
+    "We don't require eleven years of experience.",
+    'Applicants are not required to have thirteen years of experience.',
+    '<li>One year of Python experience is not required.</li>',
+    '- Eleven years of experience are not necessary.',
+    'Our company has at least thirteen years of experience serving customers.',
+])
+def test_negated_requirements_and_company_experience_are_not_holds(store, job, statement):
+    eligible({**job, 'description': job['description'] + '\n' + statement}, store.settings(), store.facts())
+
+
+def test_negated_clause_does_not_hide_a_separate_applicant_requirement(store, job):
+    candidate = {**job, 'description': job['description']
+                 + " We don't require one year of experience, but candidates need thirteen years of software experience."}
+    with pytest.raises(Blocked, match='ambiguous_experience'):
+        eligible(candidate, store.settings(), store.facts())
+
+
 def saved_candidate(store, job, suffix=''):
     candidate = {**job, 'description': job['description']
                  + ' We are two to three years ahead of everyone else in government approvals.' + suffix}
