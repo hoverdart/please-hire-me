@@ -185,7 +185,9 @@ class GmailClient:
                     if not credentials.refresh_token:
                         raise Blocked('gmail_reconnect_required')
                     credentials.refresh(lambda *args,**kwargs:Request()(*args,**{**kwargs,'timeout':15}))
-                    atomic_json(path, json.loads(credentials.to_json()))
+                    refreshed=json.loads(credentials.to_json())
+                    if credentials.granted_scopes is not None:refreshed['scopes']=list(credentials.granted_scopes)
+                    atomic_json(path, refreshed)
                 service = _service(credentials)
             except Blocked:
                 raise

@@ -28,6 +28,30 @@ def test_revoked_authorization_is_visible_without_assuming_oauth_project_mode(st
     assert status(store)['oauth_publishing_status']=='unverified'
 
 
+def test_refresh_persists_effective_grants_for_the_next_process(store,monkeypatch):
+    from hireme import gmail
+    from google.oauth2.credentials import Credentials
+    from tests.test_gmail import Service
+    from datetime import datetime,timedelta,timezone
+    folder=store.root/'integrations'
+    atomic_json(folder/'gmail-account.json',{'email':'test@candidate.invalid'})
+    atomic_json(folder/'gmail-token.json',{'token':'old','token_uri':'https://oauth2.googleapis.com/token','scopes':gmail.SCOPES})
+    credentials=Credentials(token='old',refresh_token='fixture-refresh',token_uri='https://oauth2.googleapis.com/token',
+        client_id='fixture',client_secret='fixture',scopes=gmail.SCOPES,expiry=datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(days=1))
+    def refresh(_):
+        credentials.token='new';credentials.expiry=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(hours=1)
+        credentials._granted_scopes=gmail.READ_SCOPES
+    monkeypatch.setattr(credentials,'refresh',refresh)
+    monkeypatch.setattr(Credentials,'from_authorized_user_info',lambda _:credentials)
+    service=Service('test@candidate.invalid',None)
+    monkeypatch.setattr(gmail,'_service',lambda _:service)
+    client=gmail.GmailClient(store)
+    assert credentials.valid
+    assert json.loads((folder/'gmail-token.json').read_text())['scopes']==gmail.READ_SCOPES
+    with pytest.raises(Blocked,match='gmail_scopes_missing'):client.send_report('Fixture','body','id')
+    assert not service.sent
+
+
 @pytest.mark.parametrize('reports,grants,accepted',[
     (False,['readonly','send'],True),(True,['readonly'],False),(True,['send'],False),
 ])
