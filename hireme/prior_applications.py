@@ -23,22 +23,43 @@ FRESH_SECONDS = 15 * 60
 MAX_QUERY_BYTES = 1200
 AUTO_SCAN_SECONDS = 30
 AUTO_SCAN_PAGES = 25
-QUERY = 'in:anywhere -from:me {"your application" "you applied" "you have applied" "thank you for applying" "thanks for applying"}'
-PRIOR = re.compile(r'\b(?:your application|you(?: have)? applied|thank you for applying|thanks for applying|received your application|reviewing your application)\b', re.I)
-APPLIED = re.compile(r'\b(?:you(?: have)? applied|thank you for applying|thanks for applying|(?:received|reviewing) your application|your application (?:has been|was) (?:received|submitted))\b',re.I)
+SEARCH_VERSION = 2
+CLASSIFIER_VERSION = 2
+QUERY = 'in:anywhere'
+RECEIPT = (r'(?:received|reviewing) your (?:job )?(?:application|candidacy)'
+           r'|your (?:job )?(?:application|candidacy)(?: for [^.!?;\n]{1,200})? (?:has been|was) (?:received|submitted)'
+           r'|hemos recibido tu solicitud|nous avons (?:bien )?reçu votre candidature'
+           r'|wir haben ihre bewerbung erhalten')
+PRIOR = re.compile(r'\b(?:your (?:job )?(?:application|candidacy)|you(?: have)? applied|thank you for applying|thanks for applying|'+RECEIPT+r')\b', re.I)
+APPLIED = re.compile(r'\b(?:you(?: have)? applied|thank you for applying|thanks for applying|'+RECEIPT+r')\b',re.I)
 APPLICATION_INVITATION = re.compile(r'\b(?:start|begin|submit|complete|finish|create)\s+(?:your|an?)\s+application\b',re.I)
-ROLE = re.compile(r'\b(?:application\s+(?:for|to)|appl(?:ied|ying)\s+(?:for|to)|(?:position|role)\s+(?:of|as))\b', re.I)
+ROLE = re.compile(r'\b(?:(?:application|candidacy)\s+(?:for|to)|appl(?:ied|ying)\s+(?:for|to)|(?:position|role)\s+(?:of|as))\b', re.I)
 
 
 def _prior_evidence(text):
     if not PRIOR.search(text):return False
-    for match in APPLIED.finditer(text):
+    if re.search(r'\bnot reviewing your (?:job )?application (?:any )?further\b',text,re.I):return True
+    applied=list(APPLIED.finditer(text))
+    for match in applied:
         before=re.split(r'[.!?;\n]',text[:match.start()])[-1]
-        if not re.search(r'\b(?:if|unless|whether|should|not|never|once|when)\b',before,re.I):return True
+        after=text[match.end():]
+        if (not re.search(r'\b(?:if|unless|whether|should|not|never|once|when)\b',before,re.I)
+                and not re.search(r'\b(?:no|pas|nicht)\s*$',before,re.I)
+                and not re.match(r'\s+(?:has|have|was|is|will)(?: been| be)? not\b',after,re.I)):return True
+    if applied:
+        # Independent positive context elsewhere in the message still supplies
+        # conservative duplicate evidence when a conditional clause is quoted.
+        positive=re.search(r'\byour (?:job )?(?:application|candidacy)(?: for [^.!?;\n]+?)? (?:is under review|is being reviewed|remains under consideration)\b',text,re.I)
+        if positive and not re.search(r'\b(?:if|not|never)\b',text[max(0,positive.start()-20):positive.start()],re.I):return True
+        return False
     if APPLICATION_INVITATION.search(text):return False
     if re.search(r'\b(?:if|when|once|after)\s+you(?:\s+have)?\s+(?:apply|applied|submit|submitted)\b'
                  r'|\b(?:not|never)\s+(?:\w+\s+){0,3}(?:received|applied|submitted)\b',text,re.I):return False
     return True
+
+
+def _protocol(store):
+    return digest([SEARCH_VERSION,CLASSIFIER_VERSION,sorted(a.casefold() for a in store.settings()['gmail_confirmed_aliases'])])
 
 
 def _normalized(value):
@@ -65,7 +86,7 @@ def _role_matches(title,text):
         before=_normalized(text[:match.start()]);after=_normalized(text[match.end():])
         # A complete role phrase is required. "Software Engineer" cannot
         # consume "Senior Software Engineer" or "Software Engineer Intern".
-        prefix=(not before or re.search(r'\b(?:(?:application|appl(?:ied|ying))\s+(?:for|to)(?:\s+(?:the|our|a|an))?|(?:position|role)\s+(?:of|as)|your application)$',before))
+        prefix=(not before or re.search(r'\b(?:(?:application|candidacy|appl(?:ied|ying))\s+(?:for|to)(?:\s+(?:the|our|a|an))?|(?:position|role)\s+(?:of|as)|your application)$',before))
         boundary=bool(re.match(r'''^[\s)\]}"']*(?:[.!?;]|[,:]\s+(?:and|but|we|our|you|your|please|thank|thanks)\b)''',text[match.end():]))
         suffix=not after or boundary or bool(re.match(r'(?:position|role|at|application)\b',after))
         if prefix and suffix:return True
@@ -148,7 +169,9 @@ def ingest(store, message, *, company=None):
     owner = owner_email(store); headers = _headers(message)
     sender = parseaddr(headers.get('from', ''))[1].casefold()
     recipients = {address.casefold() for _, address in getaddresses([headers[k] for k in ('to', 'cc', 'delivered-to') if headers.get(k)])}
-    if sender == owner or owner not in recipients: return False
+    owners={owner,*(a.casefold() for a in store.settings()['gmail_confirmed_aliases'])}
+    forwarded=bool(re.match(r'\s*(?:fw|fwd):',headers.get('subject',''),re.I))
+    if not owners.intersection(recipients) or sender in owners and not forwarded: return False
     identity = message.get('id')
     if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', identity): return False
     try: received = int(message.get('internalDate', '0')) / 1000
@@ -156,7 +179,15 @@ def ingest(store, message, *, company=None):
     if not 0 < received <= time.time()+300: return False
     subject = ' '.join(headers.get('subject', '').split())[:300]
     body = _body(message.get('payload', {}))[:100000]
-    if AUTHENTICATION_MAIL.search(subject+'\n'+body) or re.match(r'\s*(?:re|fw|fwd):', subject, re.I): return False
+    if AUTHENTICATION_MAIL.search(subject+'\n'+body) or re.match(r'\s*re:', subject, re.I): return False
+    if forwarded:
+        # Forwarded text is review evidence only. Require a confirmed owner to
+        # forward it and preserve the original recipient, never trust a sender
+        # or authentication claim copied into the body.
+        original=re.search(r'(?:Begin forwarded message:|[- ]+Forwarded message[- ]+)\s*([\s\S]+)',body,re.I)
+        original_to=re.search(r'^To:\s*(.+)$',original[1],re.M|re.I) if original else None
+        if sender not in owners or not original_to or not owners.intersection(a.casefold() for _,a in getaddresses([original_to[1]])):return False
+        body=original[1]
     body = re.split(r'\n(?:On .{0,300}wrote:|[- ]*Original Message[- ]*)', body, maxsplit=1, flags=re.I)[0]
     body = '\n'.join(line for line in body.splitlines() if not line.lstrip().startswith('>'))
     text=re.sub(r"n['’]t\b",' not',subject+'\n'+body,flags=re.I)
@@ -184,7 +215,7 @@ def ingest(store, message, *, company=None):
     keys = sorted({_posting_key(url.rstrip('.,;:!?)')) for url in urls[:100] if url.startswith('https://')})
     domain = sender.rsplit('@', 1)[-1]
     authentication = headers.get('authentication-results', '')
-    verified = bool('@' in sender and authentication.lstrip().startswith('mx.google.com;') and re.search(
+    verified = bool(not forwarded and '@' in sender and authentication.lstrip().startswith('mx.google.com;') and re.search(
         r'dkim=pass\b[^;]*(?:header\.d=|header\.i=@)(?:[a-z0-9-]+\.)*'+re.escape(domain)+r'(?:\s|;|$)', authentication, re.I))
     excerpt = (passages[0] if passages else next((line.strip() for line in body.splitlines() if PRIOR.search(line)), subject))
     excerpt = re.sub(r'https://\S+', '[link]', excerpt)[:600]
@@ -282,7 +313,9 @@ def scan(store, *, company=None, restart=False, client_factory=None, work_deadli
             _resolve_company_search(store,company)
             query = _query(store,company)
             state=store.db.execute('SELECT * FROM prior_application_scans WHERE owner_hash=? AND company_key=?',(owner,scope)).fetchone()
-            if state and (restart or not state['query'].endswith(query)): state=None
+            protocol=_protocol(store)
+            prior_protocol=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(owner,scope)).fetchone()
+            if state and (restart or not state['query'].endswith(query) or not prior_protocol or prior_protocol[0] not in {protocol,protocol+':backfill'}): state=None
             pending=json.loads(state['pending']) if state and state['completed'] is None else []
             next_page=state['next_page'] if state and state['completed'] is None else ''
             started=state['started'] if state and state['completed'] is None else time.time()
@@ -290,12 +323,14 @@ def scan(store, *, company=None, restart=False, client_factory=None, work_deadli
             elif state: query=state['query']
             def valid_owner():
                 store.checkpoint()
-                if _owner(store)!=owner or not store.settings()['gmail_prior_applications']: raise Blocked('prior_application_scan_changed','Email identity or preferences changed; scan stopped.')
+                if _owner(store)!=owner or _protocol(store)!=protocol or not store.settings()['gmail_prior_applications']: raise Blocked('prior_application_scan_changed','Email identity or preferences changed; scan stopped.')
             def save(completed=None):
                 with store.transaction():
                     valid_owner()
                     store.db.execute('INSERT OR REPLACE INTO prior_application_scans VALUES(?,?,?,?,?,?,?,?)',
                         (owner,scope,query,json.dumps(pending),next_page,started,completed,now()))
+                    phase_protocol=protocol if query.startswith('after:') else protocol+':backfill'
+                    store.db.execute('INSERT OR REPLACE INTO prior_scan_protocols VALUES(?,?,?)',(owner,scope,phase_protocol))
             # Invalidate any previous freshness proof before a new remote read.
             save()
             client=(client_factory or GmailClient)(store)
@@ -306,10 +341,14 @@ def scan(store, *, company=None, restart=False, client_factory=None, work_deadli
                 options={'userId':'me','q':query,'maxResults':MAX_MESSAGES,'includeSpamTrash':True}
                 if next_page: options['pageToken']=next_page
                 page=messages.list(**options).execute();valid_owner()
-                pending=[item['id'] for item in page.get('messages',[])[:MAX_MESSAGES]
-                         if isinstance(item,dict) and isinstance(item.get('id'),str)]
+                items=page.get('messages',[])
+                if (not isinstance(items,list) or len(items)>MAX_MESSAGES or any(not isinstance(item,dict)
+                        or not isinstance(item.get('id'),str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',item['id']) for item in items)):
+                    raise ValueError('Incomplete message page')
+                pending=[item['id'] for item in items]
                 next_page=page.get('nextPageToken','')
                 if not isinstance(next_page,str) or len(next_page)>4096: raise ValueError('Invalid cursor')
+                if next_page and state and next_page==state['next_page']:raise ValueError('Repeated cursor')
                 save()
             processed=added=0;deadline=time.monotonic()+30
             if work_deadline is not None:deadline=min(deadline,work_deadline)
@@ -348,8 +387,11 @@ def require_recent_check(store,job):
     except Blocked: raise Blocked('prior_application_check_required','Connect the confirmed Gmail account and check past applications before applying.') from None
     row=store.db.execute('SELECT completed,query FROM prior_application_scans WHERE owner_hash=? AND company_key=?',
                          (owner,_scope(store,job['company']))).fetchone()
+    query=_query(store,job['company'])
+    protocol=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(owner,_scope(store,job['company']))).fetchone()
     if (not row or row['completed'] is None or not 0<=time.time()-row['completed']<=FRESH_SECONDS
-            or not row['query'].endswith(_query(store,job['company']))):
+            or not protocol or protocol[0]!=_protocol(store)
+            or not row['query'].endswith(query)):
         raise Blocked('prior_application_check_required','A current company email-history check is required before this application.')
 
 
@@ -392,7 +434,10 @@ def _preflight(store,job):
                 # Only a successfully completed but stale scan can start an
                 # overlapping catch-up here. Other failures must remain held.
                 row=store.db.execute('SELECT completed FROM prior_application_scans WHERE owner_hash=? AND company_key=?',(_owner(store),scope)).fetchone()
-                if error.reason!='prior_application_check_required' or not row or row['completed'] is None or time.time()-row['completed']<=FRESH_SECONDS:raise
+                phase=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(_owner(store),scope)).fetchone()
+                catching_up=phase and phase[0]==_protocol(store)+':backfill'
+                if (error.reason!='prior_application_check_required' or not row or row['completed'] is None
+                        or time.time()-row['completed']<=FRESH_SECONDS and not catching_up):raise
     raise Blocked('prior_application_scan_incomplete','More application mail remains to scan for this company. Continue the scan before applying.')
 
 

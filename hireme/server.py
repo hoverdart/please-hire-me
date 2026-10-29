@@ -450,6 +450,9 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                             with worker_lock(store.root):result=generate(store,job,'profile_suggestion','Tell us about yourself: write a concise professional profile using my confirmed experience and approved sources.')
                         else:return self.send(404,{'error':'Unknown connection action'})
                         return self.send(200,result)
+                    if path=='/api/human-verification':
+                        from .captcha_handoff import request as handoff_request
+                        return self.send(200,handoff_request(store,data))
                     if path in ('/api/history-import/suggest','/api/history-import/confirm'):
                         from .history_import import suggest,confirm
                         return self.send(200,(suggest if path.endswith('/suggest') else confirm)(store,data))

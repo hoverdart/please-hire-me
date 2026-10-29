@@ -23,14 +23,14 @@ from .config import validate_settings
 from .util import digest, now
 
 PROTECTED_TABLES = (
-    'applications', 'archived_applications', 'facts', 'answers', 'writing_answers', 'templates',
+    'applications', 'archived_applications', 'retry_authorizations', 'facts', 'answers', 'writing_answers', 'templates',
     'materials', 'documents', 'generated_documents', 'application_artifacts',
     'questions', 'job_holds', 'job_decisions',
 )
 OPERATIONAL_TABLES = (
-    'employer_accounts', 'remote_draft_steps', 'adapter_verifications',
+    'employer_accounts', 'remote_draft_steps', 'draft_operations', 'adapter_verifications',
     'confirmed_history', 'workday_drafts', 'recruiting_feedback', 'recruiting_sync',
-    'prior_application_mail', 'prior_application_scans', 'prior_application_company_names', 'prior_application_mail_companies',
+    'prior_application_mail', 'prior_application_scans', 'prior_scan_protocols', 'prior_application_company_names', 'prior_application_mail_companies',
 )
 
 

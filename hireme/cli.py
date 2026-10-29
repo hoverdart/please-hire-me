@@ -52,7 +52,8 @@ def main(argv=None):
     sub.add_parser('model-probe',help='Make one synthetic structured inference request; consumes model allowance')
     p=sub.add_parser('import-material');p.add_argument('path',type=Path);p.add_argument('--kind',choices=['writing_sample','cover_letter','context'],required=True)
     p=sub.add_parser('import-resume');p.add_argument('path',type=Path);p.add_argument('--transcript',action='store_true')
-    p=sub.add_parser('gmail');p.add_argument('action',choices=['import-client','connect','status','check','sync-feedback','scan-applications','disconnect']);p.add_argument('path',type=Path,nargs='?')
+    p=sub.add_parser('gmail');p.add_argument('action',choices=['import-client','connect','status','check','sync-feedback','scan-applications','receipt-candidates','disconnect']);p.add_argument('path',type=Path,nargs='?')
+    p.add_argument('--cursor',default='',help='Continue a read-only receipt-candidate page')
     p.add_argument('--company',help='Limit a past-application scan to one company');p.add_argument('--restart',action='store_true',help='Restart a past-application scan across all matching historical mail')
     p=sub.add_parser('backup');p.add_argument('path',type=Path)
     sub.add_parser('backup-stream',help='Stream a consistent history ZIP to stdout for an encrypted off-device backup')
@@ -71,7 +72,8 @@ def main(argv=None):
     sub.add_parser('status')
     sub.add_parser('pause');sub.add_parser('resume')
     sub.add_parser('recover',help='Recover interrupted worker records and remain paused')
-    p=sub.add_parser('retry-not-submitted');p.add_argument('application_id');p.add_argument('--note',required=True)
+    p=sub.add_parser('retry-not-submitted');p.add_argument('application_id');p.add_argument('--note',required=True);p.add_argument('--approved-package',type=Path)
+    p=sub.add_parser('renew-retry');p.add_argument('application_id');p.add_argument('--note',required=True);p.add_argument('--approved-package',type=Path,required=True)
     p=sub.add_parser('login');p.add_argument('url')
     p=sub.add_parser('connection',help='Manage an optional job-platform connection on this machine')
     p.add_argument('platform',choices=['handshake','workatastartup'])
@@ -223,6 +225,9 @@ def main(argv=None):
             elif args.action=='scan-applications':
                 from .prior_applications import scan
                 print(json.dumps(scan(store,company=args.company,restart=args.restart)))
+            elif args.action=='receipt-candidates':
+                from .receipt_reconciliation import scan_candidates
+                print(json.dumps(scan_candidates(store,cursor=args.cursor)))
             else:gmail.disconnect(store);print('Local Gmail credentials removed; revoke access in your Google account if desired')
         elif args.command=='import-material':
             from .materials import import_material
@@ -276,7 +281,17 @@ def main(argv=None):
             from .recovery import recover_interrupted
             print(recover_interrupted(store)['message'])
         elif args.command in ('pause','resume'):store.update_settings({'live_enabled':args.command=='resume'});print(args.command)
-        elif args.command=='retry-not-submitted':print(json.dumps({'job_id':store.retry_not_submitted(args.application_id,args.note)}))
+        elif args.command=='retry-not-submitted':
+            package=None
+            if args.approved_package:
+                path=args.approved_package
+                if path.is_symlink() or not path.is_file() or path.stat().st_size>2*1024*1024:raise ValueError('Choose a private reviewed application package JSON up to 2 MiB')
+                package=json.loads(path.read_text())
+            print(json.dumps({'job_id':store.retry_not_submitted(args.application_id,args.note,package)}))
+        elif args.command=='renew-retry':
+            path=args.approved_package
+            if path.is_symlink() or not path.is_file() or path.stat().st_size>2*1024*1024:raise ValueError('Choose a private reviewed application package JSON up to 2 MiB')
+            print(json.dumps({'job_id':store.renew_retry_authorization(args.application_id,args.note,json.loads(path.read_text()))}))
         elif args.command=='login':
             from .discovery import ATS_HOSTS,PORTAL_HOSTS
             from .util import canonical_url,public_host

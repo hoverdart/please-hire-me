@@ -143,6 +143,15 @@ class Mailbox:
     def get(self,**kwargs):self.reads.append(kwargs);return Response(mail(self.job,identity=kwargs['id']))
 
 
+def complete_catchup(store,service,company):
+    phase=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE company_key=?',(store.company(company),)).fetchone()
+    if phase and phase[0].endswith(':backfill'):
+        for _ in range(25):
+            result=prior.scan(store,company=company,client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+            if not result['more_available']:return
+        pytest.fail('Fixture catch-up did not complete')
+
+
 def test_full_history_scan_is_opt_in_and_resumes_pages_without_model_or_attachment_access(store,optiver):
     service=Mailbox(optiver);service.pages=[['one'],['two']]
     factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
@@ -156,6 +165,7 @@ def test_full_history_scan_is_opt_in_and_resumes_pages_without_model_or_attachme
     assert all(options['maxResults']==prior.MAX_MESSAGES for options in service.lists)
     assert all(options['includeSpamTrash'] is True and 'in:anywhere' in options['q'] for options in service.lists)
     assert all(options['format']=='full' for options in service.reads)
+    complete_catchup(store,service,'Optiver')
     prior.require_recent_check(store,optiver)
     assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
 
@@ -209,6 +219,7 @@ def test_final_intent_requires_fresh_completed_company_scan(store,optiver,packag
 def test_failed_refresh_revokes_previous_scan_freshness(store,optiver):
     store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[]]
     prior.scan(store,company='Optiver',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    complete_catchup(store,service,'Optiver')
     prior.require_recent_check(store,optiver)
     def disconnected(_):raise Blocked('gmail_reconnect_required')
     with pytest.raises(Blocked):prior.scan(store,company='Optiver',client_factory=disconnected)
@@ -230,6 +241,7 @@ def test_slow_paginated_scan_must_catch_up_before_it_can_be_fresh(store,optiver)
     assert not prior.scan(store,company='Optiver',client_factory=factory)['more_available']
     assert service.lists[-1]['q'].startswith(f'after:{int(started)-86400} ')
     assert prior.matches(store,optiver) and not store.db.execute('SELECT 1 FROM applications').fetchone()
+    complete_catchup(store,service,'Optiver')
     prior.require_recent_check(store,optiver)
 
 
@@ -241,6 +253,7 @@ def test_fresh_scan_age_is_measured_from_first_page(store,optiver):
     store.db.execute('UPDATE prior_application_scans SET started=?',(started,))
     prior.scan(store,company='Optiver',client_factory=factory)
     assert store.db.execute('SELECT completed FROM prior_application_scans').fetchone()[0]==started
+    complete_catchup(store,service,'Optiver')
     prior.require_recent_check(store,optiver)
 
 
@@ -300,8 +313,9 @@ def test_worker_checks_multiple_full_history_pages_in_one_bounded_preflight(stor
     service.get=receipt
     monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
     prior.preflight(store,optiver)
-    assert len(service.lists)==2 and service.lists[1]['pageToken']=='1'
-    assert len(service.reads)==26 and not prior.matches(store,optiver)
+    assert len(service.lists)==4 and service.lists[1]['pageToken']=='1' and service.lists[2]['q'].startswith('after:')
+    assert len(service.reads)==52 and not prior.matches(store,optiver)
+    complete_catchup(store,service,'Optiver')
     prior.require_recent_check(store,optiver)
 
 
@@ -379,7 +393,7 @@ def test_deleted_mail_advances_the_saved_cursor_without_discarding_other_receipt
 
 def test_scope_query_cannot_turn_a_company_name_into_gmail_operators(store):
     query=prior._query(store,'Acme" OR from:me {secret}')
-    assert query.count('-from:me')==1 and '"Acme OR from me secret"' in query
+    assert query.count('from:me')==0 and '"Acme OR from me secret"' in query
 
 
 def test_mismatched_provider_identity_cannot_finish_a_scan(store,optiver):
@@ -598,6 +612,7 @@ def test_mail_budget_finishes_normally_and_a_failed_company_does_not_starve_fres
     assert store.db.execute("SELECT subject FROM events WHERE kind='fixture_browser_reached'").fetchone()[0]==other['id']
     monkeypatch.setattr(prior,'public_company_name',lambda job,**kwargs:job['company'])
     prior.scan(store,company='Optiver',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    complete_catchup(store,service,'Optiver')
     cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
     assert store.db.execute("SELECT subject FROM events WHERE kind='fixture_browser_reached' ORDER BY seq DESC LIMIT 1").fetchone()[0]==optiver['id']
 
@@ -617,7 +632,7 @@ def test_upgrade_scans_spam_and_trash_from_full_history_across_pages(store,optiv
     store.update_settings({'gmail_prior_applications':True});service=Mailbox(optiver);service.pages=[[]]
     factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
     with monkeypatch.context() as old:
-        old.setattr(prior,'QUERY',prior.QUERY.replace('in:anywhere ',''))
+        old.setattr(prior,'QUERY',prior.QUERY.replace('in:anywhere',''))
         prior.scan(store,company='Optiver',client_factory=factory)
     with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)
     service.pages=[['old-spam'],['old-trash']]
@@ -639,6 +654,7 @@ def test_upgrade_scans_spam_and_trash_from_full_history_across_pages(store,optiv
     assert all('in:anywhere' in options['q'] and options['includeSpamTrash'] is True and 'after:' not in options['q']
                for options in service.lists[1:])
     assert service.lists[-1]['pageToken']=='1'
+    complete_catchup(store,service,'Optiver')
     prior.require_recent_check(store,optiver)
 
 
@@ -651,7 +667,7 @@ def test_upgrade_restarts_in_progress_old_query_without_reusing_its_cursor(store
         def fail(**kwargs):raise RuntimeError('Temporary Gmail read failure')
         service.get=fail
     with monkeypatch.context() as old:
-        old.setattr(prior,'QUERY',prior.QUERY.replace('in:anywhere ',''))
+        old.setattr(prior,'QUERY',prior.QUERY.replace('in:anywhere',''))
         if interrupted_read:
             with pytest.raises(Blocked,match='prior_application_mail_unavailable'):
                 prior.scan(store,company='Optiver',client_factory=factory)
@@ -668,6 +684,7 @@ def test_upgrade_restarts_in_progress_old_query_without_reusing_its_cursor(store
     assert not prior.scan(store,company='Optiver',client_factory=factory)['more_available']
     assert service.lists[-1]['pageToken']=='1' and service.lists[-1]['includeSpamTrash'] is True
     assert {row['message_id'] for row in prior.matches(store,optiver)} >= {'new-spam','new-trash'}
+    complete_catchup(store,service,'Optiver')
     prior.require_recent_check(store,optiver)
 
 
@@ -723,7 +740,11 @@ def test_incomplete_mail_scan_continues_before_continuously_fresh_lower_ranked_r
     assert first['attempts']==0 and first['reasons']['prior_application_scan_incomplete']==1
     assert store.db.execute('SELECT state FROM report_outbox ORDER BY rowid DESC LIMIT 1').fetchone()[0]=='suppressed'
     second=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
-    assert second['attempts']==1 and service.lists[-1]['pageToken']=='1'
+    assert second['attempts']==0
+    third=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert third['attempts']==0
+    fourth=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert fourth['attempts']==1 and service.lists[-1]['pageToken']=='1' and service.lists[-1]['q'].startswith('after:')
     assert store.db.execute("SELECT subject FROM events WHERE kind='fixture_browser_reached'").fetchone()[0]==optiver['id']
 
 
@@ -849,7 +870,7 @@ def test_short_employer_name_remains_a_possible_prior_application(store,optiver)
 
 def test_full_text_receipt_query_does_not_depend_on_employer_subject_wording():
     assert 'subject:' not in prior.QUERY
-    assert all('"'+phrase+'"' in prior.QUERY for phrase in ['your application','you applied','you have applied','thank you for applying','thanks for applying'])
+    assert prior.QUERY.strip()=='in:anywhere'  # Company retrieval must not depend on receipt wording.
 
 
 def test_alias_ceiling_never_discards_the_employer_being_checked(store):
@@ -874,6 +895,7 @@ def test_alias_added_after_completed_scan_rechecks_old_mail_for_that_company(sto
     service.list=search;service.get=receipt
     client=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
     prior.scan(store,company='Zeta',client_factory=client)
+    complete_catchup(store,service,target['company'])
     prior.require_recent_check(store,target)
     store.update_settings({'company_aliases':{**{f'Legacy {i}':'Zeta Group' for i in range(20)},'Zeta':'Zeta Group'}})
     with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,target)

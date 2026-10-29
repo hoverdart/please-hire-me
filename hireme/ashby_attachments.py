@@ -75,7 +75,7 @@ def _upload_url(value):
 
 
 class _Attachments:
-    def __init__(self, browser):
+    def __init__(self, browser, *, preflight=False):
         self.browser, self.draft = browser, getattr(browser, 'ashby_draft', None)
         self.identity = self.draft.identity if self.draft else None
         boundary = getattr(browser, 'write_boundary', None)
@@ -100,11 +100,15 @@ class _Attachments:
                 raise Blocked('ashby_draft_unsupported', 'Duplicate attachment target')
             self.documents[key] = {'hash': document['hash'], 'filename': document['filename'],
                 'definition': form['definition'], 'metadata': digest(metadata), 'acknowledged': None, 'used': False}
-        self.draft.attachment_check = self.check
+        if not preflight:
+            self.draft.attachment_check = self.check
 
     def current(self):
         if self.browser.ashby_draft is not self.draft or self.draft.identity != self.identity:
             raise Blocked('upload_verification_failed', 'The native attachment posting changed')
+        metadata=getattr(self.browser,'ashby_preflight_metadata',None)
+        if metadata and digest(self.draft._metadata())!=metadata:
+            raise Blocked('form_changed','Inspect and validate changed Ashby controls before another upload')
         for (render, path), document in self.documents.items():
             form = self.draft.forms.get(render, {})
             if (form.get('definition') != document['definition']
@@ -173,6 +177,9 @@ class _Attachments:
                 return False
             pending = {'operation': operation, 'field': field, 'handle': variables['fileHandle']}
         self.authorize()
+        target=({'document':checksum} if operation==CREATE else
+                {'render':field[0],'path':field[1],'definition':document['definition'],'document':document['hash']})
+        self.draft.journal.intent({key},operation,target,self.package)
         if operation == CREATE:
             self.create_counts[checksum] = self.create_counts.get(checksum, 0) + 1
         else:
@@ -188,6 +195,7 @@ class _Attachments:
                 for alias in upload['keys']:
                     self.uploads.pop(alias, None)
                 if 200 <= response.status < 300:
+                    self.draft.journal.acknowledge(key)
                     self.handles[upload['handle']]['uploaded'] = True
                     self.browser.uploaded_files.add(self.handles[upload['handle']]['hash'])
             return
@@ -210,6 +218,7 @@ class _Attachments:
                         or any(not isinstance(k, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', k)
                                or not isinstance(v, str) or len(v) > 20000 or re.search(r'[\r\n\x00]', v) for k, v in fields.items())):
                     return
+                self.draft.journal.acknowledge(key)
                 self.handles[handle] = {**pending, 'url': url, 'fields': fields, 'uploaded': False, 'upload_used': False}
                 self.browser.ashby_file_handles[handle] = pending['hash']
             else:
@@ -226,6 +235,7 @@ class _Attachments:
                 if (not value or value['filename'] != document['filename']
                         or digest(entries[0]['field']) != document['metadata']):
                     return
+                self.draft.journal.acknowledge(key)
                 self.draft._remember_form(form,acknowledged=True)
                 document['acknowledged'] = value
                 self.browser.ashby_attached_files.add(document['hash'])
@@ -322,8 +332,9 @@ def grant_upload(browser, request, key):
             payload += b'\r\n'
         payload += b'--' + boundary.encode() + b'--\r\n'
         state.authorize()
+        upload = {'handle': handle, 'keys': {key, (request.url, request.method, hashlib.sha256(payload).hexdigest(),*key[3:])}}
+        state.draft.journal.intent(upload['keys'],'file_upload',{'document':value['hash']},state.package)
         value['upload_used'] = True
-        upload = {'handle': handle, 'keys': {key, (request.url, request.method, hashlib.sha256(payload).hexdigest())}}
         for alias in upload['keys']:
             state.uploads[alias] = upload
         return {'post_data': payload}

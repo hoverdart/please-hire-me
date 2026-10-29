@@ -28,9 +28,11 @@ Pi firmware diagnostics distinguish an active power/thermal fault from a recorde
 
 Health is a small query-only read of the current SQLite/WAL state. It is separate from the full snapshot, integrity and history checks in `release-check`.
 
-## Optional encrypted Pi backups and monitoring on a Mac
+## Optional encrypted off-device backups and monitoring
 
-The receiving Mac polls Pi health every 15 minutes and takes a consistent history backup every six hours. It encrypts the stream with age, decrypts it in private temporary storage and performs a full restore, including SQLite integrity and document-reference checks. Only then does it publish the archive and acknowledge success to the Pi.
+The receiver polls worker health every 15 minutes and takes a consistent history backup every six hours. The SSH source can be any supported worker host, including a Pi. The receiver supports macOS LaunchAgents and Linux cron. It encrypts the stream with age, decrypts it in private temporary storage and performs a full restore, including SQLite integrity and document-reference checks. Only then does it publish the archive and acknowledge success to the worker.
+
+A local worker can instead back up to a mounted off-device filesystem. Replace `host`, `identity` and `ssh_binary` in the configuration below with `"source_root": "/absolute/private/applicant"`. Keep the encryption, destination and monitoring fields. The destination must be outside the applicant directory and on another filesystem; choose an actual off-device mount, since filesystem identity alone cannot prove independent physical storage. The same independent restore checks apply. Leave an existing monitor configuration unchanged until the new destination has passed a real transfer and restore.
 
 The agent retains verified archives for 14 days and always keeps the newest two. Failed or unverified downloads cannot acknowledge success or trigger retention cleanup. Credentials and browser sessions remain excluded from these ordinary history backups. Backups do not run applications.
 

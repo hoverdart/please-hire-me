@@ -17,8 +17,8 @@ SETTINGS = ('live_enabled', 'onboarding_complete', 'roles', 'seniority', 'locati
             'min_hourly_usd', 'max_years_required', 'min_fit_score', 'skip_companies',
             'interview_companies', 'company_aliases', 'max_per_company',
             'company_cooldown_days', 'max_per_day', 'timezone', 'headless',
-            'human_verification_wait_seconds', 'remote_drafts', 'employer_accounts',
-            'contextual_preferences', 'signed_in_portals', 'tailored_writing', 'cover_letters', 'gmail_prior_applications')
+            'human_verification_wait_seconds', 'human_verification_handoff', 'remote_drafts', 'employer_accounts',
+            'contextual_preferences', 'signed_in_portals', 'tailored_writing', 'cover_letters', 'gmail_prior_applications', 'gmail_confirmed_aliases')
 
 
 def source_fingerprint(store):
@@ -35,7 +35,7 @@ def source_fingerprint(store):
 
 class ApprovalBoundary:
     def __init__(self, store, job, package=None, *, settings=(), deadline=None,
-                 profile_binding=None, require_live=True, application_id=None):
+                 profile_binding=None, require_live=True, application_id=None,reserve_retry=True):
         self.store, self.job, self.package = store, dict(job), package
         self.generation = store.control_generation()
         current = store.settings()
@@ -49,6 +49,9 @@ class ApprovalBoundary:
         row = store.db.execute('SELECT payload FROM jobs WHERE id=?', (job['id'],)).fetchone()
         self.job_hash = digest(json.loads(row[0])) if row else None
         self.check()
+        if reserve_retry and require_live and package is not None:
+            from .retry_authorization import check_package
+            check_package(store,job,package,claim=True)
 
     def check(self, *, application_id=None):
         self.store.checkpoint()
@@ -65,6 +68,9 @@ class ApprovalBoundary:
             raise Blocked('application_changed', 'The approved posting changed')
         if self.package is not None and digest(self.package) != self.package_hash:
             raise Blocked('application_changed', 'The approved application package changed')
+        if self.package is not None:
+            from .retry_authorization import check_package
+            check_package(self.store,self.job,self.package)
         if self.package is not None and self.package.get('facts_hash') != digest(self.store.facts()):
             raise Blocked('facts_changed')
         if source_fingerprint(self.store) != self.sources:

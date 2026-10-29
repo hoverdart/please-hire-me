@@ -92,6 +92,8 @@ class AshbyDraft:
         self.postings={};self.submission_contexts={};self.locations={};self.schools={};self.navigation_url=job['url']
         self.texting_contexts={};self.texting=None
         self.school_searches={};self.education_lookups={};self.education_edited=set()
+        from .draft_journal import DraftJournal
+        self.journal=DraftJournal(store,job)
 
     def bind_page(self, url):
         """Follow a tenant rename only after the same official posting was read.
@@ -253,24 +255,38 @@ class AshbyDraft:
             self.school_searches[variables['name']]=observed
         except (ValueError,TypeError,AttributeError,KeyError):return
 
-    def enable(self, browser, answers, package):
+    def compile(self, browser, answers, package):
+        """Validate native encodings without enabling any draft transport."""
         from .answers import selections,validate_package
         from .approval_boundary import ApprovalBoundary
-        boundary=ApprovalBoundary(self.store,self.job,package)
+        boundary=ApprovalBoundary(self.store,self.job,package,reserve_retry=False)
         validate_package(self.store,self.job,package)
         self.store._check_budget(self.job,self.store.settings())
         grants={};saved=set();texting=[]
+        # Optional unanswered controls still belong to the visible application.
+        # An unknown native renderer must not be discovered after an upload.
+        visible=package.get('steps',[])
+        for field in visible[-1].get('fields',[]) if visible else []:
+            if field.get('ashby_texting_consent'):continue
+            path=field.get('ashby_path');entry=field.get('ashby_entry_id')
+            matches=[form for render,form in self.forms.items()
+                if path and entry==render+'_'+path and path in form['entries']]
+            if len(matches)!=1 or matches[0]['entries'][path].get('type') not in {
+                    'String','LongText','Email','Phone','URL','Url','Date','Number','Boolean',
+                    'ValueSelect','MultiValueSelect','EducationHistory','Location','File'}:
+                raise Blocked('ashby_draft_unsupported','A visible Ashby control has no reviewed native identity or encoding')
         for answer in answers:
             field=answer['field'];path=field.get('ashby_path');entry=field.get('ashby_entry_id','')
             if field.get('ashby_texting_consent'):
                 texting.append(answer);continue
             if not path:
-                if field.get('required'):raise Blocked('ashby_draft_unsupported','Required field has no verified Ashby path')
-                continue
+                raise Blocked('ashby_draft_unsupported','The answered visible field has no verified Ashby path')
             matches=[(render,form) for render,form in self.forms.items()
                      if entry==render+'_'+path and path in form['entries']]
             if len(matches)!=1:raise Blocked('ashby_draft_unsupported','The current Ashby form identity is unverified')
             render,form=matches[0];metadata=form['entries'][path]
+            if metadata.get('type') not in {None,'String','LongText','Email','Phone','URL','Url','Date','Number','Boolean','ValueSelect','MultiValueSelect','EducationHistory','Location'}:
+                raise Blocked('ashby_draft_unsupported',field['label']+' — unsupported native field type')
             # Bind the reviewed question to the official form response, not just
             # an arbitrary path asserted by a browser-generated request.
             normalize=lambda value:re.sub(r'[\s*✱]+',' ',value).strip().casefold()
@@ -348,7 +364,17 @@ class AshbyDraft:
         from .ashby_texting import AshbyTexting
         consent=AshbyTexting(self,texting[0],answers,grants) if texting else None
         boundary.check()
-        self.boundary=boundary
+        return boundary,grants,saved,consent,digest(self._metadata())
+
+    def _metadata(self):
+        return {render:{key:form.get(key) for key in ('definition','entries','controls')}
+                for render,form in self.forms.items()}
+
+    def enable(self, browser, answers, package):
+        boundary,grants,saved,consent,metadata=self.compile(browser,answers,package)
+        from .retry_authorization import check_package
+        check_package(self.store,self.job,package,claim=True)
+        self.boundary=boundary;self.metadata_hash=metadata
         self.grants=grants;self.package=package;self.remaining=4*len(grants);self.saved=saved;self.failed=False;self.texting=consent
         for _,path in sorted(saved):
             self.store.event('ashby_draft_saved',self.job['id'],{'path':path,'source':'official_form'})
@@ -376,12 +402,15 @@ class AshbyDraft:
                 or variables.get('formDefinitionIdentifier')!=grant['definition']
                 or not same(variables.get('value'),grant['value']) or self.remaining<=0):return False
         self.authorize_save()
+        self.journal.intent({key},'field_save',{'render':field[0],'path':field[1],'definition':grant['definition']},self.package)
         self.remaining-=1;self.pending[key]=field
-        self.store.event('ashby_draft_write',self.job['id'],{'path':field[1],'value_hash':digest(grant['value'])})
+        self.store.event('ashby_draft_write',self.job['id'],{'path':field[1]})
         return True
 
     def authorize_save(self):
         self.boundary.check()
+        if digest(self._metadata())!=self.metadata_hash:
+            raise Blocked('form_changed','Inspect and validate the revealed Ashby fields before another save')
         from .answers import validate_package
         validate_package(self.store,self.job,self.package)
         self.store._check_budget(self.job,self.store.settings())
@@ -406,6 +435,10 @@ class AshbyDraft:
                 self.failed=True;return
             # A verified save can reveal employer-authored conditional fields.
             # Those still need new approved answers before they receive grants.
+            try:self.journal.acknowledge(key)
+            except Exception:
+                self.failed=True
+                raise
             self._remember_form(form,acknowledged=True)
             self.saved.add(field)
             self.store.event('ashby_draft_saved',self.job['id'],{'path':field[1]})

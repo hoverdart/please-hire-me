@@ -156,7 +156,8 @@ def dependency(store, job, kind, reason=None):
 def safe_state(store, job_id):
     # Retained history is just as authoritative as the current application
     # slot: a changed adapter cannot reopen an earlier uncertain submission.
-    return not store.db.execute("SELECT 1 FROM application_records WHERE job_id=? AND state!='prepared' LIMIT 1",(job_id,)).fetchone()
+    from .retry_authorization import safe_state as retry_safe_state
+    return retry_safe_state(store,job_id)
 
 def _uncertain_draft(store,job_id):
     return bool(store.db.execute("SELECT 1 FROM remote_draft_steps WHERE job_id=? AND state IN ('intent','unknown') LIMIT 1",(job_id,)).fetchone()

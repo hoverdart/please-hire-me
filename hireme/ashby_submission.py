@@ -23,6 +23,35 @@ COMMON={'organizationHostedJobsPageName','jobPostingId','recaptchaToken','source
         'viewedAutomatedProcessingLegalNoticeRuleId','deviceFingerprint','applicationRequestId'}
 SINGLE={'formRenderIdentifier','formDefinitionIdentifier','actionIdentifier'}
 MULTIPLE={'applicationFormRenderIdentifier','applicationFormDefinitionIdentifier','applicationFormActionIdentifier','surveyIdentifiers'}
+
+
+def preflight_metadata(draft):
+    """Check final controls before uploading; grants no submission authority."""
+    context=draft.submission_contexts.get(draft.identity[0]) if draft.identity else None
+    if not isinstance(context,dict) or not isinstance(context.get('surveys'),list) or len(context['surveys'])>10:
+        raise Blocked('ashby_submission_unsupported','The official submission forms are unverified')
+    forms=[context.get('application'),*context['surveys']];renders=[]
+    for form in forms:
+        if not isinstance(form,dict):raise Blocked('ashby_submission_unsupported','A submission form is missing')
+        render=form.get('id');definition=form.get('sourceFormDefinitionId');controls=form.get('formControls')
+        if (not isinstance(render,str) or not re.fullmatch(UUID,render,re.I)
+                or not verified_definition_identifier(definition,draft.identity[1])
+                or not isinstance(controls,list) or len(controls)!=1 or not isinstance(controls[0],dict)):
+            raise Blocked('ashby_submission_unsupported','The official submission control is unverified')
+        control=controls[0]
+        if (not isinstance(control.get('identifier'),str) or not re.fullmatch(UUID,control['identifier'],re.I)
+                or control.get('title')!='Submit' or control.get('__typename')!='FormControl'
+                or set(control)-{'identifier','title','__typename'}
+                or draft.forms.get(render,{}).get('definition')!=definition
+                or not same(draft.forms.get(render,{}).get('controls'),controls)):
+            raise Blocked('ashby_submission_unsupported','The official submission action needs review')
+        renders.append(render)
+    if len(renders)!=len(set(renders)):
+        raise Blocked('ashby_submission_unsupported','Duplicate submission form identity')
+    notice=context.get('legal_notice_rule_id')
+    if notice is not None and (not isinstance(notice,str) or not re.fullmatch(UUID,notice,re.I)):
+        raise Blocked('ashby_submission_unsupported','The employer notice identifier is unverified')
+    return tuple(renders)
 BOUNDARIES=('live_enabled','onboarding_complete','roles','seniority','locations','summer_2027_locations',
             'school_locations','min_annual_usd','min_hourly_usd','max_years_required','min_fit_score',
             'skip_companies','interview_companies','company_aliases','max_per_company','company_cooldown_days',
@@ -162,6 +191,7 @@ class AshbySubmission:
 
     def valid_intent(self,check_answers=True):
         """Recheck approval while a person is working, without granting a write."""
+        if self.store.db.in_transaction:return False
         self.boundary.check()
         settings=self.store.settings()
         if (not settings['live_enabled'] or self.store.control_generation()!=self.generation

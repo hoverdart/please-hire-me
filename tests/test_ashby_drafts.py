@@ -21,7 +21,7 @@ DEFINITION='33333333-3333-4333-8333-333333333333'
 def form(values=None):
     values=values or {}
     return {'id':RENDER,'sourceFormDefinitionId':DEFINITION,'errorMessages':[],'formErrors':[],
-            'sections':[{'fieldEntries':[{'id':RENDER+'_'+path,'field':{'path':path,'title':title},
+            'sections':[{'fieldEntries':[{'id':RENDER+'_'+path,'field':{'path':path,'title':title,'type':{'Name':'String','Email':'Email','Phone':'Phone'}[title]},
                 'fieldValue':{'value':values[path]} if path in values else None}
                 for path,title in [('_systemfield_name','Name'),('_systemfield_email','Email')]+([('_systemfield_phone','Phone')] if '_systemfield_phone' in values else [])]}]}
 
