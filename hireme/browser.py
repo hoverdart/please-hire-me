@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, parse_qsl
 
 from .answers import resolve,page_requires_manual_work,field_key
 from .discovery import ATS_HOSTS,PORTAL_HOSTS
-from .util import Blocked,digest,private_dir,public_host,safe_document
+from .util import Blocked,digest,private_dir,public_host,safe_document,textarea_value
 
 ASHBY_UPLOAD_HOST='ashbyhq-infra-prd-main-app-uploaded-files-us-east-1.s3.us-east-1.amazonaws.com'
 LEVER_VERIFICATION_TIMEOUT=5000
@@ -1105,6 +1105,23 @@ class Browser:
         completed={d['field']['label'] for d in documents if d['hash'] in self.uploaded_files and d['filename'] in body}
         return [f for f in fields if not (f['type']=='file' and f['label'] in completed)]
 
+    def _verify_with_prepare_recovery(self,answers,documents,fields):
+        try:
+            return self._verify(answers,documents,fields)
+        except Blocked as error:
+            if not self.preparing or error.reason!='field_verification_failed':raise
+            matches=[f for f in fields if f['label']==error.detail]
+            approved=[a for a in answers if a['field']['label']==error.detail]
+            if (len(matches)!=1 or len(approved)!=1 or matches[0]['type']!='textarea'
+                    or approved[0]['field']!=matches[0]):raise
+            if self._control(matches[0]).input_value()!='':raise
+            # Preparation suppresses remote autosaves; a controlled textarea
+            # can be reset while other fields are filled. Retry only locally,
+            # once, and require every original verification to pass again.
+            self.store.checkpoint()
+            self._fill(approved[0])
+            return self._verify(answers,documents,fields)
+
     def _verify(self,answers,documents,fields):
         fresh=self._snapshot()
         body=self.page.locator('body').inner_text()
@@ -1127,6 +1144,7 @@ class Browser:
             elif f['type']=='yesno':actual=next((x['value'] for x in fresh if x['label']==f['label'] and x['type']=='yesno'),'')
             elif f['type']=='combobox':actual=next((x['value'] for x in fresh if x['label']==f['label'] and x['type']=='combobox'),'')
             else:actual=el.input_value()
+            if f['type']=='textarea':value=textarea_value(value)
             if a['provenance'].get('fact_key')=='phone':
                 actual=re.sub(r'[^0-9]','',actual);value=re.sub(r'[^0-9]','',value)
             if actual!=value:raise Blocked('field_verification_failed',f['label'])
@@ -1384,7 +1402,7 @@ class Browser:
                 if live and self.ashby_draft:self._fill_ashby_answer(a)
                 else:self._fill(a)
             if live and self.lever_resume:self.lever_resume.clear_unapproved_prefills(fields,answers,job['id'])
-            try:self._verify(answers,documents,fields)
+            try:self._verify_with_prepare_recovery(answers,documents,fields)
             except Blocked as error:
                 if error.reason!='form_changed':raise
                 fresh=self._snapshot()

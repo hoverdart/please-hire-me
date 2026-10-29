@@ -84,6 +84,37 @@ def test_recheck_never_releases_existing_outcome(store,job,package,state):
     assert not ready(store,job)
     with pytest.raises(ValueError):recheck(store,job['id'])
 
+
+@pytest.mark.parametrize('archive',[False,True])
+@pytest.mark.parametrize('state',['prepared','unknown','submitting','awaiting_verification','confirmed','not_submitted'])
+def test_adapter_upgrade_preserves_current_and_archived_application_outcomes(store,job,package,monkeypatch,archive,state):
+    from hireme import job_holds
+    aid=store.prepare(job,package)
+    monkeypatch.setattr(job_holds,'ADAPTER_VERSION',job_holds.ADAPTER_VERSION-1)
+    hold(store,job,'field_verification_failed')
+    assert not ready(store,job)
+    store.db.execute('UPDATE applications SET state=? WHERE id=?',(state,aid))
+    if archive:
+        store.db.execute("INSERT INTO archived_applications SELECT *, 'synthetic archive' FROM applications WHERE id=?",(aid,))
+        store.db.execute('DELETE FROM applications WHERE id=?',(aid,))
+    monkeypatch.setattr(job_holds,'ADAPTER_VERSION',job_holds.ADAPTER_VERSION+1)
+    assert ready(store,job)==(state=='prepared')
+    if state!='prepared':
+        with pytest.raises(ValueError):recheck(store,job['id'])
+    assert store.db.execute('SELECT state FROM application_records WHERE id=?',(aid,)).fetchone()[0]==state
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_adapter_upgrade_keeps_archived_unknown_held_even_with_active_prepared(store,job,package,monkeypatch):
+    from hireme import job_holds
+    aid=store.prepare(job,package)
+    monkeypatch.setattr(job_holds,'ADAPTER_VERSION',job_holds.ADAPTER_VERSION-1)
+    hold(store,job,'field_verification_failed')
+    store.db.execute("INSERT INTO archived_applications SELECT 'archived-unknown',job_id,company_key,'unknown',package,hash,created,updated,attempted,confirmation,screenshot,'synthetic archive' FROM applications WHERE id=?",(aid,))
+    monkeypatch.setattr(job_holds,'ADAPTER_VERSION',job_holds.ADAPTER_VERSION+1)
+    assert not ready(store,job)
+    with pytest.raises(ValueError):recheck(store,job['id'])
+
 def test_unknown_reason_requires_review_and_adapter_hold_only_version(store,job):
     hold(store,job,'new_unknown_reason')
     store.put_facts({'school':'Confirmed University'})

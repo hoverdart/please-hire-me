@@ -1358,6 +1358,97 @@ def test_ashby_nested_sms_consent_is_distinct_from_phone(store,ats):
     assert not ats[1]
 
 
+@pytest.mark.parametrize('value',['First line\r\nSecond line','First line\rSecond line','First line\nSecond line'])
+def test_textarea_verification_normalizes_only_browser_newlines(store,ats,value):
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('<form><label for="answer">Describe your project</label><textarea id="answer"></textarea></form>')
+        fields=b._snapshot();answer={'field':fields[0],'value':value,'provenance':{}}
+        b._fill(answer);b._verify([answer],[],fields)
+        b.page.locator('#answer').fill('First line\nChanged line')
+        with pytest.raises(Blocked,match='field_verification_failed'):b._verify([answer],[],fields)
+    assert not ats[1]
+
+
+def test_single_line_verification_does_not_normalize_carriage_returns(store,ats):
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('<form><label for="answer">Project</label><input id="answer"></form>')
+        fields=b._snapshot();answer={'field':fields[0],'value':'First\rSecond','provenance':{}}
+        b._fill(answer)
+        with pytest.raises(Blocked,match='field_verification_failed'):b._verify([answer],[],fields)
+    assert not ats[1]
+
+
+@pytest.mark.parametrize('preparing',[False,True])
+def test_textarea_recovery_is_bounded_to_preparation(store,ats,preparing):
+    with Browser(store,test_url=ats[0]) as b:
+        b.preparing=preparing
+        b.page.set_content('<form><label for="answer">Project</label><textarea id="answer"></textarea></form>')
+        fields=b._snapshot();answer={'field':fields[0],'value':'Approved answer','provenance':{}}
+        if preparing:
+            b._verify_with_prepare_recovery([answer],[],fields)
+            assert b.page.locator('#answer').input_value()=='Approved answer'
+        else:
+            with pytest.raises(Blocked,match='field_verification_failed'):
+                b._verify_with_prepare_recovery([answer],[],fields)
+            assert b.page.locator('#answer').input_value()==''
+    assert not ats[1]
+
+
+def test_textarea_recovery_rechecks_other_fields(store,ats):
+    with Browser(store,test_url=ats[0]) as b:
+        b.preparing=True
+        b.page.set_content('<form><label for="answer">Project</label><textarea id="answer"></textarea>'
+                           '<label for="name">Name</label><input id="name"></form>')
+        fields=b._snapshot()
+        answers=[{'field':fields[0],'value':'Approved answer','provenance':{}},
+                 {'field':fields[1],'value':'Approved name','provenance':{}}]
+        with pytest.raises(Blocked,match='field_verification_failed') as exc:
+            b._verify_with_prepare_recovery(answers,[],fields)
+        assert exc.value.detail=='Name'
+        assert b.page.locator('#answer').input_value()=='Approved answer'
+        assert b.page.locator('#name').input_value()==''
+    assert not ats[1]
+
+
+def test_textarea_recovery_stops_after_one_failed_refill(store,ats,monkeypatch):
+    with Browser(store,test_url=ats[0]) as b:
+        b.preparing=True
+        b.page.set_content('<form><label for="answer">Project</label><textarea id="answer"></textarea></form>')
+        fields=b._snapshot();answer={'field':fields[0],'value':'Approved answer','provenance':{}}
+        fills=[]
+        monkeypatch.setattr(b,'_fill',lambda a:fills.append(a))
+        with pytest.raises(Blocked,match='field_verification_failed'):
+            b._verify_with_prepare_recovery([answer],[],fields)
+        assert fills==[answer]
+    assert not ats[1]
+
+
+def test_textarea_recovery_does_not_replace_nonempty_value(store,ats):
+    with Browser(store,test_url=ats[0]) as b:
+        b.preparing=True
+        b.page.set_content('<form><label for="answer">Project</label><textarea id="answer"></textarea></form>')
+        fields=b._snapshot();answer={'field':fields[0],'value':'Approved answer','provenance':{}}
+        b.page.locator('#answer').fill('Different value')
+        with pytest.raises(Blocked,match='field_verification_failed'):
+            b._verify_with_prepare_recovery([answer],[],fields)
+        assert b.page.locator('#answer').input_value()=='Different value'
+    assert not ats[1]
+
+
+def test_textarea_recovery_rejects_duplicate_labels(store,ats):
+    with Browser(store,test_url=ats[0]) as b:
+        b.preparing=True
+        b.page.set_content('<form><label for="one">Project</label><textarea id="one"></textarea>'
+                           '<label for="two">Project</label><textarea id="two"></textarea></form>')
+        fields=b._snapshot()
+        answers=[{'field':f,'value':'Approved answer','provenance':{}} for f in fields]
+        with pytest.raises(Blocked,match='field_verification_failed'):
+            b._verify_with_prepare_recovery(answers,[],fields)
+        assert b.page.locator('#one').input_value()==''
+        assert b.page.locator('#two').input_value()==''
+    assert not ats[1]
+
+
 @pytest.mark.parametrize('duplicate',[False,True])
 def test_ashby_rich_school_option_uses_exact_canonical_name(store,ats,duplicate):
     from hireme.answers import resolve

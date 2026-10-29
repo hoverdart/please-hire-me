@@ -579,6 +579,33 @@ def test_exact_field_save_requires_verified_form_sources_and_acknowledgement(sto
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
+@pytest.mark.parametrize('newline',['\r\n','\r','\n'])
+def test_textarea_grant_binds_browser_newlines_but_no_other_changes(store,job,package,newline):
+    from hireme.answers import resolve
+    d,_=draft(store,job,package)
+    value='I build Python services.'+newline+'I improve their reliability.'
+    store.put_template('motivation',value)
+    field={'index':0,'indices':[0],'label':'Why do you want this role?',
+           'type':'textarea','required':True,'options':[],'maxlength':-1,'value':'',
+           'ashby_path':'fixture-text','ashby_entry_id':RENDER+'_fixture-text'}
+    official=form();official['sections'][0]['fieldEntries'].append({'id':field['ashby_entry_id'],
+        'field':{'path':'fixture-text','title':field['label'],'type':'LongText'},'fieldValue':None})
+    d._remember_form(official)
+    answer=resolve(store,d.job['host'],field,context=d.job)
+    assert answer['value']==value
+    proof={**d.package,'answers':[answer]};d.enable(None,proof['answers'],proof)
+    wire='I build Python services.\nI improve their reliability.'
+    for changed in (wire+' ',wire.replace('reliability','availability')):
+        r,data=request(changed,path='fixture-text');assert not d.allow(r,data,'changed')
+    if newline!='\n':
+        r,data=request(value,path='fixture-text');assert not d.allow(r,data,'raw')
+    r,data=request(wire,path='fixture-text');assert d.allow(r,data,'text')
+    official['sections'][0]['fieldEntries'][-1]['fieldValue']={'value':wire}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'text')
+    assert d.complete
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('mode',['exact','different','missing','error','wrong_entry'])
 def test_only_exact_error_free_official_prefills_count_as_saved(store,job,package,mode):
     d,_=draft(store,job,package)

@@ -18,7 +18,7 @@ import time
 from urllib.parse import urlsplit
 
 from .approval_boundary import ApprovalBoundary
-from .util import Blocked, digest
+from .util import Blocked, digest, textarea_value
 
 HOSTS={'jobs.lever.co','jobs.eu.lever.co'}
 UUID=r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}'
@@ -88,8 +88,8 @@ class LeverSubmission:
             elif len(controls)!=1:
                 raise Blocked('field_verification_failed',field['label'])
             else:
-                actual=controls[0]['value'].replace('\r\n','\n')
-                wanted=value.replace('\r\n','\n')
+                actual=controls[0]['value']
+                wanted=textarea_value(value) if kind=='textarea' else value
                 if kind=='select' and field.get('option_values'):
                     wanted=field['option_values'][field['options'].index(value)]
                 elif kind not in {'text','textarea','email','tel','url','date','number','select'} and not field.get('lever_location'):

@@ -22,7 +22,7 @@ import time
 from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from .approval_boundary import ApprovalBoundary
-from .util import Blocked, digest
+from .util import Blocked, digest, textarea_value
 
 HOSTS = {'boards.greenhouse.io', 'job-boards.greenhouse.io',
          'boards.eu.greenhouse.io', 'job-boards.eu.greenhouse.io'}
@@ -488,6 +488,10 @@ class GreenhouseSubmission:
                     result.update(location=value, latitude=coordinates[0], longitude=coordinates[1], country_short_name=country)
                 continue
             value = answer(name, bool(question.get('required')), question)
+            # The renderer stores the textarea's currentTarget.value, whose
+            # HTML value normalizes CRLF and CR to LF before JSON encoding.
+            if value is not None and kind == 'textarea':
+                value = textarea_value(value)
             if name in BASIC:
                 if value:
                     if name == 'phone':

@@ -455,6 +455,60 @@ def test_official_custom_choice_encoding_is_bound_to_the_approved_label(store):
     assert guard.grant(*request(data))
 
 
+@pytest.mark.parametrize('approved,native', [
+    ('First\r\nSecond', 'First\nSecond'),
+    ('First\rSecond', 'First\nSecond'),
+    ('First\r\nSecond\rThird\nFourth', 'First\nSecond\nThird\nFourth'),
+])
+@pytest.mark.parametrize('name', ['question_99', 'cover_letter_text'])
+def test_native_textarea_newlines_match_browser_value_without_weakening_approval(store, approved, native, name):
+    browser, job, package, _, state, data = setup_native(store)
+    f = field(3, name, 'Additional information', kind='textarea')
+    f['ref']['tag'] = 'textarea'
+    qid = store.ask(job['id'], job['host'], f['label'], f['options'], field=f, context=job)
+    store.answer_question(qid, approved)
+    package['answers'].append(resolve(store, job['host'], f, context=job))
+    package['steps'][0]['fields'].append(f)
+    state['loaders'][ROUTE]['jobPost']['questions'].append({
+        'required': True, 'label': f['label'], 'fields': [{'name': name, 'type': 'textarea'}]})
+    aid = store.prepare(job, package)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    store.begin_submit(aid)
+    application = data['job_application']
+    if name == 'question_99':
+        application['answers_attributes'] = {'99': {'question_id': '99', 'priority': 0, 'text_value': native}}
+        target = application['answers_attributes']['99']
+        key = 'text_value'
+    else:
+        target, key = application, name
+        target[key] = native
+    target[key] = native + ' altered'
+    assert not guard.grant(*request(data))
+    target[key] = approved
+    assert not guard.grant(*request(data))
+    target[key] = native
+    assert guard.grant(*request(data))
+
+
+def test_native_single_line_answer_still_requires_exact_content(store):
+    browser, job, package, _, state, data = setup_native(store)
+    f = field(3, 'question_99', 'Additional information')
+    qid = store.ask(job['id'], job['host'], f['label'], f['options'], field=f, context=job)
+    store.answer_question(qid, 'Approved answer')
+    package['answers'].append(resolve(store, job['host'], f, context=job))
+    package['steps'][0]['fields'].append(f)
+    state['loaders'][ROUTE]['jobPost']['questions'].append({
+        'required': True, 'label': f['label'], 'fields': [{'name': 'question_99', 'type': 'input_text'}]})
+    aid = store.prepare(job, package)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    store.begin_submit(aid)
+    entry = {'question_id': '99', 'priority': 0, 'text_value': 'Approved\nanswer'}
+    data['job_application']['answers_attributes'] = {'99': entry}
+    assert not guard.grant(*request(data))
+    entry['text_value'] = 'Approved answer'
+    assert guard.grant(*request(data))
+
+
 @pytest.mark.parametrize('actual', ['(555) 123-4567', '+1 555 123 4567'])
 def test_phone_uses_the_native_international_format_with_approved_digits_and_country(store, actual):
     phone = field(3, 'phone', 'Phone')
