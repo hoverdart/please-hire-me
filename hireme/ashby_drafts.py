@@ -6,7 +6,7 @@ import json
 import re
 from urllib.parse import urlsplit,parse_qsl
 
-from .util import Blocked, digest
+from .util import Blocked, digest, textarea_value
 
 # Reevaluate only Ashby draft mapping holds when this reviewed protocol changes.
 VERSION = 1
@@ -267,6 +267,7 @@ class AshbyDraft:
             if normalize(metadata.get('title',''))!=normalize(field['label']):
                 raise Blocked('ashby_draft_unsupported','Ashby question identity changed')
             value=answer['value'];kind=field['type']
+            if kind=='textarea':value=textarea_value(value)
             if kind=='ashby_education':
                 from .ashby_education import wire
                 value=wire(self,field,metadata,value)

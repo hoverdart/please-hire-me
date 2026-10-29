@@ -154,8 +154,9 @@ def dependency(store, job, kind, reason=None):
     return digest(data)
 
 def safe_state(store, job_id):
-    row=store.db.execute('SELECT state FROM applications WHERE job_id=?',(job_id,)).fetchone()
-    return not row or row[0]=='prepared'
+    # Retained history is just as authoritative as the current application
+    # slot: a changed adapter cannot reopen an earlier uncertain submission.
+    return not store.db.execute("SELECT 1 FROM application_records WHERE job_id=? AND state!='prepared' LIMIT 1",(job_id,)).fetchone()
 
 def _uncertain_draft(store,job_id):
     return bool(store.db.execute("SELECT 1 FROM remote_draft_steps WHERE job_id=? AND state IN ('intent','unknown') LIMIT 1",(job_id,)).fetchone()

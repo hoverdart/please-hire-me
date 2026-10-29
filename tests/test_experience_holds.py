@@ -139,11 +139,8 @@ def test_review_recheck_never_releases_uncertain_attempt(store, job, package, ar
         store.db.execute("INSERT INTO archived_applications SELECT *, 'test' FROM applications WHERE id=?", (aid,))
         store.db.execute('DELETE FROM applications WHERE id=?', (aid,))
     assert not ready(store, candidate)
-    if not archived:
-        with pytest.raises(ValueError, match='existing submission outcome'):
-            recheck(store, job['id'])
-    else:
-        assert not recheck(store, job['id'])['ready']
+    with pytest.raises(ValueError, match='existing submission outcome'):
+        recheck(store, job['id'])
     assert store.db.execute('SELECT state FROM application_records WHERE id=?', (aid,)).fetchone()[0] == 'unknown'
 
 

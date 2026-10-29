@@ -10,6 +10,26 @@ from hireme.lever_submission import CAPTCHA, LeverSubmission
 from hireme.util import Blocked,digest
 
 
+@pytest.mark.parametrize('newline',['\r\n','\r','\n'])
+def test_textarea_native_pairs_normalize_only_browser_newlines(newline):
+    value='First line'+newline+'Second line'
+    field={'label':'Describe your project','type':'textarea','ref':{'id':'answer','name':'answer'}}
+    answer={'field':field,'value':value,'provenance':{}}
+    form={'controls':[{'name':'answer','id':'answer','hidden':False,'value':'First line\nSecond line'}],
+          'entries':[{'name':'answer','value':'First line\r\nSecond line'}]}
+    assert LeverSubmission._approved_pairs({'answers':[answer]},form)==({'answer'},None)
+    form['entries'][0]['value']='First line\r\nChanged line'
+    with pytest.raises(Blocked,match='field_verification_failed'):LeverSubmission._approved_pairs({'answers':[answer]},form)
+
+
+def test_single_line_native_pairs_keep_carriage_returns_strict():
+    field={'label':'Project','type':'text','ref':{'id':'answer','name':'answer'}}
+    answer={'field':field,'value':'First\rSecond','provenance':{}}
+    form={'controls':[{'name':'answer','id':'answer','hidden':False,'value':'First\nSecond'}],
+          'entries':[{'name':'answer','value':'First\r\nSecond'}]}
+    with pytest.raises(Blocked,match='field_verification_failed'):LeverSubmission._approved_pairs({'answers':[answer]},form)
+
+
 @pytest.fixture
 def lever(store,job,package):
     job={**job,'url':'https://jobs.lever.co/acme/11111111-1111-4111-8111-111111111111','host':'jobs.lever.co'}

@@ -27,6 +27,11 @@ def digest(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def textarea_value(value: str) -> str:
+    """Match the HTML textarea value's newline normalization, and nothing else."""
+    return value.replace('\r\n', '\n').replace('\r', '\n')
+
+
 def company_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.casefold())
 
