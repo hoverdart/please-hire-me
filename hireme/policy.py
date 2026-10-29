@@ -21,14 +21,28 @@ WRITTEN_YEARS=re.compile(r"(?:two|three|four|five|six|seven|eight|nine|ten)\s+(?
 # Recognize the written numbers omitted by the legacy broad review check only
 # when the posting identifies an applicant experience requirement. A company
 # describing its age or its own experience is not such a requirement.
-_EXPLICIT_EXPERIENCE=r"\b(?:one|eleven|twelve)\s+(?:or more\s+)?years?(?:\s+of)?\s+(?:[a-z][\w+/#.-]*\s+){0,6}experience\b"
+_EXPLICIT_EXPERIENCE=(r"\b(?:one|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)"
+    r"(?:\s*\+\s*|\s+)(?:or more\s+)?years?(?:\s*\+)?(?:\s+of)?\s+"
+    r"(?:[a-z][\w+/#.,&-]*\s+){0,8}?experience\b")
 ADDITIONAL_APPLICANT_EXPERIENCE=re.compile(
     r"(?:\b(?:must have|must possess|requires?|required to have|"
-    r"you (?:have|need)|candidates? (?:must|should) have)\b[^.!?;\n<>]{0,50}"
+    r"you (?:have|need|should have)|(?:candidates?|applicants?) (?:needs?|requires?|must have|should have|must possess))\b[^.!?;\n<>]{0,50}?"
     +_EXPLICIT_EXPERIENCE+r"|(?:^|\n|<li\b[^>]*>)\s*(?:[-*•]\s*)?"
     r"(?:at least|minimum(?: of)?)\s+"+_EXPLICIT_EXPERIENCE+r"|"
     r"(?:<li\b[^>]*>\s*|(?:^|\n)\s*[-*•]\s*)"+_EXPLICIT_EXPERIENCE+r"|"
     +_EXPLICIT_EXPERIENCE+r"\s+(?:is\s+)?(?:required|mandatory)\b)",re.I)
+
+
+def _additional_applicant_experience(description):
+    """Find explicit requirements while allowing common direct negations."""
+    for match in ADDITIONAL_APPLICANT_EXPERIENCE.finditer(description):
+        before=description[max(0,match.start()-40):match.start()]
+        after=description[match.end():match.end()+60]
+        if (re.search(r"\b(?:no|not|never|without|don't|doesn't)\s*$",before,re.I)
+                or re.match(r"\s+(?:(?:is|are)\s+)?(?:not|never)\s+(?:required|necessary|mandatory)\b",after,re.I)):
+            continue
+        return True
+    return False
 # Only a company-to-company competitive lead is known to be unrelated to an
 # applicant's experience. Other written-out years continue to require review.
 COMPETITIVE_TIMELINE=re.compile(
@@ -211,7 +225,7 @@ def eligible(job,s,facts):
     allowed=min(s["max_years_required"],float(facts.get("professional_years",{}).get("value","0")))
     if required is not None and required>allowed: raise Blocked("experience_mismatch")
     milestones=[m.span() for m in COMPETITIVE_TIMELINE.finditer(desc)]
-    if (ADDITIONAL_APPLICANT_EXPERIENCE.search(desc)
+    if (_additional_applicant_experience(desc)
             or any(not any(start<=m.start() and m.end()<=end for start,end in milestones)
                    for m in WRITTEN_YEARS.finditer(desc))):
         raise Blocked("ambiguous_experience","Written-out experience gate needs verification")

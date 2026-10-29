@@ -69,6 +69,38 @@ def test_reviewed_company_timeline_cannot_hide_an_explicit_applicant_requirement
         eligible(candidate, store.settings(), store.facts())
 
 
+@pytest.mark.parametrize('number', ['one', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+                                     'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'])
+@pytest.mark.parametrize('statement', [
+    'Candidates need {number}+ years of C++, Python, or Java experience.',
+    'Applicants should have {number} years+ of relevant industry experience.',
+    'A candidate needs {number} years of JavaScript, React, and Python experience.',
+])
+def test_explicit_requirements_handle_plus_signs_skill_lists_and_candidate_phrasing(store, job, number, statement):
+    candidate = {**job, 'description': job['description'] + ' ' + statement.format(number=number)}
+    with pytest.raises(Blocked, match='ambiguous_experience'):
+        eligible(candidate, store.settings(), store.facts())
+
+
+@pytest.mark.parametrize('statement', [
+    'We do not require one year of experience.',
+    "We don't require eleven years of experience.",
+    'Applicants are not required to have thirteen years of experience.',
+    '<li>One year of Python experience is not required.</li>',
+    '- Eleven years of experience are not necessary.',
+    'Our company has at least thirteen years of experience serving customers.',
+])
+def test_negated_requirements_and_company_experience_are_not_holds(store, job, statement):
+    eligible({**job, 'description': job['description'] + '\n' + statement}, store.settings(), store.facts())
+
+
+def test_negated_clause_does_not_hide_a_separate_applicant_requirement(store, job):
+    candidate = {**job, 'description': job['description']
+                 + " We don't require one year of experience, but candidates need thirteen years of software experience."}
+    with pytest.raises(Blocked, match='ambiguous_experience'):
+        eligible(candidate, store.settings(), store.facts())
+
+
 def saved_candidate(store, job, suffix=''):
     candidate = {**job, 'description': job['description']
                  + ' We are two to three years ahead of everyone else in government approvals.' + suffix}
