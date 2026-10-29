@@ -113,6 +113,28 @@ def test_one_exact_native_upload_and_attachment_acknowledge_the_approved_field(s
     assert not store.db.execute('SELECT 1 FROM applications').fetchone()
 
 
+@pytest.mark.parametrize('revealed_question',[False,True])
+def test_attachment_ack_is_retained_while_further_writes_revalidate_metadata(store,job,package,revealed_question):
+    browser,package,document,form=setup(store,job,package)
+    action={'identifier':'44444444-4444-4444-8444-444444444444','title':'Submit','__typename':'FormControl'}
+    form['formControls']=[action]
+    draft=browser.ashby_draft;draft._remember_form(form)
+    draft.submission_contexts={'acme':{'application':{'id':RENDER,'sourceFormDefinitionId':DEFINITION,'formControls':[action]},'surveys':[],'legal_notice_rule_id':None}}
+    browser.ashby_preflight_fields=digest(draft.field_metadata());browser.ashby_preflight_metadata=digest(draft._metadata())
+    uploaded(browser,document)
+    req,data,key=operation(ATTACH);assert grant_attachment(browser,req,data,key)
+    response,saved=attachment_response(req,form,document)
+    saved['formControls']=[{**action,'identifier':'66666666-6666-4666-8666-666666666666'}]
+    if revealed_question:
+        saved['sections'][0]['fieldEntries'].append({'id':RENDER+'_conditional','field':{'path':'conditional','title':'New required question','type':'String'}})
+    observe_attachment(browser,response,key)
+    assert attached(browser,document)
+    if revealed_question:
+        with pytest.raises(Blocked,match='form_changed'):browser.ashby_attachment_state.authorize()
+    else:browser.ashby_attachment_state.authorize()
+    assert dict(store.db.execute('SELECT state,COUNT(*) FROM draft_operations GROUP BY state'))=={'acknowledged':3}
+
+
 @pytest.mark.parametrize('change', ['tenant', 'render', 'definition', 'path', 'handle', 'extra_variable', 'extra_mutation'])
 def test_other_attachment_targets_or_operations_are_never_granted(store, job, package, change):
     browser, _, document, _ = setup(store, job, package)

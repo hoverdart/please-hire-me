@@ -106,9 +106,6 @@ class _Attachments:
     def current(self):
         if self.browser.ashby_draft is not self.draft or self.draft.identity != self.identity:
             raise Blocked('upload_verification_failed', 'The native attachment posting changed')
-        metadata=getattr(self.browser,'ashby_preflight_metadata',None)
-        if metadata and digest(self.draft._metadata())!=metadata:
-            raise Blocked('form_changed','Inspect and validate changed Ashby controls before another upload')
         for (render, path), document in self.documents.items():
             form = self.draft.forms.get(render, {})
             if (form.get('definition') != document['definition']
@@ -118,6 +115,9 @@ class _Attachments:
 
     def authorize(self):
         self.current()
+        metadata=getattr(self.browser,'ashby_preflight_metadata',None)
+        if metadata:
+            self.browser.ashby_preflight_metadata=self.draft.revalidate_metadata(self.browser.ashby_preflight_fields,metadata)
         self.browser.write_boundary.check()
         from .answers import validate_package
         validate_package(self.browser.store, self.draft.job, self.package)

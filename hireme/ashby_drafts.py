@@ -121,17 +121,21 @@ class AshbyDraft:
         render=form.get('id');definition=form.get('sourceFormDefinitionId')
         if not isinstance(render,str) or not re.fullmatch(r'[0-9a-f-]{36}',render,re.I):return
         if not verified_definition_identifier(definition,self.identity[1] if self.identity else None):return
-        entries={};values={}
+        entries={};values={};required={}
         for section in form.get('sections',[]):
             if section.get('isHidden'):continue
             for entry in section.get('fieldEntries',[]):
                 field=entry.get('field',{});path=field.get('path')
                 if isinstance(path,str) and entry.get('id')==render+'_'+path and not entry.get('isHidden'):
+                    if path in entries:
+                        self.forms.pop(render,None)
+                        return
                     entries[path]=field
+                    required[path]=entry.get('isRequired')
                     value=entry.get('fieldValue')
                     if isinstance(value,dict) and 'value' in value:
                         values[path]=value['value']
-        self.forms[render]={'definition':definition,'entries':entries,'controls':form.get('formControls'),
+        self.forms[render]={'definition':definition,'entries':entries,'required':required,'controls':form.get('formControls'),
                             'values':values if not form.get('errorMessages') and not form.get('formErrors') else {}}
         from .ashby_texting import saved_consent
         self.forms[render]['texting_value']=saved_consent(form) if not form.get('errorMessages') and not form.get('formErrors') else None
@@ -275,6 +279,9 @@ class AshbyDraft:
                     'String','LongText','Email','Phone','URL','Url','Date','Number','Boolean',
                     'ValueSelect','MultiValueSelect','EducationHistory','Location','File'}:
                 raise Blocked('ashby_draft_unsupported','A visible Ashby control has no reviewed native identity or encoding')
+            requirement=matches[0].get('required',{}).get(path)
+            if type(requirement) is bool and requirement!=bool(field.get('required')):
+                raise Blocked('form_changed','The native question requiredness differs from its visible control')
         for answer in answers:
             field=answer['field'];path=field.get('ashby_path');entry=field.get('ashby_entry_id','')
             if field.get('ashby_texting_consent'):
@@ -367,14 +374,34 @@ class AshbyDraft:
         return boundary,grants,saved,consent,digest(self._metadata())
 
     def _metadata(self):
-        return {render:{key:form.get(key) for key in ('definition','entries','controls')}
+        return {render:{key:form.get(key) for key in ('definition','entries','required','controls')}
                 for render,form in self.forms.items()}
+
+    def field_metadata(self):
+        def identity(form):
+            return {key:form.get(key) for key in ('id','sourceFormDefinitionId')} if isinstance(form,dict) else form
+        return {'forms':{render:{key:form.get(key) for key in ('definition','entries','required')} for render,form in self.forms.items()},
+            'texting':self.texting_contexts,'contexts':{tenant:{'notice':context.get('legal_notice_rule_id'),
+                'application':identity(context.get('application')),'surveys':[identity(form) for form in context.get('surveys',[])]}
+                for tenant,context in self.submission_contexts.items()}}
+
+    def revalidate_metadata(self,fields,metadata):
+        current=digest(self._metadata())
+        if digest(self.field_metadata())!=fields:
+            raise Blocked('form_changed','Inspect and validate newly revealed or changed Ashby questions before another write')
+        if current!=metadata:
+            # An acknowledged save may rotate only the native Submit action.
+            # Validate that rotation without granting any new question value.
+            from .ashby_submission import preflight_metadata
+            preflight_metadata(self)
+        return current
 
     def enable(self, browser, answers, package):
         boundary,grants,saved,consent,metadata=self.compile(browser,answers,package)
         from .retry_authorization import check_package
         check_package(self.store,self.job,package,claim=True)
         self.boundary=boundary;self.metadata_hash=metadata
+        self.field_metadata_hash=digest(self.field_metadata())
         self.grants=grants;self.package=package;self.remaining=4*len(grants);self.saved=saved;self.failed=False;self.texting=consent
         for _,path in sorted(saved):
             self.store.event('ashby_draft_saved',self.job['id'],{'path':path,'source':'official_form'})
@@ -409,8 +436,7 @@ class AshbyDraft:
 
     def authorize_save(self):
         self.boundary.check()
-        if digest(self._metadata())!=self.metadata_hash:
-            raise Blocked('form_changed','Inspect and validate the revealed Ashby fields before another save')
+        self.metadata_hash=self.revalidate_metadata(self.field_metadata_hash,self.metadata_hash)
         from .answers import validate_package
         validate_package(self.store,self.job,self.package)
         self.store._check_budget(self.job,self.store.settings())

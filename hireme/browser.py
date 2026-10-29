@@ -1243,7 +1243,7 @@ class Browser:
         self.host_cache={host:allowed for host,allowed in self.host_cache.items() if allowed is not None}
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
         self.ashby_attachment_state=None;self.post_submit_denial_recorded=False;self.ashby_draft_fence=None
-        self.ashby_preflight_metadata=None;self.approved_application=None
+        self.ashby_preflight_metadata=None;self.ashby_preflight_fields=None;self.approved_application=None
         self.captcha_command_active=False;self.captcha_deferred_route=None
         self.ashby_submission=None;self.human_verification_seconds=0
         self.native_submission=None;self.greenhouse_uploads={};self.greenhouse_upload_fields={};self.greenhouse_native_options={};self.greenhouse_upload_pending={}
@@ -1443,6 +1443,7 @@ class Browser:
                     from .ashby_submission import preflight_metadata
                     preflight_metadata(self.ashby_draft)
                     self.ashby_preflight_metadata=compiled[-1]
+                    self.ashby_preflight_fields=digest(self.ashby_draft.field_metadata())
                     from .ashby_attachments import _Attachments
                     _Attachments(self,preflight=True)
             for d in documents:
@@ -1476,6 +1477,7 @@ class Browser:
                     if not all(attached(self,d) for d in documents):
                         raise Blocked('upload_verification_failed','The approved PDF is not acknowledged at its intended employer form field')
             if live and self.ashby_draft:
+                self.ashby_preflight_metadata=self.ashby_draft.revalidate_metadata(self.ashby_preflight_fields,self.ashby_preflight_metadata)
                 proof={'job_id':job['id'],'url':job['url'],'answers':all_answers+answers,'documents':all_docs+documents,
                        'facts_hash':digest(self.store.facts()),'steps':steps+[{'step':step,'fields':fields,'url':self.page.url}]}
                 self.ashby_draft.enable(self,answers,proof)

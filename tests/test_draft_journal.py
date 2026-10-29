@@ -79,3 +79,21 @@ def test_failed_native_ack_or_ack_commit_never_marks_field_saved(store,job,packa
     with pytest.raises(RuntimeError):d.observe_save(response,'key')
     assert d.failed and not d.complete and not d.saved
     assert store.db.execute('SELECT state FROM draft_operations').fetchone()[0]=='intent'
+
+
+@pytest.mark.parametrize('change',['none','question','requiredness','consent'])
+def test_acknowledged_action_rotation_is_revalidated_before_another_save(store,job,package,change):
+    from tests.test_ashby_drafts import submission_fixture
+    d,_,r,data=submission_fixture(store,job,package)
+    r,data=request();assert d.allow(r,data,'first')
+    saved=form({'_systemfield_email':data['variables']['value']})
+    saved['formControls']=[{'identifier':'66666666-6666-4666-8666-666666666666','title':'Submit','__typename':'FormControl'}]
+    if change=='question':
+        saved['sections'][0]['fieldEntries'].append({'id':RENDER+'_conditional','field':{'path':'conditional','title':'New required legal declaration','type':'String'}})
+    if change=='requiredness':saved['sections'][0]['fieldEntries'][1]['isRequired']=True
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':saved}}),'first')
+    if change=='consent':d.texting_contexts['acme']['shouldAskForTextingConsent']=True
+    if change!='none':
+        with pytest.raises(Blocked,match='form_changed'):d.allow(r,data,'second')
+        assert store.db.execute('SELECT COUNT(*) FROM draft_operations').fetchone()[0]==1
+    else:assert d.allow(r,data,'second')
