@@ -5,6 +5,8 @@ render. Once a mutation may have left this process, only this live session
 may continue; after interruption the entire requisition remains held.
 """
 import hashlib
+import hmac
+import secrets
 import uuid
 from dataclasses import dataclass
 
@@ -110,11 +112,13 @@ def begin(store, job, package, request, overrides):
     body=overrides.get('post_data',getattr(request,'post_data_buffer',None)) or b''
     if isinstance(body,str):body=body.encode()
     record=digest([job['id'],'ashby:attempt',uuid.uuid4().hex])
-    request_hash=hashlib.sha256(body).hexdigest()
+    secret=secrets.token_bytes(32)
+    request_hash=hmac.new(secret,body,hashlib.sha256).hexdigest()
+    sources_hash=hmac.new(secret,digest(package).encode(),hashlib.sha256).hexdigest()
     with store.transaction():
         check(store,job['id'])
         store.db.execute('INSERT INTO remote_draft_steps VALUES(?,?,?,?,?,?,?,?,?,?)',
-            (record,job['id'],'jobs.ashbyhq.com','ashby:attempt',request_hash,digest(package),'intent',now(),now(),''))
+            (record,job['id'],'jobs.ashbyhq.com','ashby:attempt',request_hash,sources_hash,'intent',now(),now(),''))
         store.event('remote_step_intent',job['id'],{'step':'ashby:attempt','tenant':'jobs.ashbyhq.com','record_id':record})
     return record
 

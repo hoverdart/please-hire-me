@@ -129,9 +129,10 @@ class AshbyTexting:
             raise Blocked('facts_changed')
         if not self.current():
             return False
+        self.draft.journal.intent({key},'texting_consent',{'render':self.render,'definition':self.definition,'path':PATH},self.draft.package)
         self.remaining -= 1
         self.pending.add(key)
-        self.draft.store.event('ashby_texting_write', self.draft.job['id'], {'value_hash': digest(self.value)})
+        self.draft.store.event('ashby_texting_write', self.draft.job['id'], {})
         return True
 
     def observe_save(self, response, key):
@@ -146,6 +147,7 @@ class AshbyTexting:
                     and form.get('id') == self.render and form.get('sourceFormDefinitionId') == self.definition
                     and not form.get('errorMessages') and not form.get('formErrors')
                     and saved_consent(form) == self.value and self.current()):
+                self.draft.journal.acknowledge(key)
                 self.draft._remember_form(form,acknowledged=True)
                 self.saved = True
                 self.failed = not self.current()

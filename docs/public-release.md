@@ -1,6 +1,6 @@
 # Release status
 
-The configured release-candidate version is **0.5.0rc13**. Published candidates are available from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases), for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history.
+The configured release-candidate version is **0.5.0rc14**. Published candidates are available from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases), for a self-hosted, single-applicant installation. Stable-release validation remains incomplete. This document describes capability boundaries and release gates; dated implementation reports are retained in Git history. See the [rc14 reliability notes](reliability-rc14.md) for the new safeguards, prototype limits and evidence still required.
 
 ## Capability boundaries
 

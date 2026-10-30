@@ -732,7 +732,7 @@ def test_report_recovery_cannot_borrow_acceptance_from_a_later_explicit_retry(st
     store.retry_not_submitted(old_id, 'Fixture owner verified the rejection and explicitly approved a retry.')
     store.event('application_started', job['id'], {'run_id': 'later-attempt', 'attempt': 1})
     new_id = store.prepare(job, package)
-    assert new_id == old_id  # Same package reuses its deterministic identity.
+    assert new_id != old_id  # The complete old attempt retains its own identity.
     store.begin_submit(new_id)
     store.finish(new_id, 'confirmed', 'Synthetic later employer acceptance')
     assert recover_reports(store) == 1

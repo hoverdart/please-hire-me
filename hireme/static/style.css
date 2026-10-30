@@ -2216,3 +2216,12 @@ input, textarea { caret-color: var(--action); }
 .demo-banner { background: var(--selected); color: var(--muted); }
 .demo-banner code { white-space: normal; overflow-wrap: anywhere; }
 #finish-setup-panel { border: 0; border-top: 1px solid var(--rule); border-radius: 0; padding: 24px 0 0; }
+#captcha-handoff-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--rule); border-radius: 12px; overflow: auto; }
+#captcha-handoff-dialog .dialog-head { flex-wrap: wrap; gap: 16px; }
+#captcha-handoff-dialog .dialog-head > div { flex: 1 1 360px; min-width: 0; }
+#close-captcha-handoff { flex: 0 0 auto; white-space: nowrap; }
+#captcha-handoff-company { overflow-wrap: anywhere; }
+#captcha-handoff-frame { position: relative; display: block; max-width: 100%; padding: 0; margin-block: 16px; border: 1px solid var(--rule); background: var(--surface); }
+#captcha-handoff-frame[hidden] { display: none; }
+#captcha-handoff-image { display: block; width: auto; max-width: 100%; max-height: 55dvh; object-fit: contain; }
+#captcha-handoff-pointer { position: absolute; width: 14px; height: 14px; border: 2px solid var(--surface); border-radius: 50%; outline: 1px solid var(--action); background: var(--action); transform: translate(-50%, -50%); pointer-events: none; }

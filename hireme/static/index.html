@@ -185,6 +185,7 @@
         <section id="human-verification-notice" class="callout" role="status" aria-live="polite" tabindex="-1" hidden>
           <h2 id="human-verification-title"></h2>
           <p id="human-verification-help"></p>
+          <button id="open-captcha-handoff" type="button" hidden>Complete challenge here</button>
         </section>
         <section id="opportunities" class="view" hidden><div class="jobs-workspace"><div id="job-list-workspace"></div><aside id="job-detail-workspace" aria-label="Selected opportunity"><p class="detail-placeholder">Select a job to review its posting, materials and application record.</p></aside></div></section>
         <section id="today" class="view">
@@ -1565,6 +1566,8 @@
                 <input name="human_verification_wait_seconds" type="number" min="0" max="600" step="1" aria-describedby="human-verification-setting-help" />
                 <span id="human-verification-setting-help" class="help">0 turns waiting off. For supported Ashby forms, show the application browser and stay at the worker desktop to complete a challenge in the same attempt. Maximum: 600 seconds. Turn off background browsing first.</span>
               </label>
+              <label class="confirmation"><input name="human_verification_handoff" type="checkbox" aria-describedby="human-handoff-setting-help" /> Allow this dashboard to control the active challenge.</label>
+              <p id="human-handoff-setting-help" class="help">Optional. Uses the same isolated application browser and one short-lived controller. Enable a visible browser and a verification wait first.</p>
             </fieldset>
             <p class="help">
               Targets are goals, not guarantees. Eligibility, company limits and
@@ -1787,6 +1790,14 @@ claude auth login</pre
       <div id="notice" role="status" aria-live="polite" aria-atomic="true"></div>
       <button id="dismiss-notification" class="secondary icon-button" type="button" aria-label="Dismiss notification"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12 M18 6 6 18"/></svg></button>
     </div>
+    <dialog id="captcha-handoff-dialog" aria-labelledby="captcha-handoff-title" aria-describedby="captcha-handoff-help">
+      <div class="dialog-head"><div><h2 id="captcha-handoff-title">Complete this challenge</h2><p id="captcha-handoff-company"></p></div><button id="close-captcha-handoff" class="secondary" type="button">Stop handoff</button></div>
+      <div class="dialog-body">
+        <p id="captcha-handoff-help">Click the challenge image, or use arrow keys and Enter. For audio verification, keep this window open and use the worker’s browser. Closing this window ends the verification wait. Don’t click Submit again.</p>
+        <p id="captcha-handoff-status" role="status" aria-live="polite">Connecting to the challenge…</p>
+        <button id="captcha-handoff-frame" type="button" aria-label="Interact with the current verification challenge" aria-describedby="captcha-handoff-help" disabled hidden><span id="captcha-handoff-image-slot"></span><span id="captcha-handoff-pointer" aria-hidden="true" hidden></span></button>
+      </div>
+    </dialog>
     <dialog id="notification-dialog" aria-labelledby="notification-title">
       <header class="dialog-head"><h2 id="notification-title">Notifications</h2><button id="close-notifications" type="button" class="secondary">Close</button></header>
       <div class="dialog-body"><p class="help">Updates from this browser session.</p><div id="notification-history"><p class="help">No notifications yet.</p></div></div>

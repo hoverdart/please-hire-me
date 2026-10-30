@@ -92,6 +92,8 @@ class AshbyDraft:
         self.postings={};self.submission_contexts={};self.locations={};self.schools={};self.navigation_url=job['url']
         self.texting_contexts={};self.texting=None
         self.school_searches={};self.education_lookups={};self.education_edited=set()
+        from .draft_journal import DraftJournal
+        self.journal=DraftJournal(store,job)
 
     def bind_page(self, url):
         """Follow a tenant rename only after the same official posting was read.
@@ -119,17 +121,21 @@ class AshbyDraft:
         render=form.get('id');definition=form.get('sourceFormDefinitionId')
         if not isinstance(render,str) or not re.fullmatch(r'[0-9a-f-]{36}',render,re.I):return
         if not verified_definition_identifier(definition,self.identity[1] if self.identity else None):return
-        entries={};values={}
+        entries={};values={};required={}
         for section in form.get('sections',[]):
             if section.get('isHidden'):continue
             for entry in section.get('fieldEntries',[]):
                 field=entry.get('field',{});path=field.get('path')
                 if isinstance(path,str) and entry.get('id')==render+'_'+path and not entry.get('isHidden'):
+                    if path in entries:
+                        self.forms.pop(render,None)
+                        return
                     entries[path]=field
+                    required[path]=entry.get('isRequired')
                     value=entry.get('fieldValue')
                     if isinstance(value,dict) and 'value' in value:
                         values[path]=value['value']
-        self.forms[render]={'definition':definition,'entries':entries,'controls':form.get('formControls'),
+        self.forms[render]={'definition':definition,'entries':entries,'required':required,'controls':form.get('formControls'),
                             'values':values if not form.get('errorMessages') and not form.get('formErrors') else {}}
         from .ashby_texting import saved_consent
         self.forms[render]['texting_value']=saved_consent(form) if not form.get('errorMessages') and not form.get('formErrors') else None
@@ -253,24 +259,41 @@ class AshbyDraft:
             self.school_searches[variables['name']]=observed
         except (ValueError,TypeError,AttributeError,KeyError):return
 
-    def enable(self, browser, answers, package):
+    def compile(self, browser, answers, package):
+        """Validate native encodings without enabling any draft transport."""
         from .answers import selections,validate_package
         from .approval_boundary import ApprovalBoundary
-        boundary=ApprovalBoundary(self.store,self.job,package)
+        boundary=ApprovalBoundary(self.store,self.job,package,reserve_retry=False)
         validate_package(self.store,self.job,package)
         self.store._check_budget(self.job,self.store.settings())
         grants={};saved=set();texting=[]
+        # Optional unanswered controls still belong to the visible application.
+        # An unknown native renderer must not be discovered after an upload.
+        visible=package.get('steps',[])
+        for field in visible[-1].get('fields',[]) if visible else []:
+            if field.get('ashby_texting_consent'):continue
+            path=field.get('ashby_path');entry=field.get('ashby_entry_id')
+            matches=[form for render,form in self.forms.items()
+                if path and entry==render+'_'+path and path in form['entries']]
+            if len(matches)!=1 or matches[0]['entries'][path].get('type') not in {
+                    'String','LongText','Email','Phone','URL','Url','Date','Number','Boolean',
+                    'ValueSelect','MultiValueSelect','EducationHistory','Location','File'}:
+                raise Blocked('ashby_draft_unsupported','A visible Ashby control has no reviewed native identity or encoding')
+            requirement=matches[0].get('required',{}).get(path)
+            if type(requirement) is bool and requirement!=bool(field.get('required')):
+                raise Blocked('form_changed','The native question requiredness differs from its visible control')
         for answer in answers:
             field=answer['field'];path=field.get('ashby_path');entry=field.get('ashby_entry_id','')
             if field.get('ashby_texting_consent'):
                 texting.append(answer);continue
             if not path:
-                if field.get('required'):raise Blocked('ashby_draft_unsupported','Required field has no verified Ashby path')
-                continue
+                raise Blocked('ashby_draft_unsupported','The answered visible field has no verified Ashby path')
             matches=[(render,form) for render,form in self.forms.items()
                      if entry==render+'_'+path and path in form['entries']]
             if len(matches)!=1:raise Blocked('ashby_draft_unsupported','The current Ashby form identity is unverified')
             render,form=matches[0];metadata=form['entries'][path]
+            if metadata.get('type') not in {None,'String','LongText','Email','Phone','URL','Url','Date','Number','Boolean','ValueSelect','MultiValueSelect','EducationHistory','Location'}:
+                raise Blocked('ashby_draft_unsupported',field['label']+' — unsupported native field type')
             # Bind the reviewed question to the official form response, not just
             # an arbitrary path asserted by a browser-generated request.
             normalize=lambda value:re.sub(r'[\s*✱]+',' ',value).strip().casefold()
@@ -348,7 +371,37 @@ class AshbyDraft:
         from .ashby_texting import AshbyTexting
         consent=AshbyTexting(self,texting[0],answers,grants) if texting else None
         boundary.check()
-        self.boundary=boundary
+        return boundary,grants,saved,consent,digest(self._metadata())
+
+    def _metadata(self):
+        return {render:{key:form.get(key) for key in ('definition','entries','required','controls')}
+                for render,form in self.forms.items()}
+
+    def field_metadata(self):
+        def identity(form):
+            return {key:form.get(key) for key in ('id','sourceFormDefinitionId')} if isinstance(form,dict) else form
+        return {'forms':{render:{key:form.get(key) for key in ('definition','entries','required')} for render,form in self.forms.items()},
+            'texting':self.texting_contexts,'contexts':{tenant:{'notice':context.get('legal_notice_rule_id'),
+                'application':identity(context.get('application')),'surveys':[identity(form) for form in context.get('surveys',[])]}
+                for tenant,context in self.submission_contexts.items()}}
+
+    def revalidate_metadata(self,fields,metadata):
+        current=digest(self._metadata())
+        if digest(self.field_metadata())!=fields:
+            raise Blocked('form_changed','Inspect and validate newly revealed or changed Ashby questions before another write')
+        if current!=metadata:
+            # An acknowledged save may rotate only the native Submit action.
+            # Validate that rotation without granting any new question value.
+            from .ashby_submission import preflight_metadata
+            preflight_metadata(self)
+        return current
+
+    def enable(self, browser, answers, package):
+        boundary,grants,saved,consent,metadata=self.compile(browser,answers,package)
+        from .retry_authorization import check_package
+        check_package(self.store,self.job,package,claim=True)
+        self.boundary=boundary;self.metadata_hash=metadata
+        self.field_metadata_hash=digest(self.field_metadata())
         self.grants=grants;self.package=package;self.remaining=4*len(grants);self.saved=saved;self.failed=False;self.texting=consent
         for _,path in sorted(saved):
             self.store.event('ashby_draft_saved',self.job['id'],{'path':path,'source':'official_form'})
@@ -376,12 +429,14 @@ class AshbyDraft:
                 or variables.get('formDefinitionIdentifier')!=grant['definition']
                 or not same(variables.get('value'),grant['value']) or self.remaining<=0):return False
         self.authorize_save()
+        self.journal.intent({key},'field_save',{'render':field[0],'path':field[1],'definition':grant['definition']},self.package)
         self.remaining-=1;self.pending[key]=field
-        self.store.event('ashby_draft_write',self.job['id'],{'path':field[1],'value_hash':digest(grant['value'])})
+        self.store.event('ashby_draft_write',self.job['id'],{'path':field[1]})
         return True
 
     def authorize_save(self):
         self.boundary.check()
+        self.metadata_hash=self.revalidate_metadata(self.field_metadata_hash,self.metadata_hash)
         from .answers import validate_package
         validate_package(self.store,self.job,self.package)
         self.store._check_budget(self.job,self.store.settings())
@@ -406,6 +461,10 @@ class AshbyDraft:
                 self.failed=True;return
             # A verified save can reveal employer-authored conditional fields.
             # Those still need new approved answers before they receive grants.
+            try:self.journal.acknowledge(key)
+            except Exception:
+                self.failed=True
+                raise
             self._remember_form(form,acknowledged=True)
             self.saved.add(field)
             self.store.event('ashby_draft_saved',self.job['id'],{'path':field[1]})

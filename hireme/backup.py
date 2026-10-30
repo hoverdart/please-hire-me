@@ -109,7 +109,9 @@ def create_backup(store, destination: Path):
             finally:db.close()
             snapshot = Store(Path(temporary))
             # This is a copy. The source worker's configuration is untouched.
-            snapshot.update_settings({'live_enabled':False});snapshot.recover();snapshot.close()
+            snapshot.update_settings({'live_enabled':False});snapshot.recover()
+            snapshot.db.execute('DELETE FROM captcha_handoffs')
+            snapshot.close()
             fd, tempname = tempfile.mkstemp(dir=destination.parent, prefix='.backup-')
             try:
                 os.close(fd)
@@ -218,7 +220,9 @@ def restore_backup(archive_path: Path, destination: Path):
         restored=Store(staging)
         try:
             _validate_references(restored)
-            restored.update_settings({'live_enabled':False});restored.recover();restored.export_config()
+            restored.update_settings({'live_enabled':False});restored.recover()
+            restored.db.execute("UPDATE retry_authorizations SET state='held' WHERE state IN ('available','reserved')")
+            restored.export_config()
             restored.db.execute("UPDATE platform_connections SET enabled=0,discovery_enabled=0,native_apply_enabled=0,session_state='not_connected',detail='Sign in and validate this connection on the restored worker machine.'")
             restored.db.execute('DELETE FROM platform_documents')
             # A restored mailbox index preserves duplicate evidence, but its

@@ -54,6 +54,8 @@ For a different private workspace, put the same absolute `--data-dir` before **e
 
 A checkout is code; the private workspace is your applicant identity and history. Move between machines with a [history backup and restore](docs/guide.md#back-up-and-move-your-data), then reconnect credentials on the destination. Use one active worker per applicant.
 
+Applications use isolated browser sessions. Supported unattended forms require approved answers and documents, a reviewed native transport, and a matching employer acknowledgement and receipt. Unknown controls or changed questions hold the application before further writes. CAPTCHA handoffs require an opt-in visible session; unsupported forms need manual completion. An uncertain outcome stays protected until independently reconciled. See the [reliability changes and remaining release gates](docs/reliability-rc14.md).
+
 ## Try it without personal data
 
 After installing dependencies:
@@ -143,7 +145,7 @@ Use **Past applications from email** to scan an employer or build a broader hist
 - **Answers & evidence** joins an attempt's posting identity, exact document references, submission outcome, reviewed recruiting feedback and next action. Export its private JSON record or download the original recorded PDFs. New attempts capture posting identity; older records clearly label unavailable historical context.
 - **Recruiting Insights** in Applications compares reviewed responses by company, exact role title, source and resume PDF. Choose a response window and inspect the attempts behind each metric. Recent or uncertain submissions do not enter mature-response denominators; missing feedback is not a rejection.
 
-The configured release-candidate version is **0.5.0rc13**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
+The configured release-candidate version is **0.5.0rc14**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
 
 ## Guides and development
 

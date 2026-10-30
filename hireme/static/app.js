@@ -392,6 +392,110 @@ async function api(path, data, raw = false, extraHeaders = {}) {
   if (forms[path]) saved($(forms[path]));
   return value;
 }
+let captchaController = null, captchaTimer = null, captchaImageURL = null, captchaBusy = false;
+let captchaSequence = 1, captchaPointer = [0.5, 0.5], captchaFrameRevision = null;
+const captchaDialog = $("#captcha-handoff-dialog");
+function stopCaptchaHandoff(message = "Handoff stopped. The application outcome remains protected.") {
+  clearTimeout(captchaTimer);
+  const controller = captchaController;
+  captchaController = null;
+  if (controller) api("/api/human-verification", {action:"disconnect", controller}).catch(() => {});
+  if (captchaImageURL) URL.revokeObjectURL(captchaImageURL);
+  captchaImageURL = null;
+  captchaFrameRevision = null;
+  $("#captcha-handoff-image")?.remove();
+  $("#captcha-handoff-frame").hidden = true;
+  $("#captcha-handoff-status").textContent = message;
+}
+async function pollCaptchaHandoff() {
+  if (!captchaController || !captchaDialog.open) return;
+  const controller = captchaController;
+  try {
+    const frame = await api("/api/human-verification", {action:"frame", controller});
+    if (controller !== captchaController || !captchaDialog.open) return;
+    if (frame.ready === false) {
+      $("#captcha-handoff-status").textContent = "Waiting for the current challenge image…";
+      captchaTimer = setTimeout(pollCaptchaHandoff, 1000);
+      return;
+    }
+    const bytes = Uint8Array.from(atob(frame.png), value => value.charCodeAt(0));
+    const nextURL = URL.createObjectURL(new Blob([bytes], {type:"image/png"}));
+    if (captchaImageURL) URL.revokeObjectURL(captchaImageURL);
+    captchaImageURL = nextURL;
+    const image = $("#captcha-handoff-image") || document.createElement("img");
+    image.id = "captcha-handoff-image";
+    image.alt = "Live verification challenge from the isolated application browser";
+    image.src = nextURL;
+    if (!image.isConnected) $("#captcha-handoff-image-slot").append(image);
+    $("#captcha-handoff-frame").hidden = false;
+    $("#captcha-handoff-frame").disabled = Boolean(frame.interaction_pending);
+    captchaSequence = frame.next_sequence;
+    captchaFrameRevision = frame.frame_revision;
+    $("#captcha-handoff-status").textContent = frame.stale_click ? "The challenge changed before that selection. Review the new image and select again." : "Connected to this challenge. Closing this window ends this verification wait.";
+    captchaTimer = setTimeout(pollCaptchaHandoff, 2000);
+  } catch (error) {
+    if (controller !== captchaController) return;
+    if (error.message === "Challenge image is not ready") {
+      captchaTimer = setTimeout(pollCaptchaHandoff, 1000);
+    } else stopCaptchaHandoff("Challenge control ended: " + error.message + ". Check the recorded application outcome before taking further action.");
+  }
+}
+$("#open-captcha-handoff").onclick = async () => {
+  if (captchaBusy || captchaController) return;
+  captchaBusy = true;
+  $("#open-captcha-handoff").disabled = true;
+  $("#captcha-handoff-company").textContent = `${state.human_verification.company} — ${state.human_verification.title}`;
+  $("#captcha-handoff-status").textContent = "Connecting to the challenge…";
+  $("#captcha-handoff-pointer").hidden = true;
+  captchaPointer = [0.5, 0.5];
+  captchaDialog.showModal();
+  try {
+    const claim = await api("/api/human-verification", {action:"claim"});
+    if (!captchaDialog.open) {
+      api("/api/human-verification", {action:"disconnect", controller:claim.controller}).catch(() => {});
+      return;
+    }
+    captchaController = claim.controller;
+    pollCaptchaHandoff();
+  } catch (error) {
+    stopCaptchaHandoff(error.message + ". The existing attempt remains protected.");
+  } finally {
+    captchaBusy = false;
+    $("#open-captcha-handoff").disabled = false;
+  }
+};
+$("#close-captcha-handoff").onclick = () => captchaDialog.close();
+captchaDialog.addEventListener("close", () => stopCaptchaHandoff());
+async function clickCaptchaPoint(x, y) {
+  if (!captchaController || captchaBusy) return;
+  captchaBusy = true;
+  $("#captcha-handoff-frame").disabled = true;
+  const controller = captchaController;
+  try {
+    const result = await api("/api/human-verification", {action:"click", controller, x, y, sequence:captchaSequence, frame_revision:captchaFrameRevision});
+    if (result.stale_click) {
+      clearTimeout(captchaTimer);
+      await pollCaptchaHandoff();
+      return;
+    }
+    captchaSequence++;
+  } catch (error) {
+    if (controller === captchaController) stopCaptchaHandoff("The interaction could not be verified. " + error.message + ". This attempt remains protected.");
+  } finally { captchaBusy = false; }
+}
+$("#captcha-handoff-frame").onclick = event => {
+  if (event.detail === 0) return clickCaptchaPoint(...captchaPointer);
+  const box = $("#captcha-handoff-image").getBoundingClientRect();
+  clickCaptchaPoint(Math.max(0.001, Math.min(0.999, (event.clientX-box.left)/box.width)), Math.max(0.001, Math.min(0.999, (event.clientY-box.top)/box.height)));
+};
+$("#captcha-handoff-frame").addEventListener("keydown", event => {
+  const directions = {ArrowLeft:[-0.05,0], ArrowRight:[0.05,0], ArrowUp:[0,-0.05], ArrowDown:[0,0.05]};
+  if (!directions[event.key]) return;
+  event.preventDefault();
+  captchaPointer = captchaPointer.map((value,index) => Math.max(0.01,Math.min(0.99,value+directions[event.key][index])));
+  const pointer = $("#captcha-handoff-pointer");
+  pointer.hidden = false;pointer.style.left = `${captchaPointer[0]*100}%`;pointer.style.top = `${captchaPointer[1]*100}%`;
+});
 $("#account-credentials-form").onsubmit = async (event) => {
   event.preventDefault();
   if (accountCredentialBusy || accountTransferBusy) return;
@@ -3395,6 +3499,8 @@ $("#run-history-retry").onclick = () => loadRunHistory(true);
 
 function render() {
   const verification = state.human_verification;
+  $("#open-captcha-handoff").hidden = !(verification?.phase === "challenge" && state.settings.human_verification_handoff);
+  if (captchaController && verification?.phase !== "challenge") stopCaptchaHandoff("Challenge control has ended. Check the employer receipt and recorded application outcome.");
   $("#human-verification-notice").hidden = !verification;
   if (verification) {
     const challenge = verification.phase === "challenge";

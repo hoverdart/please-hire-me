@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS model_request_metadata (request_id INTEGER PRIMARY KE
 CREATE TABLE IF NOT EXISTS model_limit_override (id INTEGER PRIMARY KEY CHECK(id=1), expires REAL NOT NULL, previous TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS remote_draft_steps (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, tenant TEXT NOT NULL, step TEXT NOT NULL, request_hash TEXT NOT NULL, sources_hash TEXT NOT NULL, state TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL, acknowledgement TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS remote_draft_job ON remote_draft_steps(job_id,created);
+CREATE TABLE IF NOT EXISTS draft_operations (id TEXT PRIMARY KEY, job_id TEXT NOT NULL,
+ session TEXT NOT NULL, operation TEXT NOT NULL, target TEXT NOT NULL,
+ request_commitment TEXT NOT NULL, source_commitment TEXT NOT NULL, state TEXT NOT NULL,
+ created TEXT NOT NULL, updated TEXT NOT NULL, acknowledgement TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS confirmed_history (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
  payload TEXT NOT NULL, source TEXT NOT NULL, confirmed INTEGER NOT NULL DEFAULT 0,
  revision INTEGER NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
@@ -63,6 +67,9 @@ CREATE TABLE IF NOT EXISTS field_bindings (id TEXT PRIMARY KEY, host TEXT NOT NU
 CREATE TABLE IF NOT EXISTS verification_challenges (application_id TEXT PRIMARY KEY, provider TEXT NOT NULL,
  url TEXT NOT NULL, company TEXT NOT NULL, requested REAL NOT NULL, code_length INTEGER NOT NULL,
  state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS captcha_handoffs (id TEXT PRIMARY KEY, application_id TEXT NOT NULL UNIQUE,
+ run_id TEXT NOT NULL, expires REAL NOT NULL, controller_hash TEXT NOT NULL, heartbeat REAL NOT NULL,
+ state TEXT NOT NULL, command TEXT NOT NULL, result TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS report_outbox (id TEXT PRIMARY KEY, recipient TEXT NOT NULL, subject TEXT NOT NULL,
  body TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE, state TEXT NOT NULL, created TEXT NOT NULL,
  attempts INTEGER NOT NULL, provider_id TEXT, sent TEXT, last_error TEXT);
@@ -90,6 +97,8 @@ CREATE TABLE IF NOT EXISTS prior_application_mail_companies (mail_id TEXT NOT NU
 CREATE TABLE IF NOT EXISTS prior_application_scans (owner_hash TEXT NOT NULL, company_key TEXT NOT NULL,
  query TEXT NOT NULL, pending TEXT NOT NULL, next_page TEXT NOT NULL, started REAL NOT NULL,
  completed REAL, updated TEXT NOT NULL, PRIMARY KEY(owner_hash,company_key));
+CREATE TABLE IF NOT EXISTS prior_scan_protocols (owner_hash TEXT NOT NULL, company_key TEXT NOT NULL,
+ protocol TEXT NOT NULL, PRIMARY KEY(owner_hash,company_key));
 CREATE TABLE IF NOT EXISTS prior_application_company_names (company_key TEXT NOT NULL,
  email_company_key TEXT NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL, checked TEXT NOT NULL,
  PRIMARY KEY(company_key,email_company_key));
@@ -115,6 +124,9 @@ CREATE TABLE IF NOT EXISTS archived_applications (id TEXT PRIMARY KEY, job_id TE
  created TEXT NOT NULL, updated TEXT NOT NULL, attempted TEXT, confirmation TEXT, screenshot TEXT,
  origin TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS archived_applications_job ON archived_applications(job_id);
+CREATE TABLE IF NOT EXISTS retry_authorizations (previous_id TEXT PRIMARY KEY, job_id TEXT NOT NULL,
+ package_hash TEXT NOT NULL, source_revision TEXT NOT NULL, state TEXT NOT NULL,
+ owner TEXT NOT NULL DEFAULT '', application_id TEXT NOT NULL DEFAULT '');
 CREATE VIEW IF NOT EXISTS application_records AS
  SELECT id,job_id,company_key,state,package,hash,created,updated,attempted,confirmation,screenshot FROM applications
  UNION ALL
@@ -638,8 +650,10 @@ class Store:
         self.check_job_decision(job["id"])
         from .prior_applications import check_saved
         check_saved(self,job)
-        if self.db.execute("SELECT 1 FROM archived_applications WHERE job_id=? AND state!='prepared'",(job['id'],)).fetchone():
-            raise Blocked('duplicate_or_uncertain','This requisition has a retained application from another worker')
+        from .retry_authorization import permits
+        for previous in self.db.execute("SELECT id,job_id,state FROM archived_applications WHERE job_id=? AND state!='prepared'",(job['id'],)):
+            if not permits(self,dict(previous),job['id'],application_id):
+                raise Blocked('duplicate_or_uncertain','This requisition has a retained application from another worker')
         if application_id is not None:
             if self.db.execute('SELECT 1 FROM archived_applications WHERE id=?',(application_id,)).fetchone():
                 raise Blocked('application_changed','Historical application records cannot authorize employer writes')
@@ -652,9 +666,9 @@ class Store:
         # Different feeds use /application, /apply, embed and tracked links for
         # the same requisition. Company cooldowns expire; duplicate protection
         # must remain, including rejected and unresolved attempts.
-        history=self.db.execute("""SELECT a.job_id,j.url FROM application_records a
+        history=self.db.execute("""SELECT a.id,a.state,a.job_id,j.url FROM application_records a
             JOIN jobs j ON j.id=a.job_id WHERE a.state!='prepared' AND a.job_id!=?
-            UNION ALL SELECT d.job_id,j.url FROM job_decisions d
+            UNION ALL SELECT '', 'manually_applied',d.job_id,j.url FROM job_decisions d
             JOIN jobs j ON j.id=d.job_id WHERE d.decision='manually_applied' AND d.job_id!=?""",
             (job['id'],job['id']))
         for previous in history:
@@ -681,7 +695,9 @@ class Store:
         if any(r["state"] in ("submitting","unknown") for r in active):
             raise Blocked("company_uncertain","Reconcile the earlier attempt first")
         spam_ids={row[0] for row in self.db.execute("SELECT id FROM application_records WHERE state='not_submitted' AND LOWER(confirmation) LIKE '%possible spam%'")}
-        if any(row['id'] in spam_ids and ck in row['company_keys'] for row in self.application_history(s,('not_submitted',))):
+        if any(row['id'] in spam_ids and ck in row['company_keys']
+                and not permits(self,row,job['id'],application_id)
+                for row in self.application_history(s,('not_submitted',))):
             raise Blocked('company_submission_rejected','An earlier submission was rejected as possible spam; complete manually or explicitly review the earlier attempt')
         if s["max_per_company"] and len(active)>=s["max_per_company"]:
             raise Blocked("company_limit")
@@ -699,16 +715,32 @@ class Store:
     def prepare(self, job, package):
         from .answers import validate_package
         validate_package(self,job,package)
+        from .retry_authorization import check_package,authorization
+        claimed_here=check_package(self,job,package,claim=True)
+        try:
+            return self._prepare_reserved(job,package)
+        except BaseException:
+            if claimed_here:
+                with self.transaction():
+                    self.db.execute("UPDATE retry_authorizations SET state='available',owner='' WHERE job_id=? AND state='reserved' AND application_id='' AND owner=?",
+                        (job['id'],getattr(self,'retry_owners',{}).get(job['id'],'')))
+                self.retry_owners.pop(job['id'],None)
+            raise
+
+    def _prepare_reserved(self,job,package):
+        from .retry_authorization import authorization
         with self.transaction():
             s=self.settings()
             self._check_budget(job,s)
             prev=self.db.execute("SELECT state FROM applications WHERE job_id=?",(job["id"],)).fetchone()
             if prev and prev[0] != "prepared":
                 raise Blocked("duplicate_or_uncertain")
-            aid=digest([job["id"], package])
+            retry=authorization(self,job['id'])
+            aid=digest([job["id"], package,retry['previous_id']]) if retry else digest([job["id"], package])
             self.db.execute("DELETE FROM applications WHERE job_id=? AND state='prepared'",(job["id"],))
             self.db.execute("INSERT INTO applications(id,job_id,company_key,state,package,hash,created,updated) VALUES(?,?,?,'prepared',?,?,?,?)",
                 (aid,job["id"],self.company(job["company"]),json.dumps(package),digest(package),now(),now()))
+            if retry:self.db.execute('UPDATE retry_authorizations SET application_id=? WHERE previous_id=?',(aid,retry['previous_id']))
             from .application_journey import capture_context
             self.event("prepared",aid,{"package_hash":digest(package),'job_context':capture_context(self,job)})
         return aid
@@ -732,8 +764,9 @@ class Store:
                 raise Blocked("package_tampered")
             eligible(job,s,self.facts())
             validate_package(self,job,package)
-            self._check_budget(job,s)
+            self._check_budget(job,s,application_id=aid)
             self.db.execute("UPDATE applications SET state='submitting',attempted=?,updated=? WHERE id=?",(now(),now(),aid))
+            self.db.execute("UPDATE retry_authorizations SET state='consumed' WHERE application_id=? AND state='reserved'",(aid,))
             self.db.execute("UPDATE jobs SET status='submitting',reason='',updated=? WHERE id=?",(now(),app['job_id']))
             from .application_journey import capture_context
             self.event("submit_intent",aid,{"hash":app["hash"],'job_context':capture_context(self,job)})
@@ -767,6 +800,8 @@ class Store:
 
     def recover(self):
         with self.transaction():
+            self.db.execute("UPDATE captcha_handoffs SET state='closed',command='' WHERE state!='closed'")
+            self.db.execute("UPDATE draft_operations SET state='unknown',updated=? WHERE state='intent'",(now(),))
             from .ashby_legacy_guard import protect_legacy_ashby
             protect_legacy_ashby(self)
             from .workday_commission_state import recover_commission
@@ -804,18 +839,46 @@ class Store:
             self.event("human_reconciliation",aid,{"submitted":submitted,"note":note})
         # A not-submitted outcome is deliberately not retried automatically.
 
-    def retry_not_submitted(self, aid, note):
+    def retry_not_submitted(self, aid, note, approved_package=None):
         if not isinstance(note,str) or len(note.strip())<10:raise ValueError('Explain why this application can be retried')
         with self.transaction():
             app=self.db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone()
             if not app or app['state']!='not_submitted':raise ValueError('Reconcile as not submitted before retrying')
             self.check_job_decision(app['job_id'])
+            from .answers import validate_package
+            from .retry_authorization import source_revision
+            job=json.loads(self.db.execute('SELECT payload FROM jobs WHERE id=?',(app['job_id'],)).fetchone()[0])
+            approved_package=json.loads(app['package']) if approved_package is None else approved_package
+            validate_package(self,job,approved_package)
+            columns=APPLICATION_COLUMNS.split(',')
+            self.db.execute('INSERT INTO archived_applications VALUES('+','.join('?' for _ in range(len(columns)+1))+')',
+                            (*[app[k] for k in columns],'explicit_retry'))
+            self.db.execute('INSERT INTO retry_authorizations VALUES(?,?,?,?,?,?,?)',
+                (aid,app['job_id'],digest(approved_package),source_revision(self,app['job_id']),'available','',''))
             # Preserve the entire prior attempt before freeing the unique job slot.
             self.event('application_retry_requested',aid,{'previous_application':dict(app),'note':note})
             self.db.execute('DELETE FROM verification_challenges WHERE application_id=?',(aid,))
             self.db.execute('DELETE FROM applications WHERE id=?',(aid,))
             self.db.execute("UPDATE jobs SET status='discovered',reason='',updated=? WHERE id=?",(now(),app['job_id']))
             return app['job_id']
+
+    def renew_retry_authorization(self,aid,note,package):
+        """Explicitly replace an unused approval; never release a reservation."""
+        if not isinstance(note,str) or len(note.strip())<10:raise ValueError('Explain the renewed package approval')
+        from .answers import validate_package
+        from .retry_authorization import source_revision
+        with self.transaction():
+            app=self.db.execute('SELECT * FROM archived_applications WHERE id=?',(aid,)).fetchone()
+            auth=self.db.execute('SELECT * FROM retry_authorizations WHERE previous_id=?',(aid,)).fetchone()
+            if (not app or app['state']!='not_submitted' or not auth or auth['state']!='available'
+                    or self.db.execute('SELECT 1 FROM applications WHERE job_id=?',(app['job_id'],)).fetchone()):
+                raise ValueError('Only an unused, unreserved retry approval can be renewed')
+            job=json.loads(self.db.execute('SELECT payload FROM jobs WHERE id=?',(app['job_id'],)).fetchone()[0])
+            self.check_job_decision(job['id']);validate_package(self,job,package)
+            self.event('retry_authorization_renewed',aid,{'previous_authorization':dict(auth),'note':note,'package_hash':digest(package)})
+            self.db.execute('UPDATE retry_authorizations SET package_hash=?,source_revision=? WHERE previous_id=?',
+                            (digest(package),source_revision(self,job['id']),aid))
+            return job['id']
 
     def retain_applications(self, records, *, origin):
         """Retain independently recorded attempts without replacing the current job slot.

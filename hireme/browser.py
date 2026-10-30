@@ -227,6 +227,7 @@ class Browser:
         self.preparing=False
         self.visible=False;self.human_verification_seconds=0
         self.receipt_baseline=''
+        self.captcha_command_active=False;self.captcha_deferred_route=None
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
@@ -378,7 +379,7 @@ class Browser:
             if self.attempted and self.current_host=='jobs.ashbyhq.com':return route.abort()
             if self.current_host=='jobs.ashbyhq.com':
                 from .ashby_attachments import grant_upload
-                try:grant=grant_upload(self,route.request,self._request_key(route.request))
+                try:grant=grant_upload(self,route.request,self._ashby_request_key(route.request))
                 except Blocked:grant=False
                 return (self._continue_route(route,_ashby_draft_write=True,**grant) if isinstance(grant,dict) else self._continue_route(route,_ashby_draft_write=True)) if grant else route.abort()
             if self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
@@ -477,7 +478,7 @@ class Browser:
                         and isinstance(data,dict) and data.get('operationName') in {'ApiCreateFileUploadHandle','ApiSetFormValueToFile'}):
                     from .ashby_attachments import grant_attachment
                     try:
-                        if grant_attachment(self,route.request,data,self._request_key(route.request)):
+                        if grant_attachment(self,route.request,data,self._ashby_request_key(route.request)):
                             return self._continue_route(route,_ashby_draft_write=True)
                     except Blocked:pass
                     self.denied_write=True
@@ -485,7 +486,7 @@ class Browser:
                     return route.abort()
                 if host==self.current_host=='jobs.ashbyhq.com' and p.path=='/api/non-user-graphql' and self.ashby_draft:
                     try:
-                        if self.ashby_draft.allow(route.request,data,self._request_key(route.request)):
+                        if self.ashby_draft.allow(route.request,data,self._ashby_request_key(route.request)):
                             return self._continue_route(route,_ashby_draft_write=True)
                     except Blocked as error:
                         self.denied_write=True;self.denied_request={'host':host,'path':p.path,'method':route.request.method,'reason':error.reason}
@@ -543,6 +544,12 @@ class Browser:
                         and re.match(r'^\s*query\b',q['query'])
                         and not re.search(r'\b(?:mutation|subscription)\b',q['query']) for q in queries)
                 except (ValueError,TypeError):pass
+        final_grant=getattr(self,'ashby_submission',None) or getattr(self,'native_submission',None)
+        if (not reading and getattr(self,'captcha_command_active',False) and final_grant and final_grant.used
+                and urlsplit(request.url).hostname==self.current_host):
+            if self.captcha_deferred_route:return route.abort()
+            self.captcha_deferred_route=(route,_ashby_draft_write,overrides)
+            return
         if not reading:
             try:
                 if self.write_boundary:self.write_boundary.check(application_id=self.aid if self.attempted else None)
@@ -564,6 +571,8 @@ class Browser:
                                   and self.ashby_submission.used):
             try:
                 from .ashby_guard import begin,check
+                if self.store.db.in_transaction:
+                    raise Blocked('ashby_draft_uncertain','An uncommitted transaction cannot authorize employer transport')
                 job=self.ashby_draft.job
                 if _ashby_draft_write and not self.ashby_draft_fence:
                     package=self.write_boundary.package if self.write_boundary else self.ashby_draft.package
@@ -595,6 +604,15 @@ class Browser:
     def _request_key(request):
         return (request.url,request.method,hashlib.sha256(getattr(request,'post_data_buffer',None) or b'').hexdigest())
 
+    @staticmethod
+    def _ashby_request_key(request):
+        content=Browser._request_key(request)
+        # Playwright's channel GUID survives its wrapper callbacks and separates
+        # identical sequential native requests. Unknown wrappers retain the
+        # conservative content key, where ambiguous repeats remain held.
+        guid=getattr(getattr(request,'_impl_obj',None),'_guid',None)
+        return (*content,guid) if isinstance(guid,str) and guid else content
+
     def _upload_response(self,response):
         request=response.request
         if self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'}:
@@ -604,7 +622,7 @@ class Browser:
             with contextlib.suppress(Exception):self.native_submission.observe(response,self._request_key(request))
         if self.current_host=='jobs.ashbyhq.com':
             from .ashby_attachments import observe_attachment
-            with contextlib.suppress(Exception):observe_attachment(self,response,self._request_key(request))
+            with contextlib.suppress(Exception):observe_attachment(self,response,self._ashby_request_key(request))
         if self.workday_grant and hasattr(self.workday_grant,'observe_response'):
             with contextlib.suppress(Exception):self.workday_grant.observe_response(response)
         if self.ashby_submission:
@@ -614,7 +632,7 @@ class Browser:
             with contextlib.suppress(Exception):self.ashby_draft.observe_posting(request,response)
             with contextlib.suppress(Exception):self.ashby_draft.observe_locations(request,response)
             with contextlib.suppress(Exception):self.ashby_draft.observe_schools(request,response)
-            with contextlib.suppress(Exception):self.ashby_draft.observe_save(response,self._request_key(request))
+            with contextlib.suppress(Exception):self.ashby_draft.observe_save(response,self._ashby_request_key(request))
         application_id=self.submission_requests.pop(self._request_key(request),None)
         if application_id:
             # Transport success is diagnostic evidence, never a receipt. Do not
@@ -720,13 +738,14 @@ class Browser:
         from playwright.sync_api import Error as BrowserError
         # ATS processing routinely exceeds one second, especially on the Pi.
         deadline=time.monotonic()+45
-        human_deadline=None;phase=None;result='interrupted'
+        human_deadline=None;phase=None;result='interrupted';handoff=None
         def announce(value,seconds):
             self.store.event('human_verification',self.aid,{'phase':value,'job_id':job['id'],
                 'run_id':getattr(self.store,'active_run_id',None),'expires_at':time.time()+seconds})
         try:
             while True:
                 final_grant=self.ashby_submission or self.native_submission
+                if handoff:handoff.pump(final_grant)
                 if final_grant and not final_grant.used:
                     if self.ashby_submission:
                         if not self.ashby_submission.valid_intent(check_answers=False):
@@ -769,7 +788,11 @@ class Browser:
                     remaining=human_deadline-time.monotonic()
                     if remaining<=0:
                         result='timed_out';raise Blocked('captcha_blocked') from None
-                    if phase!='challenge':announce('challenge',remaining);phase='challenge'
+                    if phase!='challenge':
+                        announce('challenge',remaining);phase='challenge'
+                        if self.store.settings()['human_verification_handoff'] and handoff is None:
+                            from .captcha_handoff import Handoff
+                            handoff=Handoff(self,time.time()+remaining)
                     # Only a person in the existing visible browser completes
                     # verification. The worker never interacts with the widget.
                     self.page.wait_for_timeout(250)
@@ -789,6 +812,7 @@ class Browser:
                     result='outcome_check_complete';return text
                 self.page.wait_for_timeout(500)
         finally:
+            if handoff:handoff.close()
             if phase is not None:
                 self.store.event('human_verification',self.aid,{'phase':'finished','result':result,
                     'job_id':job['id'],'run_id':getattr(self.store,'active_run_id',None),'expires_at':time.time()})
@@ -1219,6 +1243,8 @@ class Browser:
         self.host_cache={host:allowed for host,allowed in self.host_cache.items() if allowed is not None}
         self.aid=None; self.attempted=False; self.denied_write=False; self.denied_request=None; self.upload_payloads={}; self.uploaded_files=set();self.auth_write=None;self.ashby_file_handles={};self.ashby_attached_files=set()
         self.ashby_attachment_state=None;self.post_submit_denial_recorded=False;self.ashby_draft_fence=None
+        self.ashby_preflight_metadata=None;self.ashby_preflight_fields=None;self.approved_application=None
+        self.captcha_command_active=False;self.captcha_deferred_route=None
         self.ashby_submission=None;self.human_verification_seconds=0
         self.native_submission=None;self.greenhouse_uploads={};self.greenhouse_upload_fields={};self.greenhouse_native_options={};self.greenhouse_upload_pending={}
         self.greenhouse_native_locations={}
@@ -1403,10 +1429,23 @@ class Browser:
                 from .approval_boundary import ApprovalBoundary
                 proof={'job_id':job['id'],'url':job['url'],'answers':all_answers+answers,'documents':all_docs+documents,
                        'facts_hash':digest(self.store.facts()),'steps':steps+[{'step':step,'fields':fields,'url':self.page.url}]}
-                self.write_boundary=ApprovalBoundary(self.store,job,proof)
                 from .answers import validate_package
                 validate_package(self.store,job,proof)
+                from .application_spec import plan
+                self.approved_application=plan(self.store,job,proof)
+                proof=self.approved_application.package()
+                self.write_boundary=ApprovalBoundary(self.store,job,proof)
                 self.write_boundary.check()
+                if self.ashby_draft:
+                    # Compile every native answer and document target before
+                    # selecting files. Compilation grants no autosave access.
+                    compiled=self.ashby_draft.compile(self,answers,proof)
+                    from .ashby_submission import preflight_metadata
+                    preflight_metadata(self.ashby_draft)
+                    self.ashby_preflight_metadata=compiled[-1]
+                    self.ashby_preflight_fields=digest(self.ashby_draft.field_metadata())
+                    from .ashby_attachments import _Attachments
+                    _Attachments(self,preflight=True)
             for d in documents:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')
@@ -1438,6 +1477,7 @@ class Browser:
                     if not all(attached(self,d) for d in documents):
                         raise Blocked('upload_verification_failed','The approved PDF is not acknowledged at its intended employer form field')
             if live and self.ashby_draft:
+                self.ashby_preflight_metadata=self.ashby_draft.revalidate_metadata(self.ashby_preflight_fields,self.ashby_preflight_metadata)
                 proof={'job_id':job['id'],'url':job['url'],'answers':all_answers+answers,'documents':all_docs+documents,
                        'facts_hash':digest(self.store.facts()),'steps':steps+[{'step':step,'fields':fields,'url':self.page.url}]}
                 self.ashby_draft.enable(self,answers,proof)

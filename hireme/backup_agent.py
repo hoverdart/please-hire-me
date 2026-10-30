@@ -1,4 +1,4 @@
-"""Mac-owned encrypted Pi backups and health monitoring, independent of Gmail."""
+"""Encrypted host-neutral backups and health monitoring, independent of Gmail."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -9,6 +9,7 @@ from pathlib import Path
 import plistlib
 import re
 import sqlite3
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -29,9 +30,11 @@ def load_config(path):
     if path.is_symlink() or not path.is_file() or path.stat().st_size>16384 or path.stat().st_mode&0o077:
         raise ValueError('Use a private regular operations configuration file')
     config=json.loads(path.read_text())
-    required={'host','identity','age_identity','age_binary','ssh_binary','destination','state_directory','recipient'}
+    common={'age_identity','age_binary','destination','state_directory','recipient'}
+    local=isinstance(config,dict) and 'source_root' in config
+    required=common|({'source_root'} if local else {'host','identity','ssh_binary'})
     if not isinstance(config,dict) or set(config)!=required:raise ValueError('Invalid operations configuration')
-    if not isinstance(config['host'],str) or not re.fullmatch(r'[A-Za-z0-9_.-]+@[A-Za-z0-9][A-Za-z0-9.-]*',config['host']):
+    if not local and (not isinstance(config['host'],str) or not re.fullmatch(r'[A-Za-z0-9_.-]+@[A-Za-z0-9][A-Za-z0-9.-]*',config['host'])):
         raise ValueError('Use an explicit SSH user and host')
     if not isinstance(config['recipient'],str) or not re.fullmatch(r'age1[a-z0-9]{50,100}',config['recipient']):
         raise ValueError('Use the matching age public recipient')
@@ -43,11 +46,21 @@ def load_config(path):
         if key in {'age_binary','ssh_binary'}:
             p=p.resolve(strict=True)
             config[key]=str(p)
-        elif p.is_symlink():raise ValueError('Operations paths cannot be symlinks')
+        else:
+            # Resolve standard system prefixes and an explicitly selected key
+            # directory without following arbitrary destination/source links.
+            trusted={Path('/var'),Path('/tmp'),Path('/etc')}
+            if key in {'identity','age_identity'}:trusted.add(Path.home()/'.ssh')
+            if p.is_symlink() or any(parent.is_symlink() and parent not in trusted for parent in p.parents):
+                raise ValueError('Operations paths cannot be symlinks')
+            config[key]=str(p.resolve())
+            p=Path(config[key])
         if key in {'identity','age_identity'} and (not p.is_file() or p.stat().st_mode&0o077):
             raise ValueError('Operations keys must be private regular files')
         if key in {'age_binary','ssh_binary'} and (not p.is_file() or not os.access(p,os.X_OK)):
             raise ValueError('Install the required age and SSH tools')
+        if key=='source_root' and (not p.is_dir() or not (p/'ledger.sqlite3').is_file()):
+            raise ValueError('Choose an existing private applicant source directory')
     return config
 
 
@@ -58,6 +71,13 @@ def _ssh(config, command):
 
 
 def _remote(config, command, payload=None):
+    if 'source_root' in config:
+        from .remote_ops import execute
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            execute(Path(config['source_root']),command,input_stream=io.StringIO(json.dumps(payload)))
+        return json.loads(output.getvalue())
     result=subprocess.run(_ssh(config,command),input=json.dumps(payload) if payload is not None else None,
                           capture_output=True,text=True,timeout=60)
     if result.returncode or len(result.stdout)>1024*1024:raise ValueError('Remote operation unavailable')
@@ -83,7 +103,9 @@ def _encrypted_snapshot(config, destination):
     try:
         with destination.open('xb') as output,tempfile.TemporaryFile() as errors:
             os.fchmod(output.fileno(),0o600)
-            remote=subprocess.Popen(_ssh(config,'backup'),stdout=subprocess.PIPE,stderr=errors)
+            command=([sys.executable,'-m','hireme','--data-dir',config['source_root'],'backup-stream']
+                     if 'source_root' in config else _ssh(config,'backup'))
+            remote=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=errors)
             processes.append(remote)
             encrypt=subprocess.Popen([config['age_binary'],'-r',config['recipient']],
                                      stdin=remote.stdout,stdout=output,stderr=errors)
@@ -123,7 +145,21 @@ def verify_encrypted(config, encrypted, temporary_parent):
 
 
 def create_encrypted_backup(config):
-    destination=private_dir(Path(config['destination']))
+    destination=Path(config['destination'])
+    if 'source_root' in config:
+        source=Path(config['source_root']).resolve(strict=True)
+        if not destination.is_dir() or destination.is_symlink():
+            raise ValueError('Choose an existing directory on a mounted off-device filesystem')
+        destination=destination.resolve(strict=True)
+        mount=next((p for p in (destination,*destination.parents) if os.path.ismount(p)),None)
+        source_mount=next((p for p in (source,*source.parents) if os.path.ismount(p)),None)
+        if mount is None or mount==Path('/') or mount==source_mount:
+            raise ValueError('Choose a mounted off-device destination on a different filesystem')
+        if source in destination.resolve().parents or source==destination.resolve():
+            raise ValueError('Choose a backup destination outside applicant history')
+        if source.stat().st_dev==destination.stat().st_dev:
+            raise ValueError('Choose a mounted off-device destination on a different filesystem')
+    destination=private_dir(destination)
     state=private_dir(Path(config['state_directory']))
     require_space(destination,4*1024**3)
     name='backup-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8]+'.zip.age'
@@ -171,8 +207,13 @@ def prune_verified(config, *, clock=None):
 def _notify():
     if sys.platform=='darwin':
         subprocess.run(['/usr/bin/osascript','-e',
-            'display notification "Check the private operations status for the Pi." with title "please-hire-me needs attention"'],
+            'display notification "Check the private operations status for your worker." with title "please-hire-me needs attention"'],
             capture_output=True,timeout=10,check=True)
+    elif sys.platform=='linux':
+        import shutil
+        binary=shutil.which('notify-send')
+        if not binary:raise ValueError('Desktop notifications are unavailable')
+        subprocess.run([binary,'please-hire-me needs attention','Check your private worker dashboard.'],capture_output=True,timeout=10,check=True)
 
 
 def run_agent(config_path, *, force=False):
@@ -221,9 +262,25 @@ def run_agent(config_path, *, force=False):
 
 
 def install_agent(config_path, repo):
-    if sys.platform!='darwin':raise ValueError('Install this monitor on the Mac receiving the backups')
     config=load_config(config_path)
     state=private_dir(Path(config['state_directory']))
+    if sys.platform=='linux':
+        marker='# please-hire-me-operations'
+        paths=[str(Path(repo).absolute()),sys.executable,str(Path(config_path).absolute()),str(state/'operations.log')]
+        if any(any(c in p for c in '\r\n\x00%') for p in paths):raise ValueError('Unsafe cron path')
+        def read_cron():
+            result=subprocess.run(['crontab','-l'],capture_output=True,text=True,timeout=15,env={**os.environ,'LC_ALL':'C'})
+            if result.returncode and (result.returncode!=1 or 'no crontab for' not in getattr(result,'stderr','').lower()):
+                raise ValueError('Cannot inspect the existing cron schedule')
+            return result.stdout if not result.returncode else ''
+        previous=read_cron()
+        lines=[line for line in previous.splitlines() if marker not in line]
+        directory,python,configuration,log=map(shlex.quote,paths)
+        lines.append(f'*/15 * * * * cd {directory} && {python} -m hireme backup-agent run {configuration} >> {log} 2>&1 {marker}')
+        if read_cron()!=previous:raise ValueError('Cron changed while preparing the monitor; no schedule was written')
+        subprocess.run(['crontab','-'],input='\n'.join(lines)+'\n',text=True,capture_output=True,check=True,timeout=15)
+        return {'installed':True,'poll_seconds':900,'backup_hours':6,'retention_days':14}
+    if sys.platform!='darwin':raise ValueError('Install the backup monitor on a supported macOS or Linux receiver')
     directory=Path.home()/'Library/LaunchAgents';directory.mkdir(parents=True,exist_ok=True)
     path=directory/(LABEL+'.plist')
     if path.is_symlink():raise ValueError('Unsafe operations service path')

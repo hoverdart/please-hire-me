@@ -14,6 +14,19 @@ from .util import Blocked, atomic_json, private_dir
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.send']
+READ_SCOPES=SCOPES[:1]
+SEND_SCOPES=SCOPES[1:]
+
+
+def required_scopes(store):
+    # Reading verifies mailbox ownership and supports the selected read features.
+    return READ_SCOPES+SEND_SCOPES if store.settings()['gmail_reports'] else list(READ_SCOPES)
+
+
+def has_granted_scopes(credentials,scopes):
+    granted=getattr(credentials,'granted_scopes',None)
+    if granted is None:granted=getattr(credentials,'scopes',None)
+    return set(scopes)<=set(granted) if granted is not None else credentials.has_scopes(scopes)
 GREENHOUSE_SENDERS = {'greenhouse.io', 'greenhouse-mail.io', 'us.greenhouse-mail.io', 'eu.greenhouse-mail.io'}
 
 
@@ -76,17 +89,34 @@ def connect(store):
     if not path.is_file():
         raise Blocked('gmail_client_missing', 'Import Google Desktop OAuth credentials first')
     expected = owner_email(store)
-    flow = InstalledAppFlow.from_client_secrets_file(str(path), SCOPES)
-    credentials = flow.run_local_server(host='127.0.0.1', port=0, open_browser=True,
-                                         access_type='offline', prompt='consent', login_hint=expected,timeout_seconds=300)
-    if not credentials.refresh_token or not credentials.has_scopes(SCOPES):
-        raise Blocked('gmail_offline_access_missing', 'Authorize read and send access with offline access')
+    scopes=required_scopes(store)
+    flow = InstalledAppFlow.from_client_secrets_file(str(path), scopes)
+    try:
+        credentials = flow.run_local_server(host='127.0.0.1', port=0, open_browser=True,
+                                             access_type='offline', prompt='consent', include_granted_scopes='true', login_hint=expected,timeout_seconds=300)
+    except Warning as warning:
+        # oauthlib deliberately raises on scope changes and attaches the parsed
+        # token. Accept a verified superset without relaxing process-wide checks.
+        token=getattr(warning,'token',None)
+        granted=token.get('scope') if isinstance(token,dict) else None
+        granted=granted.split() if isinstance(granted,str) else granted
+        if (not isinstance(granted,(list,set,tuple)) or not set(scopes)<=set(granted)
+                or not token.get('access_token')):
+            raise Blocked('gmail_scopes_missing','Authorize every enabled Gmail feature; existing credentials were preserved') from None
+        flow.oauth2session.token=token
+        credentials=flow.credentials
+    if not credentials.refresh_token or not has_granted_scopes(credentials,scopes):
+        raise Blocked('gmail_offline_access_missing', 'Authorize the enabled Gmail features with offline access')
     service = _service(credentials)
     actual = service.users().getProfile(userId='me').execute()['emailAddress'].casefold()
     if actual != expected:
         raise Blocked('gmail_account_mismatch', 'Connect the confirmed application email account')
-    atomic_json(_secret_path(store, 'gmail-token.json'), json.loads(credentials.to_json()))
+    saved=json.loads(credentials.to_json())
+    granted=getattr(credentials,'granted_scopes',None)
+    if granted is not None:saved['scopes']=list(granted)
+    atomic_json(_secret_path(store, 'gmail-token.json'), saved)
     atomic_json(_secret_path(store, 'gmail-account.json'), {'email': actual})
+    atomic_json(_secret_path(store, 'gmail-access.json'), {'state':'verified','checked_at':time.time()})
     store.event('gmail_connected', 'gmail', {'email': actual})
     return {'email': actual, 'connected': True}
 
@@ -96,25 +126,35 @@ def status(store):
     account = _secret_path(store, 'gmail-account.json')
     try:email = json.loads(account.read_text()).get('email') if account.is_file() else None
     except (OSError,ValueError,TypeError,AttributeError):email=None
+    access=_secret_path(store,'gmail-access.json')
+    try:health=json.loads(access.read_text()) if access.is_file() else {}
+    except (OSError,ValueError,TypeError):health={}
     return {'client_configured': _secret_path(store, 'gmail-client.json').is_file(),
             'connected': token.is_file() and email == store.facts().get('email', {}).get('value', '').casefold(),
-            'email': email}
+            'email': email,'access_state':health.get('state','unchecked') if isinstance(health,dict) else 'unchecked',
+            'oauth_publishing_status':'unverified'}
 
 
 def check_connection(store, client_factory=None):
     """Refresh credentials and verify the API owner without reading or sending mail."""
     try:
         client=(client_factory or GmailClient)(store)
-    except Blocked:
+        if hasattr(client,'credentials') and not has_granted_scopes(client.credentials,required_scopes(store)):
+            raise Blocked('gmail_scopes_missing','Reconnect to authorize all enabled Gmail features')
+    except Blocked as error:
+        if error.reason in {'gmail_reconnect_required','gmail_scopes_missing','gmail_account_mismatch'}:
+            atomic_json(_secret_path(store,'gmail-access.json'),{'state':error.reason,'checked_at':time.time()})
         raise
     except Exception:
         # API exceptions can contain request details. Report only a fixed reason.
+        atomic_json(_secret_path(store,'gmail-access.json'),{'state':'gmail_check_failed','checked_at':time.time()})
         raise Blocked('gmail_check_failed', 'Gmail API access could not be verified; retry the check or reconnect Gmail locally') from None
+    atomic_json(_secret_path(store,'gmail-access.json'),{'state':'verified','checked_at':time.time()})
     return {'verified': True, 'email': client.email}
 
 
 def disconnect(store):
-    for name in ('gmail-token.json', 'gmail-account.json'):
+    for name in ('gmail-token.json', 'gmail-account.json','gmail-access.json'):
         _secret_path(store, name).unlink(missing_ok=True)
     store.event('gmail_disconnected', 'gmail', {})
 
@@ -137,14 +177,17 @@ class GmailClient:
             if data.get('token_uri') not in ('https://oauth2.googleapis.com/token', 'https://accounts.google.com/o/oauth2/token'):
                 raise Blocked('gmail_credentials_invalid')
             credentials = Credentials.from_authorized_user_info(data)
-            if not credentials.has_scopes(SCOPES):
+            if not has_granted_scopes(credentials,READ_SCOPES):
                 raise Blocked('gmail_scopes_missing')
+            self.credentials=credentials
             try:
                 if not credentials.valid:
                     if not credentials.refresh_token:
                         raise Blocked('gmail_reconnect_required')
                     credentials.refresh(lambda *args,**kwargs:Request()(*args,**{**kwargs,'timeout':15}))
-                    atomic_json(path, json.loads(credentials.to_json()))
+                    refreshed=json.loads(credentials.to_json())
+                    if credentials.granted_scopes is not None:refreshed['scopes']=list(credentials.granted_scopes)
+                    atomic_json(path, refreshed)
                 service = _service(credentials)
             except Blocked:
                 raise
@@ -179,6 +222,8 @@ class GmailClient:
         return None
 
     def send_report(self, subject, body, message_id):
+        if hasattr(self,'credentials') and not has_granted_scopes(self.credentials,SEND_SCOPES):
+            raise Blocked('gmail_scopes_missing','Reconnect Gmail with reporting enabled to authorize sending')
         if '\n' in subject or '\r' in subject or len(subject) > 200:
             raise ValueError('Invalid report subject')
         message = EmailMessage()
