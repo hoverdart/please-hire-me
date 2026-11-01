@@ -60,11 +60,15 @@ def select_lever_location(browser,control,field,label):
     from playwright.sync_api import TimeoutError
     if lever_location_value(control)==label:return
     try:
-        options=_lever_location_search(browser,control,label.split(',')[0])
-        target=options.filter(has_text=re.compile('^'+re.escape(label)+'$'))
-        target.first.wait_for(state='visible',timeout=LEVER_LOOKUP_TIMEOUT)
-        if target.count()!=1:raise Blocked('option_mismatch',field['label'])
-        target.click();control.press('Tab')
+        for query in dict.fromkeys((label.split(',')[0],label)):
+            browser.store.checkpoint()
+            options=_lever_location_search(browser,control,query)
+            target=options.filter(has_text=re.compile(r'^\s*'+re.escape(label)+r'\s*$'))
+            try:target.first.wait_for(state='visible',timeout=LEVER_LOOKUP_TIMEOUT)
+            except TimeoutError:continue
+            if target.count()!=1:raise Blocked('option_mismatch',field['label'])
+            target.click();control.press('Tab');break
+        else:raise TimeoutError('The approved location is unavailable')
     except TimeoutError:raise Blocked('unsupported_widget','Current location choice did not become selectable') from None
     if lever_location_value(control)!=label:raise Blocked('field_verification_failed',field['label'])
 

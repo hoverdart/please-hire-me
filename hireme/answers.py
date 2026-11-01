@@ -7,7 +7,8 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 3
+AUTOMATIC_ANSWER_VERSION = 6
+WRITING_SOURCE_VERSION = 3
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
@@ -98,6 +99,7 @@ def field_key(label):
     if re.fullmatch(r'have you worked with humanoids',label):return 'humanoids_experience'
     if re.match(r'when will you be available to work as a full.time,? permanent employee\?',label):return 'fulltime_start'
     if re.fullmatch(r'if offered a full.time position upon graduation,? what is your earliest available start date',label):return 'fulltime_start'
+    if re.fullmatch(r'if given a return offer(?: \(not guaranteed\))?,? what year would you be able to start',label):return 'fulltime_start'
     if re.fullmatch(r'(?:earliest (?:available )?start(?: date)?|available start date|start date availability)',label):return 'earliest_start'
     if re.fullmatch(r'what is the earliest date you are available to start (?:this|the) (?:position|role|job)',label):return 'earliest_start'
     if re.search(r'\bhigh school\b',label):
@@ -132,6 +134,8 @@ def field_key(label):
     if re.search(r'(?:zip|postal) code.*(?:primary residence|home|address)',label):return 'postal_code'
     if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
     if re.search(r"(?:which|what).*(?:college|university|school).*(?:attend|enroll)|name of (?:your |the )?(?:college|university|school)",label):return 'school'
+    if re.fullmatch(r'(?:please )?select (?:a |your )?(?:university or college|college or university)',label):return 'school'
+    if re.fullmatch(r'current (?:school or university|university or school)',label):return 'school'
     if re.fullmatch(r"(?:current |pursuing |academic )?degree(?: type)?",label):return 'degree'
     if re.search(r'\bdegree\b.*\b(?:currently pursuing|pursuing|working (?:toward|towards|on))\b',label) and not re.search(r'completed|earned|obtained',label):return 'degree'
     if re.search(r'when.*(?:expect|plan).*graduat|(?:expected|anticipated).*graduation|what year.*graduat|^when (?:do|will) you graduate$',label):return 'graduation'
@@ -145,6 +149,7 @@ def field_key(label):
 
 
 def category(label):
+    if re.search(r'\b(?:description|overview|summary)\b.{0,60}\b(?:projects?|work (?:you|that you))\b',label,re.I):return 'project'
     if re.search(r"^what is your (?:prior |previous |relevant )?experience (?:with|in|related to)\b",label.strip(),re.I):return 'experience'
     if re.search(r'what qualities.{0,150}(?:great|successful).{0,180}(?:how|skills|experiences)|(?:how|why).{0,100}(?:skills|experiences|background).{0,100}(?:best|good|strong|ideal) candidate',label,re.I):return 'experience'
     if re.search(r'what (?:are you )?(?:most )?excited (?:to|about)',label,re.I):return 'motivation'
@@ -599,6 +604,49 @@ def _context_preference(store, label, options, context, field=None):
     return {'value':value,'provenance':{'contextual_preference':evidence}} if value else None
 
 
+def _routine_logistics(store, field, context):
+    """Observed compound questions, with every premise bound to current facts."""
+    label=' '.join(field['label'].casefold().split()).rstrip(' *✱?:')
+    facts=store.facts()
+    if (context.get('field_context',{}).get('ats')=='Lever'
+            and label=='if you selected other, please specify below' and field.get('required')
+            and field.get('type') in {'text','textarea'} and not field.get('options')):
+        previous=context.get('previous_answers',[])
+        parent=previous[-1] if previous else None
+        if parent and field_key(parent['field']['label'])=='degree':
+            before=parent['field'];provenance=parent.get('provenance',{});degree=facts.get('degree')
+            pattern=r'cards\[([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\]\[field([0-9]+)\]'
+            earlier=re.fullmatch(pattern,before.get('ref',{}).get('name',''),re.I)
+            current=re.fullmatch(pattern,field.get('ref',{}).get('name',''),re.I)
+            others=[v for v in before.get('options',[]) if re.match(r'^other\b',v.strip(),re.I)]
+            if (earlier and current and earlier[1]==current[1] and int(current[2])==int(earlier[2])+1
+                    and field.get('section','').startswith('Lever: ') and field['section']==before.get('section')
+                    and len(others)==1 and parent['value'] in before['options'] and parent['value']!=others[0]
+                    and degree and provenance.get('fact_key')=='degree' and provenance.get('revision')==degree['revision']):
+                return {'value':'Not applicable','provenance':{'conditional_degree_other':{
+                    'parent_field':digest(before),'parent_value':parent['value'],'degree_revision':degree['revision']}}}
+    if (label=='earliest start date. if applying for an internship, include your available dates.'
+            and not field.get('options') and field.get('type') in {'text','textarea'}):
+        from .policy import employment_kind
+        fact=facts.get('earliest_start')
+        if fact and employment_kind(context)=='internship':
+            # No end date or exact start day has been supplied.
+            return {'value':present('earliest_start',fact['value'],field),
+                    'provenance':{'routine_logistics':{'earliest_start_revision':fact['revision']}}}
+    local_questions={
+        'are you able and willing to work from our san francisco hq 5 days a week (or relocate if needed)',
+        'are you okay spending this internship in san francisco',
+        'relocation to san francisco is mandatory for this role. are you able to relocate and work in person in san francisco',
+    }
+    if label not in local_questions or set(field.get('options',[]))!={'Yes','No'}:return None
+    location=facts.get('location');onsite=facts.get('onsite')
+    if (not location or not onsite or onsite['value']!='Yes'
+            or not re.fullmatch(r'(?:Berkeley|San Francisco),?\s+(?:CA|California)(?:,?\s+United States)?',location['value'],re.I)):
+        return None
+    return {'value':'Yes','provenance':{'routine_logistics':{
+        'location_revision':location['revision'],'onsite_revision':onsite['revision']}}}
+
+
 def _context_pronunciation(store, field):
     """Read an explicitly approved spelling; never invent pronunciation from a name."""
     if (field_key(field['label'])!='name_pronunciation' or field.get('type') not in {'text','textarea'}
@@ -702,7 +750,7 @@ def _compatible_binding(key, label):
         'finra_registered':r'^are you (?:currently )?registered with finra[? *]*$',
         'securities_licenses':r'^(?:are you actively maintaining|do you (?:actively )?(?:hold|maintain)) (?:any )?securities licenses[? *]*$',
         'over_18':r'^(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)[? *]*$',
-        'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?|^if offered a full.time position upon graduation,? what is your earliest available start date[? *]*$',
+        'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?|^if offered a full.time position upon graduation,? what is your earliest available start date[? *]*$|^if given a return offer(?: \(not guaranteed\))?,? what year would you be able to start[? *]*$',
         'nights_weekends':r'^are you willing and able to work nights and weekends[? *]*$',
         'robots_experience':r'^do you have experience working with robots[? *]*$',
         'humanoids_experience':r'^have you worked with humanoids[? *]*$',
@@ -867,7 +915,12 @@ def _approved_sentences(store, context):
     source_budget=24000-sum(len(x['text']) for x in fact_choices)
     if sum(len(x['text']) for x in choices)>source_budget:
         terms=set(re.findall(r'[a-z]{4,}',(context.get('title','')+' '+context.get('description','')).casefold()))
-        ranked=sorted(enumerate(choices),key=lambda item:(-len(terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),item[0]))
+        question_terms=set(re.findall(r'[a-z]{4,}',context.get('field_context',{}).get('label','').casefold()))
+        # A keyword-heavy context note must not crowd the current approved
+        # resume's dates, role headings and results out of its own evidence.
+        ranked=sorted(enumerate(choices),key=lambda item:('resume_hash' not in item[1],
+            -len(question_terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),
+            -len(terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),item[0]))
         selected=[];budget=source_budget
         for index,choice in ranked:
             if len(choice['text'])<=budget:
@@ -880,7 +933,7 @@ def _abstention_key(store, method, context):
     """Every input a structured model call sees. Retrying identical inputs only spends requests."""
     from .materials import writing_context_hash
     settings=store.settings()
-    return digest(['model_abstention',method,context['field_context'],writing_context_hash(store,context),
+    return digest(['model_abstention',WRITING_SOURCE_VERSION,method,context['field_context'],writing_context_hash(store,context),
                    {k:v['revision'] for k,v in store.facts().items()},sorted((t['id'],t['revision']) for t in store.templates()),
                    [r[0] for r in store.db.execute("SELECT hash FROM documents WHERE kind='resume'")],
                    [settings[k] for k in ('provider','provider_model','model_effort','model_escalation','tailored_writing')]])
@@ -993,7 +1046,11 @@ def resolve(store, host, field, provider=None, context=None):
     # This historical date cannot be inferred from a college start date. It
     # must use the explicit fact, including when older model writing is cached.
     explicit_year=field_key(label)=='high_school_graduation_year'
-    writing=None if explicit_year or student_confirmation else store.writing_answer(host,label,options)
+    graduation_confirmation=_graduation_confirmation(store,field)
+    saved=None if graduation_confirmation or student_confirmation else store.saved_answer(host,label,options,field=field,context=context)
+    # Exact saved approvals take precedence over generated answer caches.
+    # Chronological confirmations still use the current confirmed dates.
+    writing=None if explicit_year or student_confirmation or graduation_confirmation or saved else store.writing_answer(host,label,options)
     if writing:
         try:
             _validate_writing(store,writing)
@@ -1009,9 +1066,6 @@ def resolve(store, host, field, provider=None, context=None):
         else:
             store.resolve_known_question(host,label,options,field=field,context=context)
             return {'field':field,**writing}
-    graduation_confirmation=_graduation_confirmation(store,field)
-    # An old literal approval cannot override a comparison with the current date.
-    saved=None if graduation_confirmation or student_confirmation else store.saved_answer(host,label,options,field=field,context=context)
     if field.get('section_entry',0)>0 and field.get('section') in {'education','employment'} and not saved:
         if field.get('required') or field.get('value'):raise Blocked('repeated_entry_review','Confirm the answer for this specific '+field['section']+' entry')
         return None
@@ -1110,7 +1164,7 @@ def resolve(store, host, field, provider=None, context=None):
             template=next((t for t in choices if t['id']==selected),None)
         if graduation_confirmation:
             key=None;template=None;derived=graduation_confirmation
-        if not key and not derived:derived=_context_preference(store,label,options,context,field)
+        if not key and not derived:derived=_routine_logistics(store,field,context) or _context_preference(store,label,options,context,field)
         if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label) or _current_enrollment(store,label,options) or _us_citizen_or_resident(store,label,options) or _export_citizenship_answer(store,label,options) or _cohort_answer(store,field,context)
         if key and key not in store.facts() and provider and store.settings()['tailored_writing'] and key in {'school','degree','major','skills','location','city','state','alternate_email'}:
             key=None  # Approved context may state an ordinary fact not separately entered.

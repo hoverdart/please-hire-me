@@ -53,6 +53,51 @@ class ReceiptHTML(HTMLParser):
 
 class LeverSubmission:
     @staticmethod
+    def _empty_survey_metadata(form):
+        """Native optional survey descriptors contain questions, never answers."""
+        pattern=r'surveysResponses\[('+UUID+r')\]\[(baseTemplate|surveyId)\]'
+        groups={}
+        for control in form['controls']:
+            match=re.fullmatch(pattern,control['name'],re.I)
+            if match:
+                group=groups.setdefault(match[1],{})
+                if not control['hidden'] or match[2] in group:
+                    raise Blocked('unsupported_form','Ambiguous optional Lever survey metadata')
+                group[match[2]]=control
+        allowed=set()
+        accounts=[c['value'] for c in form['controls'] if c['name']=='accountId' and c['hidden']]
+        for identity,group in groups.items():
+            if set(group)!={'baseTemplate','surveyId'} or len(accounts)!=1:
+                raise Blocked('unsupported_form','Incomplete optional Lever survey metadata')
+            for control in group.values():
+                entries=[e for e in form['entries'] if e['name']==control['name']]
+                if len(entries)!=1 or entries[0].get('value')!=control['value']:
+                    raise Blocked('unsupported_form','The optional Lever survey payload differs from its inspected metadata')
+            raw=group['baseTemplate']['value']
+            try:template=json.loads(raw) if len(raw)<=100000 else None
+            except (ValueError,TypeError):template=None
+            if (not isinstance(template,dict) or set(template)-{'createdAt','updatedAt','text','instructions','type','fields','accountId','id'}
+                    or template.get('type')!='survey' or template.get('id')!=identity or template.get('accountId')!=accounts[0]
+                    or not re.fullmatch(UUID,group['surveyId']['value'],re.I)
+                    or not isinstance(template.get('fields'),list) or not 0<len(template['fields'])<=100):
+                raise Blocked('unsupported_form','Unverified optional Lever survey template')
+            for index,field in enumerate(template['fields']):
+                if (not isinstance(field,dict) or set(field)-{'type','text','description','required','id','options'}
+                        or field.get('required') is not False or field.get('type') not in {'multiple-choice','multiple-select'}
+                        or not isinstance(field.get('options'),list) or not field['options']
+                        or any(not isinstance(o,dict) or set(o)!={'text'} or not isinstance(o['text'],str) for o in field['options'])):
+                    raise Blocked('unsupported_form','Only unanswered optional Lever surveys are supported')
+                name=f'surveysResponses[{identity}][responses][field{index}]'
+                controls=[c for c in form['controls'] if c['name']==name]
+                kind='radio' if field['type']=='multiple-choice' else 'checkbox'
+                if (len(controls)!=len(field['options']) or any(c['hidden'] or c['type']!=kind or c.get('checked') for c in controls)
+                        or [c['value'] for c in controls]!=[o['text'] for o in field['options']]
+                        or any(e['name']==name for e in form['entries'])):
+                    raise Blocked('unsupported_form','The optional Lever survey contains an unreviewed response')
+            allowed.update(c['name'] for c in group.values())
+        return allowed
+
+    @staticmethod
     def _approved_pairs(package,form):
         expected=[];names=set();location=None
         for answer in package['answers']:
@@ -157,6 +202,7 @@ class LeverSubmission:
         if None in documents or '' in documents:raise Blocked('unsupported_form','The Lever document field is unverified')
         self.documents=documents;self.files=[];self.pairs=[]
         successful={entry['name'] for entry in form['entries']}
+        empty_surveys=self._empty_survey_metadata(form)
         for control in form['controls']:
             name=control['name'];value=control['value']
             if not re.fullmatch(r'[A-Za-z0-9_\[\]-]{1,250}',name):raise Blocked('unsupported_form','Unknown Lever field identity')
@@ -165,8 +211,8 @@ class LeverSubmission:
                     or name==CAPTCHA or name in approved and (not control['hidden'] or declined)):continue
             template=bool(re.fullmatch(r'cards\['+UUID+r'\]\[baseTemplate\]',name,re.I))
             selected=name=='selectedLocation' and location is not None
-            if control['hidden'] and (name in METADATA or template or selected or declined):continue
-            raise Blocked('unsupported_form','An unapproved Lever field would be transmitted')
+            if control['hidden'] and (name in METADATA or template or selected or declined or name in empty_surveys):continue
+            raise Blocked('unsupported_form','An unapproved Lever field would be transmitted ('+name+', '+control['type']+')')
         for entry in form['entries']:
             if 'filename' in entry:
                 doc=documents.get(entry['name'])

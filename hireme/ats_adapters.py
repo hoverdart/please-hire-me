@@ -1,6 +1,44 @@
 """Small ATS boundary for posting reads and navigation; writes remain guarded."""
 import html,re
+from html.parser import HTMLParser
 from .util import Blocked
+
+class _LeverHTMLText(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True);self.parts=[];self.skip=0
+    def handle_starttag(self,tag,attrs):
+        if tag in {'script','style','head'}:self.skip+=1
+        elif tag in {'p','div','li','ul','ol','br','h1','h2','h3','h4','h5','h6'}:self.parts.append('\n')
+    def handle_endtag(self,tag):
+        if tag in {'script','style','head'}:self.skip=max(0,self.skip-1)
+        elif tag in {'p','div','li','ul','ol','h1','h2','h3','h4','h5','h6'}:self.parts.append('\n')
+    def handle_data(self,value):
+        if not self.skip:self.parts.append(value)
+
+
+def lever_posting_text(data,*,required=False):
+    """Use the hosted page's HTML fields before potentially stale plain copies."""
+    def rendered(value):
+        parser=_LeverHTMLText();parser.feed(value);return ''.join(parser.parts).strip()
+    def section(key,plain):
+        value=data.get(key)
+        if value is None:
+            value=data.get(plain)
+            return value if isinstance(value,str) else ''
+        if not isinstance(value,str):raise Blocked('posting_inspection_review','Lever posting text is not recognized')
+        return rendered(value)
+    body=section('description','descriptionPlain');lists=data.get('lists',[])
+    if (required and not body.strip()) or not isinstance(lists,list):
+        raise Blocked('posting_inspection_review','The official Lever posting body is missing')
+    parts=[body]
+    for item in lists:
+        if not isinstance(item,dict) or not isinstance(item.get('text'),str) or not isinstance(item.get('content'),str):
+            raise Blocked('posting_inspection_review','Lever posting requirements are not recognized')
+        parts.extend([item['text'],rendered(item['content'])])
+    parts.extend(section(key,plain) for key,plain in (
+        ('additional','additionalPlain'),('salaryDescription','salaryDescriptionPlain')))
+    return '\n'.join(part for part in parts if part.strip())
+
 
 class SingleStepAdapter:
     version=1
@@ -47,7 +85,7 @@ class GreenhouseAdapter(SingleStepAdapter):
 
 class LeverPostingAdapter(SingleStepAdapter):
     """The /apply page omits the posting body; verify the public read before writing."""
-    version=1
+    version=2
 
     def navigation(self,job,*,checkpoint=None,deadline=None):
         from urllib.parse import urlsplit
@@ -76,19 +114,9 @@ class LeverPostingAdapter(SingleStepAdapter):
             if (target.scheme!='https' or target.hostname!=parsed.hostname or target.port not in (None,443)
                     or target.username or target.password or target.path.rstrip('/')!=f'/{site}/{req}'+suffix):
                 raise Blocked('posting_changed_review','Lever response refers to a different posting')
-        body=data.get('descriptionPlain');lists=data.get('lists',[])
-        if not isinstance(body,str) or not body.strip() or not isinstance(lists,list):
-            raise Blocked('posting_inspection_review','The official Lever posting body is missing')
-        parts=[body]
-        for item in lists:
-            if not isinstance(item,dict) or not isinstance(item.get('text'),str) or not isinstance(item.get('content'),str):
-                raise Blocked('posting_inspection_review','Lever posting requirements are not recognized')
-            parts.extend([item['text'],html.unescape(re.sub(r'<[^>]+>',' ',item['content']))])
-        for key in ('additionalPlain','salaryDescriptionPlain'):
-            value=data.get(key)
-            if isinstance(value,str):parts.append(value)
+        text=lever_posting_text(data,required=True)
         if checkpoint:checkpoint()
-        return job['url'],'\n'.join(parts)
+        return job['url'],text
 
 
 class WorkdayPostingAdapter(SingleStepAdapter):

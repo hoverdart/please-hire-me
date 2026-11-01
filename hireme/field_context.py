@@ -8,22 +8,30 @@ from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
 MAPPING_VERSION = 26
-ADAPTER_VERSION = 37
+ADAPTER_VERSION = 45
 CAPTCHA_DETECTION_VERSION = 4
 
 def field_context(host, field, context=None):
     context = context or {}
     options = field.get('options', [])
     values = field.get('option_values', options)
+    if field.get('type')=='checkbox' and options==['Yes','No'] and isinstance(values,list) and len(values)==1:
+        # One native checkbox transmits its value only when checked. Its No
+        # answer is absence, not a second HTML control or guessed wire value.
+        values=[values[0],'']
     if len(values) != len(options):
         raise Blocked('invalid_option_metadata', field['label'])
     constraints={key:field.get(key) for key in ('required','min','max','step','pattern','multiple')}
     if field.get('date_format'):constraints['date_format']=field['date_format']
     if field.get('type')=='number':constraints['step_base']=field.get('step_base')
     employment_country=selected_employment_country(context)
+    native_name=field.get('ref',{}).get('name','')
+    lever_card=ats(host)=='Lever' and re.fullmatch(
+        r'cards\[[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\]\[field[0-9]+\]',native_name,re.I)
     return {'version': MAPPING_VERSION, 'ats': ats(host), 'scope': host,
             'employer': context.get('company', ''),
             'role': context.get('title',''), 'job_location': context.get('location',''), 'section': field.get('section', ''),
+            **({'lever_card_field':native_name} if lever_card else {}),
             **({'section_entry':field['section_entry']} if 'section_entry' in field else {}),
             **({'communication_channel':field['ashby_texting_consent']} if field.get('ashby_texting_consent') else {}),
             **({'employment_country':employment_country} if GENERIC_WORK_COUNTRY.search(field['label']) and employment_country else {}),
@@ -77,6 +85,7 @@ def present(key, value, field):
         if parsed is None:raise Blocked('missing_fact','Confirm an exact date ('+field['date_format']+'); a month alone does not establish the day')
         return parsed.isoformat() if field['date_format']=='YYYY-MM-DD' else parsed.strftime('%m/%d/%Y')
     if key=='fulltime_start' and re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):
+        if re.search(r'\bwhat year\b',label):return value[:4]
         if field.get('type') in {'text','textarea'} and not field.get('options'):
             from datetime import date
             day=date.fromisoformat(value)

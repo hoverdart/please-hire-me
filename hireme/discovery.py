@@ -74,6 +74,7 @@ def probe(net,ats,slug):
                 url=f"https://job-boards.greenhouse.io/{slug}/jobs/{j['id']}"
             out.append(posting(url,slug,j["title"],j.get("location",{}).get("name", ""),f"gh:{slug}",j.get("content", "")))
     elif ats=="lv":
+        from .ats_adapters import lever_posting_text
         d=net.json(f"https://api.lever.co/v0/postings/{slug}?mode=json")
         if not isinstance(d,list): raise ValueError("Invalid Lever response")
         for j in d:
@@ -84,7 +85,7 @@ def probe(net,ats,slug):
             country={'US':'United States','CA':'Canada','GB':'United Kingdom'}.get(country) if isinstance(country,str) else None
             if country:
                 location='; '.join(part for part in (location,country) if part)
-            out.append(posting(j.get("hostedUrl") or j["applyUrl"],slug,j["text"],location,f"lv:{slug}",j.get("descriptionPlain", "")+" "+" ".join(x.get("content", "") for x in j.get("lists",[])),compensation=comp,
+            out.append(posting(j.get("hostedUrl") or j["applyUrl"],slug,j["text"],location,f"lv:{slug}",lever_posting_text(j),compensation=comp,
                                **({'employment_type':j['categories']['commitment']} if isinstance(j.get('categories',{}).get('commitment'),str) else {})))
     elif ats=="sr":
         offset=0

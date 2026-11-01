@@ -148,6 +148,22 @@ def test_native_submission_grant_requires_one_committed_intent_and_keeps_tokens_
     assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
 
 
+@pytest.mark.parametrize('length,allowed',[(3810,True),(20000,True),(20001,False)])
+def test_official_verification_fingerprint_can_exceed_legacy_limit_without_disclosure(store,job,package,length,allowed):
+    _,grant,request,data=submission_fixture(store,job,package)
+    store.begin_submit(grant.aid)
+    fingerprint='synthetic-private-fingerprint-'+('x'*(length-30))
+    assert len(fingerprint)==length
+    data['variables']['deviceFingerprint']=fingerprint
+    assert grant.allow(request,data)==allowed
+    assert grant.used==allowed
+    if allowed:assert not grant.allow(request,data)
+    else:assert grant.denial=={'reason':'native_verification_shape','token_length':21,
+        'fingerprint_length':length,'fingerprint_type':'str'}
+    assert fingerprint not in str(grant.denial)
+    assert fingerprint not in str([tuple(row) for row in store.db.execute('SELECT detail FROM events')])
+
+
 @pytest.mark.parametrize('expires_during_validation',[False,True])
 def test_native_submission_deadline_blocks_a_late_human_completion(store,job,package,monkeypatch,expires_during_validation):
     _,grant,r,data=submission_fixture(store,job,package);store.begin_submit(grant.aid)
@@ -606,6 +622,51 @@ def test_number_wire_accepts_only_exact_safe_integers(value,expected):
 @pytest.mark.parametrize('value',['00','0123','-1','+1','1.0','1e3',' 1','1 ','１２','9007199254740992','99999999999999999',True,None])
 def test_number_wire_rejects_lossy_or_ambiguous_values(value):
     with pytest.raises(Blocked,match='ashby_draft_unsupported'):number_wire(value,'Number')
+
+
+@pytest.mark.parametrize('change',['none','wrong_metadata','unknown_format','wrong_control'])
+def test_date_save_uses_exact_calendar_encoding_without_changing_approved_display(store,job,package,change):
+    from hireme.answers import resolve
+    d,_=draft(store,job,package)
+    field={'index':0,'indices':[0],'label':'Ideal start date in office','type':'text',
+           'date_format':'MM/DD/YYYY','required':True,'options':[],'maxlength':-1,'value':'',
+           'ashby_path':'fixture-date','ashby_entry_id':RENDER+'_fixture-date'}
+    official=form();entry={'id':field['ashby_entry_id'],'field':{
+        'path':'fixture-date','title':field['label'],'type':'Date'},'fieldValue':None}
+    official['sections'][0]['fieldEntries'].append(entry)
+    if change=='wrong_metadata':entry['field']['type']='String'
+    elif change=='unknown_format':field.pop('date_format')
+    elif change=='wrong_control':field['type']='textarea'
+    d._remember_form(official)
+    qid=store.ask(d.job['id'],d.job['host'],field['label'],[],field=field,context=d.job)
+    store.answer_question(qid,'05/17/2027')
+    answer=resolve(store,d.job['host'],field,context=d.job)
+    proof={**d.package,'answers':[answer]}
+    if change!='none':
+        with pytest.raises(Blocked,match='ashby_draft_unsupported'):d.enable(None,proof['answers'],proof)
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind='ashby_draft_write'").fetchone()
+        return
+    d.enable(None,proof['answers'],proof)
+    for value in ('05/17/2027','2027-05-18','2027-05-17T00:00:00Z',{'year':2027,'month':5,'day':17}):
+        r,data=request(value,path='fixture-date');assert not d.allow(r,data,'changed')
+    r,data=request('2027-05-17',path='fixture-date');assert d.allow(r,data,'date')
+    entry['fieldValue']={'value':'2027-05-17'}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'date')
+    assert d.complete and proof['answers'][0]['value']=='05/17/2027'
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('value,format',[('2027-05','YYYY-MM-DD'),('02/29/2027','MM/DD/YYYY'),
+    ('13/01/2027','MM/DD/YYYY'),('05/17/27','MM/DD/YYYY'),('2027-02-30','YYYY-MM-DD')])
+def test_date_wire_does_not_invent_a_day_or_accept_invalid_calendar_values(value,format):
+    from hireme.ashby_drafts import date_wire
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):
+        date_wire(value,{'label':'Date','type':'text','date_format':format})
+
+
+def test_iso_date_control_retains_leap_day_without_time_zone_conversion():
+    from hireme.ashby_drafts import date_wire
+    assert date_wire('2028-02-29',{'label':'Date','type':'date','date_format':'YYYY-MM-DD'})=='2028-02-29'
 
 
 @pytest.mark.parametrize('change',['none','wrong_metadata','wrong_control'])

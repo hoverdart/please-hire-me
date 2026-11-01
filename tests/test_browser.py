@@ -252,6 +252,22 @@ def test_lever_location_typed_label_without_matching_selected_object_never_submi
     assert not ats[1] and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
 
 
+@pytest.mark.parametrize('whitespace',[False,True])
+def test_lever_location_retries_read_only_with_full_approved_label(store,ats,monkeypatch,whitespace):
+    from hireme.ats_widgets import select_lever_location,lever_location_value
+    monkeypatch.setattr('hireme.ats_widgets.LEVER_LOOKUP_TIMEOUT',200)
+    html=lever_location_html(choices=['Berkeley, CA, USA'])
+    html=html.replace('if(!control.value)return;', 'if(control.value!=="Berkeley, CA, USA")return;')
+    if whitespace:html=html.replace('option.textContent=name;', 'option.textContent="  "+name+"  ";')
+    with Browser(store,test_url=ats[0]) as browser:
+        browser.page.route(ats[0]+'/**',lambda route:route.fulfill(body=html,content_type='text/html'))
+        browser.page.goto(ats[0]);control=browser.page.locator('#location-input')
+        field={'label':'Current location','options':['Berkeley, CA, USA'],'lever_location':True}
+        select_lever_location(browser,control,field,'Berkeley, CA, USA')
+        assert lever_location_value(control)=='Berkeley, CA, USA'
+    assert not ats[1] and not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('parsed_location',[
     {'name':'Berkeley, CA, USA','address':{'city':'Berkeley','country':{'code':'US'},'region':{'code':'CA'}}},
     {'name':'Berkeley, CA, USA'},
@@ -548,7 +564,7 @@ def test_visible_captcha_prevents_submit_intent(store,ats,src,opacity):
 
 
 @pytest.mark.parametrize('group_label',[False,True])
-@pytest.mark.parametrize('title',['Transcript','Transcripts','Please upload your unofficial transcripts','Please upload a copy of your transcript'])
+@pytest.mark.parametrize('title',['Transcript','Transcripts','Undergraduate Transcript','Graduate Transcript (PDF)','Please upload your unofficial transcripts','Please upload a copy of your transcript'])
 def test_required_transcript_blocks_until_imported_then_attaches(store,ats,tmp_path,group_label,title):
     import hashlib
     from pypdf import PdfWriter
@@ -891,7 +907,8 @@ def test_upload_heading_must_belong_to_one_unambiguous_file_group(store,ats,mode
 
 
 @pytest.mark.parametrize('group_label',[False,True])
-@pytest.mark.parametrize('title,kind',[('Transcripts','transcript'),('Resumes','resume'),('CVs','resume'),('Cover letters','cover_letter')])
+@pytest.mark.parametrize('title,kind',[('Transcripts','transcript'),('Resumes','resume'),('CVs','resume'),('Cover letters','cover_letter'),
+    ('Please upload a copy of your unofficial transcript. *','transcript'),('Please upload your resume.','resume')])
 def test_plural_document_requests_keep_their_kind(store,ats,group_label,title,kind):
     from hireme.browser import _document_kind
     with Browser(store,test_url=ats[0]) as b:
@@ -899,6 +916,49 @@ def test_plural_document_requests_keep_their_kind(store,ats,group_label,title,ki
         if group_label:html='<div class="file-upload" role="group" aria-labelledby="heading"><div id="heading">'+title+'</div>'+html+'</div>'
         b.page.set_content(html);fields=b._snapshot()
     assert len(fields)==1 and _document_kind(fields[0])==kind
+
+
+def lever_university_html(change='none'):
+    card='11111111-1111-4111-8111-111111111111'
+    ident='university-picker-'+card+'-0'
+    if change=='identity':ident='unverified-select'
+    label='select2-'+ident+'-container'
+    proxy_label='wrong-label' if change=='relationship' else label
+    hidden=' aria-hidden="true"' if change=='hidden_parent' else ''
+    return '''<style>.select2-hidden-accessible{position:absolute;width:1px;height:1px;clip:rect(0,0,0,0)}</style>
+      <form><div class="application-form" data-qa="additional-cards"><h4 data-qa="card-name">Education</h4>
+      <div class="application-question"'''+hidden+'''>
+      <div class="application-label">Current school or university:✱</div><div class="application-university">
+      <select data-qa="university-dropdown" class="select2-hidden-accessible" aria-hidden="true" required
+      id="'''+ident+'''" name="cards['''+card+'''][field0]"><option value="">Select a university or college</option>
+      <option value="fixture-school">Fixture University</option></select>
+      <span class="select2-container"><span role="combobox" aria-labelledby="'''+proxy_label+'''">
+      <span id="'''+label+'''">Select a university or college</span></span></span>
+      </div></div></div></form>'''
+
+
+def test_lever_university_uses_the_visible_widgets_named_native_select(store,ats):
+    from hireme.answers import resolve
+    store.put_facts({'school':'Fixture University'})
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content(lever_university_html());fields=b._snapshot()
+        assert len(fields)==1
+        f=fields[0]
+        assert f['type']=='select' and f['required'] and f['section']=='Lever: Education'
+        assert f['label']=='Current school or university:✱'
+        assert f['options']==['Fixture University'] and f['option_values']==['fixture-school']
+        answer=resolve(store,'jobs.lever.co',f)
+        b._fill(answer)
+        assert b._control(f).input_value()=='fixture-school'
+        assert b.page.locator('form').evaluate('(e)=>new FormData(e).get("'+f['ref']['name']+'")')=='fixture-school'
+        assert len(b._snapshot())==1
+
+
+@pytest.mark.parametrize('change',['identity','relationship','hidden_parent'])
+def test_unverified_select2_relationship_cannot_promote_a_hidden_university_control(store,ats,change):
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content(lever_university_html(change));fields=b._snapshot()
+    assert not any(f.get('ref',{}).get('name','').startswith('cards[') for f in fields)
 
 
 @pytest.mark.parametrize('hidden',['style="display:none"','style="visibility:hidden"','style="opacity:0"','hidden','aria-hidden="true"','inert'])

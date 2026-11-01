@@ -79,3 +79,32 @@ def test_withdrawing_missing_answer_does_not_clear_prepared_work(store, job, pac
     aid = store.prepare(job, package)
     with pytest.raises(ValueError): revoke_answer(store, 'missing')
     assert store.db.execute('SELECT * FROM applications WHERE id=?', (aid,)).fetchone()
+
+
+@pytest.mark.parametrize('widget',['combobox','text'])
+def test_new_scoped_approval_supersedes_a_valid_generated_answer_cache(store,job,package,widget):
+    from hireme.field_context import field_context
+    from hireme.materials import writing_context_hash
+    from hireme.util import digest
+    store.update_settings({'tailored_writing':True})
+    label='Which office would you choose?'
+    options=['Austin, TX','Santa Clara, CA'] if widget=='combobox' else []
+    f={'label':label,'type':widget,'required':True,'options':options,'maxlength':-1}
+    host=job['host']+'|acme'
+    text='I can work from Austin, TX or Santa Clara, CA.'
+    tid=store.put_template('experience',text)
+    writing={'value':'Austin, TX','provenance':{'tailored':True,'context_answer':True,
+        'sample_parts':[{'text':text,'template_id':tid,'revision':1}],
+        'text_hash':digest('Austin, TX'),'context_hash':writing_context_hash(store,job),
+        'field_hash':digest(field_context(host,f,job)),'facts_hash':digest(store.facts())}}
+    store.save_writing_answer(host,label,options,writing)
+    assert resolve(store,host,f,context=job)['value']=='Austin, TX'
+    qid=store.ask(job['id'],host,label,options,field=f,context=job)
+    store.answer_question(qid,'Santa Clara, CA')
+    answer=resolve(store,host,f,context=job)
+    assert answer['value']=='Santa Clara, CA'
+    assert answer['provenance']=={'answer_id':qid,'revision':1}
+    package.update(answers=[answer],steps=[],facts_hash=digest(store.facts()))
+    validate_package(store,{**job,'answer_scope':host},package)
+    store.answer_question(qid,'Austin, TX')
+    with pytest.raises(Blocked):validate_package(store,{**job,'answer_scope':host},package)

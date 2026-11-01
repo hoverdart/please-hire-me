@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 8
+ELIGIBILITY_VERSION = 10
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -71,7 +71,7 @@ def _student_requirement(degree):
     student=rf'{degree}(?:\s*(?:or|/)\s*{degree})*\s+(?:students?|candidates?)\b'
     direct=(rf'(?:^|[\n;])\s*(?:[-*•]\s*)?'
             rf'(?:(?:requirements|qualifications|what we need to see)\s*:\s*)?'
-            rf'{qualifier}{year}{student}(?=\s*(?:[(),.;:]|$)|\s+(?:in\b|and\s+above\b|or\s+higher\b))')
+            rf'{qualifier}{year}{student}(?=\s*(?:[(),.;:]|$)|\s+(?:in\b|working\s+(?:in|on)\b|and\s+above\b|or\s+(?:higher\b|(?:a\s+)?recent\s+graduates?\b)))')
     mandatory=rf'\bmust\s+(?:currently\s+)?be\s+{qualifier}{year}{student}'
     return rf'(?:{direct}|{mandatory})'
 
@@ -86,7 +86,7 @@ def _doctoral_requirement(title, description):
     def exclusive(fragment):
         if (re.search(rf'\b(?:no|without requiring)\s+{DOCTORAL}',fragment,re.I)
                 or re.search(rf'{DOCTORAL}\s*(?:(?:degree|students?|candidates?)\s*)?(?:is\s+)?\(?\s*(?:not\s+(?:required|necessary)|preferred|optional|is a plus)',fragment,re.I)
-                or re.search(rf'{DOCTORAL}\s+students?\s+(?:in|on)\s+(?:our|the)\s+(?:team|group|lab)\b',fragment,re.I)):
+                or re.search(rf'{DOCTORAL}\s+students?\s+(?:working\s+)?(?:in|on)\s+(?:our|the)\s+(?:team|group|lab)\b',fragment,re.I)):
             return False
         alternatives=rf'(?:{LOWER_DEGREE}.{{0,25}}(?:\bor\b|/).{{0,25}}{DOCTORAL}|{DOCTORAL}.{{0,25}}(?:\bor\b|/).{{0,25}}{LOWER_DEGREE})'
         return not re.search(alternatives,fragment,re.I)
@@ -122,7 +122,7 @@ def _graduate_requirement(title, description):
     def exclusive(fragment):
         if (re.search(rf'\b(?:no|without requiring)\s+{graduate}',fragment,re.I)
                 or re.search(rf'{graduate}\s*(?:(?:degree|program|students?|candidates?)\s*)?(?:in\s+[^\n;.!?]{{0,80}}?)?(?:is\s+)?\(?\s*(?:not\s+(?:required|necessary)|preferred|optional|(?:is\s+)?a plus)',fragment,re.I)
-                or re.search(rf'{graduate}\s+students?\s+(?:in|on)\s+(?:our|the)\s+(?:team|group|lab)\b',fragment,re.I)):
+                or re.search(rf'{graduate}\s+students?\s+(?:working\s+)?(?:in|on)\s+(?:our|the)\s+(?:team|group|lab)\b',fragment,re.I)):
             return False
         alternatives=rf'(?:{UNDERGRADUATE}[^\n;!?]{{0,80}}(?:\bor\b|/)[^\n;!?]{{0,40}}{graduate}|{graduate}[^\n;!?]{{0,80}}(?:\bor\b|/)[^\n;!?]{{0,40}}{UNDERGRADUATE})'
         return not re.search(alternatives,fragment,re.I)

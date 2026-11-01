@@ -122,6 +122,19 @@ def dependency(store, job, kind, reason=None):
             data['citizenship_policy']=CITIZENSHIP_VERSION
         return digest(data)
     data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION}
+    if kind in {'mapping','transient','unsupported'}:
+        data['browser_channel']=store.settings()['browser_channel']
+    if reason=='writing_unsupported' or (reason=='missing_answers' and store.db.execute(
+            "SELECT 1 FROM questions WHERE job_id=? AND resolved=0 AND reason='writing_unsupported' LIMIT 1",
+            (job['id'],)).fetchone()):
+        from .answers import WRITING_SOURCE_VERSION
+        data['writing_sources']=WRITING_SOURCE_VERSION
+    if kind in {'information','mapping','documents','transient'} or reason in {'provider_unavailable','provider_cli_incompatible'}:
+        # A repaired model connection can resolve an unattempted form, including
+        # mixed forms with both provider failures and missing facts. This is
+        # below safe_state/draft checks and cannot release an uncertain write.
+        settings=store.settings()
+        data['provider']={key:settings[key] for key in ('provider','provider_model','model_effort','model_escalation')}
     if reason=='ashby_submission_unsupported':
         from .ashby_submission import VERSION
         data['ashby_submission']=VERSION
@@ -139,7 +152,9 @@ def dependency(store, job, kind, reason=None):
         from .answers import AUTOMATIC_ANSWER_VERSION
         data['automatic_answers']=AUTOMATIC_ANSWER_VERSION
         data['history']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed FROM confirmed_history ORDER BY id')]
-        data['answers']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM answers ORDER BY id')]
+        scopes=sorted({job['host'],job['host']+'|'+store.company(job['company']),job.get('answer_scope',job['host'])})
+        data['answers']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM answers WHERE host IN ('
+            +','.join('?' for _ in scopes)+') ORDER BY id',scopes)]
         data['templates']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM templates ORDER BY id')]
         data['documents']=[tuple(r) for r in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')]
         data['document_files']=[(r['filename'], (store.root/'documents'/r['filename']).stat().st_mtime_ns if (store.root/'documents'/r['filename']).is_file() else None) for r in store.db.execute('SELECT filename FROM documents ORDER BY kind')]
@@ -187,6 +202,8 @@ def ready(store, job, at=None, ashby_snapshot=None):
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':
+        if row['reason'] in {'provider_unavailable','provider_cli_incompatible'}:
+            return row['dependency']!=dependency(store,job,'review',row['reason'])
         if row['reason']=='ambiguous_experience':
             # Legacy screening holds were classified as manual reviews. Only
             # revalidate this one policy reason, never an application attempt

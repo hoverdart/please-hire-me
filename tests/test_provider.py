@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-from hireme.provider import ClaudeProvider
+from hireme.provider import ClaudeProvider, ManagedProvider, CodexProvider
 import pytest
 
 
@@ -157,6 +157,51 @@ def test_team_subscription_is_accepted(monkeypatch):
         return SimpleNamespace(returncode=0,stdout=json.dumps({'structured_output':{'answer_id':None}}))
     monkeypatch.setattr('hireme.provider.subprocess.run',run)
     assert ClaudeProvider().choose_answer('test',[]) is None
+
+
+@pytest.mark.parametrize('reason',['provider_unavailable','provider_cli_incompatible'])
+def test_one_form_reuses_connection_failure_without_spending_more_request_slots(store,monkeypatch,reason):
+    from hireme.util import Blocked
+    calls=[]
+    class Unavailable:
+        def __init__(self,*args):pass
+        def request(self,*args):calls.append(1);raise Blocked(reason,'Synthetic unavailable connection')
+    monkeypatch.setattr('hireme.provider.ClaudeProvider',Unavailable)
+    manager=ManagedProvider(store,10)
+    for _ in range(3):
+        with pytest.raises(Blocked,match=reason):manager.request('Synthetic',{}, {})
+    assert len(calls)==1
+    assert store.db.execute('SELECT count(*) FROM model_requests').fetchone()[0]==1
+    # A newly selected model must be checked again in the same form.
+    store.update_settings({'provider_model':'another-model'})
+    with pytest.raises(Blocked,match=reason):manager.request('Synthetic',{}, {})
+    assert len(calls)==2
+
+
+def test_codex_strict_schema_keeps_source_constraints_and_validates_uniqueness_locally(monkeypatch):
+    from pathlib import Path
+    from hireme.util import Blocked
+    schema={'type':'object','additionalProperties':False,'required':['sentence_ids'],
+        'properties':{'sentence_ids':{'type':'array','uniqueItems':True,'maxItems':2,
+            'items':{'type':'string','enum':['source:one','source:two']}}}}
+    original=json.loads(json.dumps(schema));ids=[]
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _:'/fixture/codex')
+    def run(args,**kwargs):
+        if args[1:]==['login','status']:
+            return SimpleNamespace(returncode=0,stdout='',stderr='Logged in using ChatGPT')
+        wire=json.loads(Path(args[args.index('--output-schema')+1]).read_text())
+        assert 'uniqueItems' not in wire['properties']['sentence_ids']
+        assert wire['properties']['sentence_ids']['items']==schema['properties']['sentence_ids']['items']
+        Path(args[args.index('--output-last-message')+1]).write_text(json.dumps({'sentence_ids':ids}))
+        return SimpleNamespace(returncode=0,stdout='',stderr='')
+    monkeypatch.setattr('hireme.provider.subprocess.run',run)
+    provider=CodexProvider()
+    for values in [['unknown'],['source:one','source:one'],['source:one','source:two','source:one']]:
+        ids[:]=values
+        with pytest.raises(Blocked,match='provider_invalid_output'):provider.request('Synthetic',{},schema)
+    ids[:]=['source:one','source:two']
+    assert provider.request('Synthetic',{},schema)=={'sentence_ids':ids}
+    assert schema==original
 
 
 def test_grounding_rejection_repairs_with_specific_feedback(monkeypatch):

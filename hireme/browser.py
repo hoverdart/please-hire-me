@@ -26,6 +26,20 @@ SNAPSHOT=r"""selector => {
   return copy.textContent.trim();
  }
  function reference(el) {return {id:el.id||'',name:el.name||'',tag:el.tagName.toLowerCase()};}
+ function leverUniversityProxy(el) {
+  if(!el?.matches('select[data-qa="university-dropdown"].select2-hidden-accessible'))return null;
+  const match=el.name.match(/^cards\[([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\]\[field([0-9]+)\]$/i);
+  if(!match||el.id!==`university-picker-${match[1]}-${match[2]}`)return null;
+  const parent=el.parentElement,container=el.nextElementSibling;
+  if(!parent?.matches('.application-university')||parent.querySelectorAll('select').length!==1||
+     !container?.matches('.select2-container')||parent.querySelectorAll('.select2-container').length!==1||
+     parent.closest('[hidden],[inert],[aria-hidden="true"]'))return null;
+  const proxies=container.querySelectorAll('[role=combobox]'),id='select2-'+el.id+'-container';
+  if(proxies.length!==1||proxies[0].getAttribute('aria-labelledby')!==id||
+     !container.querySelector('[id="'+id+'"]')||
+     !proxies[0].checkVisibility({opacityProperty:true,visibilityProperty:true}))return null;
+  return proxies[0];
+ }
  function details(el) {
   const wrapper=el.closest('[data-field-path],.ashby-application-form-field-entry,.application-question,.field,.field-wrapper');
   const descriptions=Array.from(wrapper?.querySelectorAll('.ashby-application-form-question-description,.field-description,.helper-text,.body__secondary')||[]);
@@ -49,7 +63,10 @@ SNAPSHOT=r"""selector => {
   const help_links=descriptions.flatMap(n=>Array.from(n.querySelectorAll('a[href]')).map(a=>({text:a.textContent.trim(),url:a.href})));
   const date_format=el.type==='date'?'YYYY-MM-DD':el.classList.contains('ashby-application-form-input-date')?'MM/DD/YYYY':null;
   const ashby=el.closest('[data-field-path][data-field-entry-id]');
-  return {...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {}),...(date_format?{date_format}: {}),
+  const card=el.closest('.application-form[data-qa="additional-cards"]');
+  const titles=card?.querySelectorAll('h4[data-qa="card-name"]');
+  const section=titles?.length===1&&/^cards\[/.test(el.name||'')?labelText(titles[0]):'';
+  return {...(section?{section:'Lever: '+section}:{}),...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {}),...(date_format?{date_format}: {}),
     ...(ashby?{ashby_path:ashby.dataset.fieldPath,ashby_entry_id:ashby.dataset.fieldEntryId}:{}),
     ...(texting&&['communicationConsent','smsConsent'].includes(el.name)?{ashby_texting_consent:'sms'}:{})};
  }
@@ -76,7 +93,16 @@ SNAPSHOT=r"""selector => {
   return (el.getAttribute('description')||el.getAttribute('aria-label')||aria||leverHeading||direct||legend||labelText(wrapper?.querySelector('label'))||el.getAttribute('placeholder')||'').trim();
  }
  controls.forEach((el,index)=>{
-  if(!el.getClientRects().length && el.type!=='file')return;
+  const university=leverUniversityProxy(el);
+  const universityContainer=el.matches('[role=combobox]')&&el.closest('.select2-container');
+  if(universityContainer&&leverUniversityProxy(universityContainer.previousElementSibling)===el)return;
+  if(!el.getClientRects().length && el.type!=='file' && !university)return;
+  // Ashby's optional "Autofill from resume" picker is separate from the
+  // native resume question. Never select it or treat it as an employer field.
+  // A named, populated, required or form-owned input still needs validation.
+  if(el.type==='file' && el.closest('.ashby-application-form-autofill-input-root') &&
+     !el.closest('[data-field-path],.ashby-application-form-field-entry') &&
+     !el.form && !el.id && !el.name && !el.required && !el.files.length)return;
   if(el.matches('.ashby-application-form-input-yesno-option')){
    const group=el.closest('.ashby-application-form-input-yesno');
    if(!group||seen.has(group))return;seen.add(group);
@@ -86,7 +112,7 @@ SNAPSHOT=r"""selector => {
    out.push({index,indices:buttons.map(x=>controls.indexOf(x)),ref:reference(el),refs:buttons.map(reference),label:heading?.textContent.trim()||'',...details(el),type:'yesno',options:buttons.map(x=>x.textContent.trim()),required:!!heading?.className.includes('_required_'),maxlength:-1,value:buttons.find(x=>x.getAttribute('aria-pressed')==='true')?.textContent.trim()||'',multiple:false});
    return;
   }
-  if(el.disabled || el.closest('[aria-hidden=true]') || (el.readOnly && el.tabIndex<0))return;
+  if(el.disabled || el.closest('[aria-hidden=true]') && !university || (el.readOnly && el.tabIndex<0))return;
   let type=el.tagName==='SELECT'?'select':el.tagName==='TEXTAREA'?'textarea':el.getAttribute('role')==='combobox'?'combobox':el.type||'text';
   const leverLocation=el.matches('input.location-input[name=location]')&&
     !!el.parentElement.querySelector('input[type=hidden][name=selectedLocation]')&&!!el.parentElement.querySelector('.dropdown-results');
@@ -176,18 +202,18 @@ def submission_receipt(text,before=''):
         re.search(r"our talent team will carefully review your qualifications and experience",text,re.I) and
         not re.search(r"thanks again for applying[!.]",before,re.I)))
 # Model outcomes that may succeed on a later attempt, unlike missing applicant information.
-PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output','writing_unsupported')
+PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output','writing_unsupported','provider_unavailable','provider_cli_incompatible')
 
 
 _DOCUMENT_REQUEST=re.compile(
     r'(?:(?:please\s+)?(?:upload|attach|provide|submit)\s+)?'
     r'(?:(?:a|an|the|your|copy|of|most\s+recent|latest|current|official|unofficial|academic|college|university)\s+)*'
-    r'(?:transcripts?|resumes?(?:\s*(?:/|or)\s*cvs?)?|cvs?(?:\s*(?:/|or)\s*resumes?)?|cover[\s_-]*letters?)'
+    r'(?:(?:(?:undergraduate|graduate)\s+)?transcripts?|resumes?(?:\s*(?:/|or)\s*cvs?)?|cvs?(?:\s*(?:/|or)\s*resumes?)?|cover[\s_-]*letters?)'
     r'(?:\s*\((?:pdf|pdf only|required)\))?',re.I)
 
 
 def _document_kind(field):
-    label=' '.join(field['label'].split()).strip(' *✱:')
+    label=' '.join(field['label'].split()).strip(' *✱:').removesuffix('.')
     kinds=[kind for kind,pattern in (('transcript',r'\btranscripts?\b'),('resume',r'\b(?:resumes?|cvs?)\b'),('cover_letter',r'\bcover.?letters?\b'))
            if re.search(pattern,label,re.I)]
     # A mention in another request is not permission to disclose that document.
@@ -438,6 +464,8 @@ class Browser:
                     self.denied_write=True
                     self.denied_request={'host':host,'path':p.path,'method':route.request.method}
                     if isinstance(data,dict):
+                        if self.ashby_submission and getattr(self.ashby_submission,'denial',None):
+                            self.denied_request['native_denial']=self.ashby_submission.denial
                         # Retain only known operation names and a query digest;
                         # variables, tokens and arbitrary client strings stay private.
                         operation=data.get('operationName')
@@ -1368,6 +1396,9 @@ class Browser:
             if len(dropdowns)>=2 and not any(f['options'] for f in dropdowns):
                 raise Blocked('posting_fetch_failed','No dropdown on the application loaded its choices; nothing was submitted')
             answers=[]; documents=list(retained_docs); pending=[]; budget_error=None; asked=set()
+            from .provider import LazyProvider
+            answer_provider=LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,
+                checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail))
             for f in fields:
                 self.store.checkpoint()
                 if not f['label']:
@@ -1382,8 +1413,7 @@ class Browser:
                     if kind=='cover_letter' and f['required']:
                         try:
                             from .letters import generate_cover_letter
-                            from .provider import LazyProvider
-                            doc=generate_cover_letter(self.store,job,LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail)))
+                            doc=generate_cover_letter(self.store,job,answer_provider)
                         except Blocked as e:
                             if e.reason in ('paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'):raise
                             self.store.event('document_blocked',job['id'],{'label':f['label'],'reason':e.reason,'detail':e.detail})
@@ -1393,8 +1423,7 @@ class Browser:
                         continue
                     documents.append({**dict(doc),'field':f});continue
                 try:
-                    from .provider import LazyProvider
-                    provider=None if budget_error else LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail))
+                    provider=None if budget_error else answer_provider
                     answer_context={**job,'previous_answers':answers,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]}
                     a=resolve(self.store,job['answer_scope'],f,provider,context=answer_context)
                     if a:

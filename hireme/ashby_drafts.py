@@ -9,7 +9,7 @@ from urllib.parse import urlsplit,parse_qsl
 from .util import Blocked, digest, textarea_value
 
 # Reevaluate only Ashby draft mapping holds when this reviewed protocol changes.
-VERSION = 2
+VERSION = 3
 
 # Reviewed public ApiSetFormValue operation, including its read-only fragments.
 # A vendor query change needs review instead of granting another mutation.
@@ -32,6 +32,20 @@ def number_wire(value, label):
     if number>9007199254740991:
         raise Blocked('ashby_draft_unsupported',label+' — Ashby number encoding needs review')
     return number
+
+
+def date_wire(value, field):
+    """The native Date control saves a calendar date, without a time zone."""
+    from datetime import datetime
+    formats={'MM/DD/YYYY':(r'[0-9]{2}/[0-9]{2}/[0-9]{4}','%m/%d/%Y'),
+             'YYYY-MM-DD':(r'[0-9]{4}-[0-9]{2}-[0-9]{2}','%Y-%m-%d')}
+    spec=formats.get(field.get('date_format'))
+    if (field.get('type') not in {'text','date'} or not isinstance(value,str)
+            or not spec or not re.fullmatch(spec[0],value)):
+        raise Blocked('ashby_draft_unsupported',field['label']+' — confirm an exact date in the rendered format')
+    try:return datetime.strptime(value,spec[1]).date().isoformat()
+    except ValueError:
+        raise Blocked('ashby_draft_unsupported',field['label']+' — the approved calendar date is invalid') from None
 
 
 def official_choices(metadata, field, selected):
@@ -305,6 +319,10 @@ class AshbyDraft:
                 if kind!='number' or metadata.get('type')!='Number':
                     raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby number control changed')
                 value=number_wire(value,field['label'])
+            if kind=='date' or field.get('date_format') or metadata.get('type')=='Date':
+                if metadata.get('type')!='Date':
+                    raise Blocked('ashby_draft_unsupported',field['label']+' — Ashby date control changed')
+                value=date_wire(value,field)
             if kind=='ashby_education':
                 from .ashby_education import wire
                 value=wire(self,field,metadata,value)

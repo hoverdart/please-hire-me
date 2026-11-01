@@ -455,6 +455,64 @@ def test_official_custom_choice_encoding_is_bound_to_the_approved_label(store):
     assert guard.grant(*request(data))
 
 
+def standalone_checkbox_fixture(store, value='Yes', required=True):
+    browser, job, package, _, state, data = setup_native(store)
+    f = field(3, 'question_99[]_1234', 'I have reviewed the application notice',
+              kind='checkbox', options=['Yes', 'No'])
+    f['ref']['name'] = 'question_99[]';f['refs'] = [dict(f['ref'])];f['required'] = required
+    qid = store.ask(job['id'], job['host'], f['label'], f['options'], field=f, context=job)
+    store.answer_question(qid, value)
+    package['answers'].append(resolve(store, job['host'], f, context=job))
+    package['steps'][0]['fields'].append(f)
+    question = {'label': f['label'], 'required': required, 'fields': [{
+        'name': 'question_99[]', 'type': 'multi_value_multi_select',
+        'values': [{'label': 'I Accept', 'value': 1234}]}]}
+    state['loaders'][ROUTE]['jobPost']['questions'].append(question)
+    native = {'id': f['ref']['id'], 'name': f['ref']['name'], 'type': 'checkbox',
+              'value': '1234', 'checked': value == 'Yes', 'labels': ['I Accept']}
+    browser._control = lambda _: SimpleNamespace(evaluate=lambda _: dict(native))
+    aid = store.prepare(job, package)
+    return browser, job, package, aid, state, data, native, question
+
+
+@pytest.mark.parametrize('value', ['Yes', 'No'])
+def test_single_custom_checkbox_transmits_only_its_approved_native_option(store, value):
+    browser, job, package, aid, _, data, _, _ = standalone_checkbox_fixture(store, value, required=False)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    choices = {'0': {'question_option_id': '1234'}} if value == 'Yes' else {}
+    data['job_application']['answers_attributes'] = {'99': {
+        'question_id': '99', 'priority': 0, 'answer_selected_options_attributes': choices}}
+    forged = json.loads(json.dumps(data))
+    forged['job_application']['answers_attributes']['99']['answer_selected_options_attributes'] = {
+        '0': {'question_option_id': '1235'}}
+    store.begin_submit(aid)
+    assert not guard.grant(*request(forged))
+    assert guard.grant(*request(data))
+    assert not guard.grant(*request(data))
+
+
+@pytest.mark.parametrize('change', ['checked', 'name', 'value', 'type', 'label', 'extra_option', 'question_type'])
+def test_single_custom_checkbox_requires_exact_current_control_and_metadata(store, change):
+    browser, job, package, aid, _, _, native, question = standalone_checkbox_fixture(store)
+    if change == 'checked':native['checked'] = False
+    elif change == 'name':native['name'] = 'question_100[]'
+    elif change == 'value':native['value'] = '1235'
+    elif change == 'type':native['type'] = 'radio'
+    elif change == 'label':native['labels'] = ['I Decline']
+    elif change == 'extra_option':question['fields'][0]['values'].append({'label': 'Other', 'value': 1235})
+    else:question['fields'][0]['type'] = 'multi_value_single_select'
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
+    assert store.application_record(aid)['state'] == 'prepared'
+
+
+def test_required_custom_consent_is_not_invented_after_an_approved_decline(store):
+    browser, job, package, aid, _, _, _, _ = standalone_checkbox_fixture(store, 'No')
+    with pytest.raises(Blocked, match='required_answer_missing'):
+        GreenhouseSubmission(browser, job, package, aid)
+    assert store.application_record(aid)['state'] == 'prepared'
+
+
 @pytest.mark.parametrize('approved,native', [
     ('First\r\nSecond', 'First\nSecond'),
     ('First\rSecond', 'First\nSecond'),
@@ -735,6 +793,38 @@ def test_native_ethnicity_helper_uses_only_the_renderers_race_encoding(store, he
     forged['job_application']['hispanic_ethnicity'] = helper
     assert not guard.grant(*request(forged))
     assert guard.grant(*request(data))
+
+
+@pytest.mark.parametrize('label', ['Please identify your race', 'Please identify your race*'])
+def test_localized_race_label_preserves_the_approved_native_choice(store, label):
+    browser, job, package, _, _, data = ethnicity_helper_fixture(store, 'No', race='Asian')
+    answer = next(a for a in package['answers'] if a['field']['ref']['id'] == 'race')
+    answer['field']['label'] = label
+    qid = store.ask(job['id'], job['host'], label, answer['field']['options'], field=answer['field'], context=job)
+    store.answer_question(qid, 'Asian')
+    answer.update(resolve(store, job['host'], answer['field'], context=job))
+    aid = store.prepare(job, package)
+    guard = GreenhouseSubmission(browser, job, package, aid)
+    assert guard.expected['race'] == '2'
+    data['job_application']['race'] = '2'
+    store.begin_submit(aid)
+    assert guard.grant(*request(data))
+
+
+@pytest.mark.parametrize('change', ['metadata_label', 'approved_label', 'extra_identity'])
+def test_localized_race_label_does_not_allow_a_different_question(store, change):
+    browser, job, package, _, state, _ = ethnicity_helper_fixture(store, 'No', race='Asian')
+    answer = next(a for a in package['answers'] if a['field']['ref']['id'] == 'race')
+    answer['field']['label'] = 'Please identify your race'
+    if change == 'metadata_label':state['loaders'][ROUTE]['jobPost']['eeoc_sections'][0]['questions'][0]['label'] = 'Another declaration'
+    elif change == 'approved_label':answer['field']['label'] = 'Please identify your religion'
+    else:answer['field']['ref']['name'] = 'another_question'
+    qid = store.ask(job['id'], job['host'], answer['field']['label'], answer['field']['options'], field=answer['field'], context=job)
+    store.answer_question(qid, 'Asian')
+    answer.update(resolve(store, job['host'], answer['field'], context=job))
+    aid = store.prepare(job, package)
+    with pytest.raises(Blocked, match='unsupported_form'):
+        GreenhouseSubmission(browser, job, package, aid)
 
 
 @pytest.mark.parametrize('helper,race', [('Yes', 'Asian'), ('No', 'Hispanic or Latino'),
