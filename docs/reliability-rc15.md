@@ -9,7 +9,7 @@ This public candidate adds an application browser that observes the current page
 - Handshake and Work at a Startup saved listings can follow verified external employer links. Enabled native-only listings can use the adaptive browser when account ownership, document contents and controls can be verified. Bulk discovery and fixed native transport commissioning keep their independent gates.
 - Every transmitted UI mutation has a durable intent. Approved sources, document hashes and controls are rechecked before writes. Saved steps survive restart, and uncertain saves or submissions block automatic retries.
 - Final confirmation requires a new receipt and correlated employer evidence. Opaque Workday acknowledgements can use a fresh owner-verified Application Received record for the exact application and requisition, without resubmitting.
-- Runtime and development locks update `pypdf` to 6.21.4 and `pyasn1` to 0.6.5 to address the advisories found by the dependency audit. Core PDF installations also require the fixed minimum version.
+- Runtime and development locks update `pypdf` to 6.21.4 and `pyasn1` to 0.6.5 to address the advisories found by the dependency audit. Core PDF installations and the Gmail extra require the fixed minimum versions, including upgrades of existing environments.
 
 ## Enable multi-step applications
 
