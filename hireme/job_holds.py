@@ -284,13 +284,16 @@ def hold(store, job, reason, detail='', stage='application', at=None):
 def clear(store,job_id):store.db.execute('DELETE FROM job_holds WHERE job_id=?',(job_id,))
 
 def annotate(store,jobs):
+    # Display one consistent alias-hold view for this request. Transport checks
+    # continue to query current durable state immediately before every write.
+    from .ashby_guard import screening_snapshot
+    ashby_snapshot=screening_snapshot(store)
     for job in jobs:
         if job.get('status')!='blocked':continue
         row=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
         if row:
             job['hold']={**json.loads(row['evidence']),'reason':row['reason'],'retry_at':row['retry_at'],'retry_count':row['retry_count']}
-            from .ashby_guard import uncertain,legacy_failed
-            ashby_uncertain=uncertain(store,job['id']) or legacy_failed(store,job['id'])
+            ashby_uncertain=ashby_snapshot.blocks(job)
             if ashby_uncertain:
                 job['hold'].update(reason='ashby_draft_uncertain',category='review',retry_at=None,next_action=REASON_GUIDANCE['ashby_draft_uncertain'][1])
             elif row['reason']=='ashby_draft_save_failed':

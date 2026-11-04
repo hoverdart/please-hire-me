@@ -140,6 +140,10 @@ class AdaptiveBrowser(Browser):
             return route.abort()
 
     def _check(self):
+        from .browser_observation import retry_dom_read
+        return retry_dom_read(self.page,self._check_page,checkpoint=self.store.checkpoint)
+
+    def _check_page(self):
         self.store.checkpoint()
         if not self.preparing and not self.store.settings()['live_enabled']:raise Blocked('paused')
         if self.stopped_reason:raise self.stopped_reason

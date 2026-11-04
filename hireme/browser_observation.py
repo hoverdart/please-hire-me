@@ -5,6 +5,8 @@ action IDs and readable observations, never authority to execute page code.
 """
 from __future__ import annotations
 
+import time
+
 from .util import digest
 
 
@@ -13,6 +15,20 @@ CONTROLS = ('input:not([type=hidden]):not([type=submit]):not([type=button]),text
     'button[data-automation-id$=Dropdown]:not([role=combobox]):not([aria-haspopup=listbox]),'
     '[role=checkbox]:not(input),[role=radio]:not(input),[contenteditable=true]')
 ACTIONS = 'button,a[href],input[type=submit],[role=button]:not(button)'
+
+
+def retry_dom_read(page,read,*,checkpoint=None,timeout=5):
+    """Reobserve after a navigation replaces the document; never retry actions."""
+    from playwright.sync_api import Error
+    deadline=time.monotonic()+timeout
+    while True:
+        if checkpoint:checkpoint()
+        try:return read()
+        except Error as error:
+            transient=any(message in str(error) for message in (
+                'Execution context was destroyed','Cannot find context with specified id'))
+            if not transient or page.is_closed() or time.monotonic()>=deadline:raise
+            page.wait_for_timeout(50)
 
 OBSERVE = r"""({controlsSelector,actionsSelector}) => {
  const controls=Array.from(document.querySelectorAll(controlsSelector));
@@ -208,7 +224,7 @@ def identity(field):
 
 
 def observe(page):
-    observation=page.evaluate(OBSERVE,{'controlsSelector':CONTROLS,'actionsSelector':ACTIONS})
+    observation=retry_dom_read(page,lambda:page.evaluate(OBSERVE,{'controlsSelector':CONTROLS,'actionsSelector':ACTIONS}))
     from .browser import _document_kind
     forms={f['form_index'] for f in observation['fields'] if f['type']=='file' and _document_kind(f)=='resume'}-{-1}
     if len(forms)==1:
