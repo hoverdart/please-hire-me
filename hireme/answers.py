@@ -23,7 +23,7 @@ RULES = [
     (r"^(street address|address line 1)\*?$", "street"), (r"^country( of residence)?\*?$", "country"),
     (r"^linkedin( profile)?( url| link)?\*?$", "linkedin"), (r"^github( profile)?( url| link)?\*?$", "github"),
     (r"^(website|personal website|portfolio)( url| link)?\*?$", "website"),
-    (r"^(school|university|college|school name|university name|college\s*/\s*university|university\s*/\s*college)\*?$", "school"),
+    (r"^(school|university|college|school name|university name|school (?:or|/) university|college\s*/\s*university|university\s*/\s*college)\*?$", "school"),
     (r"^(major|field of study|discipline|discipline\s*/\s*field of study)\*?$", "major"), (r"^(cumulative )?gpa\*?$", "gpa"),
     (r"^(expected |anticipated )?graduation( date| semester| term| season| month| year| month\s*/\s*year| month and year)?\*?$", "graduation"),
     (r"^are you (legally )?authorized to work in (the )?(united states|us|u\.s\.)\??\*?$", "work_authorized_us"),
@@ -107,7 +107,8 @@ def field_key(label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
         if re.fullmatch(pattern,label): return key
-    if re.fullmatch(r'(?:phone )?(?:country|dial|calling) code',label):return 'phone'
+    if re.fullmatch(r'(?:phone )?(?:country|dial|calling) code|country phone code',label):return 'phone'
+    if re.fullmatch(r'(?:phone|telephone)(?: number| device)? type',label):return 'phone_type'
     if label=='consent to receiving text messages':return 'sms'
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
     if re.fullmatch(r'(?:please )?(?:select|indicate|enter) the country where you (?:currently )?(?:reside|live)\.?',label):return 'country'
@@ -218,6 +219,8 @@ def _option_value(key, value, options, context=None):
                   'ms':{"master", "masters", "mastersdegree", "masterofscience"}},
         'country':{'unitedstates':{"us", "usa", "unitedstatesofamerica","unitedstates1"}},
         'state':{'ca':{'california'},'california':{'ca'}},
+        'major':{'electricalengineeringandcomputersciences':{'electricalengineeringandcomputerscience'}},
+        'phone_type':{'mobile':{'cell','cellular','mobilephone','homecellular'},'landline':{'home','homephone','homelandline'}},
         'pronouns':{'hehim':{'hehimhis'},'sheher':{'sheherhers'},'theythem':{'theythemtheirs'}},
         'location':{'berkeleyca':{'berkeleycaliforniaunitedstates','berkeleycaunitedstates','berkeleycalifornia','berkeleycausa'}},
         'citizenship':{'unitedstates':{"us", "usa", "unitedstatesofamerica"}},
@@ -348,7 +351,7 @@ def _discovery_answer(label, options, context):
         answer=names.get(source.split(':',1)[0]) if ':' in source else None
         return {'value':answer,'provenance':{'job_source':source}} if answer else None
     normal=lambda x:re.sub(r'[^a-z0-9]','',x.casefold())
-    preferred=['companywebsite','companycareerssite','companycareerspage'] if source.startswith(('gh:','ash:','lv:','portal:')) else ['jobboard','onlinejobboard']
+    preferred=['companywebsite','companycareerssite','companycareerspage','careerswebsite','website'] if source.startswith(('gh:','ash:','lv:','portal:')) else ['jobboard','onlinejobboard']
     company=normal(context.get('company',''))
     if company and source.startswith(('gh:','ash:','lv:','portal:')):
         # ATS boards sometimes abbreviate their employer in the source choice:
@@ -358,13 +361,68 @@ def _discovery_answer(label, options, context):
         first=normal(re.split(r'[\s_-]+',context.get('company','').strip())[0])
         brands=[company]+([first] if len(first)>=4 and first!=company else [])
         preferred=[brand+kind for brand in brands for kind in
-                   ('careerswebsite','careerssite','careerspage','websitecareerspage','website')]+preferred
+                   ('careerswebsite','careerssite','careerspage','websitecareerspage','website','com')]+preferred
     unions=[x for x in options if re.search(r'(?:/|\bor\b)\s*(?:online )?job board\s*$',x,re.I)]
     for candidate in preferred+['other']:
         matches=[x for x in options if normal(x)==candidate]
         if len(matches)==1:return {'value':matches[0],'provenance':{'job_source':source}}
     if len(unions)==1:return {'value':unions[0],'provenance':{'job_source':source}}
     return None
+
+
+def _phone_country_answer(store,field):
+    if not re.fullmatch(r'(?:phone )?(?:country|dial|calling) code|country phone code',field['label'].strip().rstrip(' *✱?:'),re.I):return None
+    facts=store.facts();phone=facts.get('phone');country=facts.get('country');location=facts.get('location')
+    if not phone:return None
+    from .field_context import present
+    code=present('phone',phone['value'],field)
+    if code!='+1':return None
+    if country and country['value'].strip().casefold() in {'us','usa','united states','united states of america'}:
+        evidence={'country_revision':country['revision']}
+    elif not country and location and re.fullmatch(r'Berkeley,?\s+(?:CA|California)(?:,?\s+United States)?',location['value'],re.I):
+        evidence={'location_revision':location['revision']}
+    else:return None
+    choices=[value for value in field.get('options',[]) if re.fullmatch(r'United States(?: of America)?\s*\(\+1\)',value,re.I)]
+    if len(choices)!=1:return None
+    return {'value':choices[0],'provenance':{'phone_country':{'phone_revision':phone['revision'],**evidence}}}
+
+
+def _employer_authorization_support(store,field,context):
+    label=' '.join(field['label'].strip().split()).rstrip(' *✱')
+    if not re.fullmatch(r'Will you require employer support to obtain or maintain authorization to work in that country\? e\.g\. \(work permit\)',label,re.I):return None
+    if not _us_location(work_country_location(context)):return None
+    facts=store.facts();premises={'work_authorized_us':'Yes','unrestricted_authorization':'Yes','needs_sponsorship':'No'}
+    if any(facts.get(key,{}).get('value')!=value for key,value in premises.items()):return None
+    options=field.get('options',[])
+    if options and options.count('No')!=1:return None
+    return {'value':'No','provenance':{'employer_authorization_support':{
+        key+'_revision':facts[key]['revision'] for key in premises}}}
+
+
+def _us_eeo_ethnicity(store,field,context):
+    if field_key(field['label'])!='race' or not _us_location(work_country_location(context)):return None
+    options=field.get('options',[])
+    annotated=[re.fullmatch(r'(.+)\s+\(United States of America\)',option,re.I) for option in options]
+    if not options or not all(annotated):return None
+    facts=store.facts();hispanic=facts.get('hispanic_latino');race=facts.get('race')
+    if not hispanic or hispanic['value'] not in {'Yes','No'}:return None
+    normalize=lambda text:re.sub(r'[^a-z0-9]','',text.casefold())
+    race_category=normalize(race['value']) if race else ''
+    # Translate an explicitly confirmed regional identity into the employer's
+    # broader EEO category; never derive identity from name or citizenship.
+    # https://www.eeoc.gov/federal-sector/management-directive/frequently-asked-questions-about-management-directive-715
+    if race_category in {'southeastasian','southasian','eastasian'}:race_category='asian'
+    matches=[]
+    for option,match in zip(options,annotated):
+        category=match[1].strip()
+        if hispanic['value']=='Yes' and normalize(category)=='hispanicorlatino':matches.append(option)
+        if hispanic['value']=='No' and race:
+            group=re.fullmatch(r'(.+)\s+\(Not Hispanic or Latino\)',category,re.I)
+            if group and normalize(group[1])==race_category:matches.append(option)
+    if len(matches)!=1:return None
+    evidence={'hispanic_latino_revision':hispanic['revision']}
+    if hispanic['value']=='No':evidence['race_revision']=race['revision']
+    return {'value':matches[0],'provenance':{'us_eeo_ethnicity':evidence}}
 
 
 def _local_campus_answer(store,label):
@@ -717,6 +775,7 @@ def _compatible_binding(key, label):
         'full_name':r'\bname\b', 'first_name':r'\bfirst.*name\b', 'last_name':r'\blast.*name\b',
         'preferred_name':r'preferred.*name|nickname|(?:should|may|can) we call you', 'native_name':r'native.*name|name.*native',
         'email':r'\be.?mail\b', 'alternate_email':r'\b(?:alternate|alternative|secondary|additional|other|backup) e.?mail\b', 'phone':r'phone|mobile|dial|calling code',
+        'phone_type':r'(?:phone|telephone)(?: number| device)? type',
         'location':r'location|located|based|resid|\bcity\b', 'street':r'street|address',
         'city':r'\bcity\b', 'state':r'\bstate\b|province', 'postal_code':r'postal|\bzip\b',
         'country':r'country|residen', 'linkedin':r'linkedin', 'github':r'github', 'website':r'website|portfolio',
@@ -1048,6 +1107,11 @@ def resolve(store, host, field, provider=None, context=None):
     explicit_year=field_key(label)=='high_school_graduation_year'
     graduation_confirmation=_graduation_confirmation(store,field)
     saved=None if graduation_confirmation or student_confirmation else store.saved_answer(host,label,options,field=field,context=context)
+    if not saved:
+        ordinary=_phone_country_answer(store,field) or _employer_authorization_support(store,field,context) or _us_eeo_ethnicity(store,field,context)
+        if ordinary:
+            store.resolve_known_question(host,label,options,field=field,context=context)
+            return {'field':field,**ordinary}
     # Exact saved approvals take precedence over generated answer caches.
     # Chronological confirmations still use the current confirmed dates.
     writing=None if explicit_year or student_confirmation or graduation_confirmation or saved else store.writing_answer(host,label,options)
@@ -1357,3 +1421,6 @@ def validate_package(store, job, package):
     if package.get('connection'):
         from .platform_browser import validate_connection_package
         validate_connection_package(store,job,package)
+    if package.get('browser_agent'):
+        from .browser_agent_protocol import validate_browser_package
+        validate_browser_package(store,job,package)

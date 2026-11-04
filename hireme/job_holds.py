@@ -55,6 +55,9 @@ ELIGIBILITY_INPUTS = {
 }
 
 def category(reason):
+    if reason=='browser_draft_uncertain':return 'review'
+    if reason in {'browser_identity_unverified','browser_identity_mismatch','browser_profile_changed'}:return 'account'
+    if reason in {'browser_no_progress','browser_operation_blocked','browser_step_limit','browser_preparation_incomplete'}:return 'mapping'
     if reason=='prior_application_email':return 'mail'
     if reason.startswith('prior_application_'):return 'limits'
     if reason=='workday_schema_unreviewed':return 'unsupported'
@@ -89,6 +92,7 @@ def dependency(store, job, kind, reason=None):
         from .workday_profiles import owner_hash,profile_binding,transport,operational_evidence
         profile=transport(job['host'])
         workday={'version':VERSION,'profile':profile.signature if profile else None,
+            'ui_executor':1 if store.settings()['adaptive_browser'] else None,
             'binding':profile_binding(store,job['host']),'owner':owner_hash(store),
             'verified':[tuple(sorted(row.items())) for row in operational_evidence(store,job['host'],VERSION)],
             'remote_drafts':store.settings()['remote_drafts']}
@@ -101,7 +105,7 @@ def dependency(store, job, kind, reason=None):
         from .platform_connections import configuration,VERSION
         connection_id=job.get('connection_id')
         if connection_id:
-            return digest({'version':VERSION,'connection':configuration(store,connection_id),
+            return digest({'version':VERSION,'external_routing':1,'ui_executor':store.settings()['adaptive_browser'],'connection':configuration(store,connection_id),
                 'flows':[tuple(row) for row in store.db.execute('SELECT capability,version,signature,evidence,verified FROM connection_flows WHERE connection_id=? ORDER BY capability,signature',(connection_id,))],
                 'facts':store.facts(),'documents':[tuple(row) for row in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')],
                 'posting':posting.get('_listing_hash')})
@@ -121,7 +125,9 @@ def dependency(store, job, kind, reason=None):
             from .policy import CITIZENSHIP_VERSION
             data['citizenship_policy']=CITIZENSHIP_VERSION
         return digest(data)
-    data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION}
+    data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION,
+          'adaptive_browser':store.settings()['adaptive_browser']}
+    if reason and reason.startswith('browser_'):data['remote_drafts']=store.settings()['remote_drafts']
     if kind in {'mapping','transient','unsupported'}:
         data['browser_channel']=store.settings()['browser_channel']
     if reason=='writing_unsupported' or (reason=='missing_answers' and store.db.execute(
@@ -160,6 +166,8 @@ def dependency(store, job, kind, reason=None):
         data['document_files']=[(r['filename'], (store.root/'documents'/r['filename']).stat().st_mtime_ns if (store.root/'documents'/r['filename']).is_file() else None) for r in store.db.execute('SELECT filename FROM documents ORDER BY kind')]
         data['materials']=[tuple(r) for r in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
     if kind=='account':
+        login=store.db.execute("SELECT seq FROM events WHERE kind='browser_login_completed' AND subject=? ORDER BY seq DESC LIMIT 1",(job['host'],)).fetchone()
+        if login:data['browser_login_revision']=login['seq']
         data['accounts']=[tuple(r) for r in store.db.execute('SELECT id,state,updated FROM employer_accounts ORDER BY id')]
         from .accounts import account_key
         key=account_key('https://'+job['host'],store.company(job['company']))
@@ -262,7 +270,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
         'limits':'Wait for existing company or daily limits to clear.',
         'review':'Review this failure before allowing another attempt.'}
     if reason=='model_budget_exhausted':guidance[kind]='Approve the unanswered fields, or wait for the next model allowance. Request limits remain unchanged.'
-    if reason in REASON_GUIDANCE and (reason.startswith(('workday_','prior_application_')) or reason in {'ashby_draft_save_failed','ashby_draft_uncertain','remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
+    if reason in REASON_GUIDANCE and (reason.startswith(('workday_','prior_application_','browser_')) or reason in {'ashby_draft_save_failed','ashby_draft_uncertain','remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
         guidance[kind]=REASON_GUIDANCE[reason][1]
     # References and field labels only: no answer values, passwords, or OTPs.
     evidence={'stage':stage,'category':kind,'field':str(detail)[:300] if reason in FACT_REASONS|MAPPING_REASONS else '',

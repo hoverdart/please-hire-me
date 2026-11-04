@@ -110,6 +110,7 @@ class PlatformBrowser(Browser):
         self.verification_blocked = False
         self.checking_session = False
         self.session_identity = None
+        self.inspecting_listing = False
 
     def __enter__(self):
         super().__enter__()
@@ -135,6 +136,8 @@ class PlatformBrowser(Browser):
         if same and request.method in {'GET', 'HEAD', 'OPTIONS'}:
             return route.continue_()
         if self.checking_session and self._session_read(request):
+            return route.continue_()
+        if self.inspecting_listing and self._listing_read(request):
             return route.continue_()
         if same and any(OperationGrant(self.origin, spec, {}).consume(request) for spec in self.read_protocol):
             return route.continue_()
@@ -189,6 +192,23 @@ class PlatformBrowser(Browser):
             if isinstance(name, str) and hashlib.sha256(data['query'].encode()).hexdigest() == HANDSHAKE_SESSION_READS.get(name):return name
         except (ValueError, TypeError, UnicodeError):pass
         return None
+
+    def _listing_read(self, request):
+        """A specific Handshake listing may render GraphQL queries, never mutations."""
+        if self.connection_id != 'handshake' or request.method != 'POST':return False
+        parsed=urlsplit(request.url)
+        if parsed.scheme+'://'+parsed.netloc!=self.origin or parsed.path!='/hs/graphql' or parsed.query:return False
+        try:
+            raw=request.post_data_buffer or b''
+            if len(raw)>100000:return False
+            data=json.loads(raw)
+            queries=data if isinstance(data,list) else [data]
+            return bool(queries) and len(queries)<=20 and all(
+                isinstance(item,dict) and set(item)<={'operationName','query','variables'}
+                and isinstance(item.get('query'),str) and re.match(r'^\s*query\b',item['query'])
+                and not re.search(r'\b(?:mutation|subscription)\b',item['query'])
+                for item in queries)
+        except (ValueError,TypeError,UnicodeError):return False
 
     def _guard_connection(self):
         if self.stopped_reason:
@@ -326,10 +346,8 @@ class PlatformBrowser(Browser):
             employer = posting(destination, job['company'], job['title'], job.get('location',''), self.connection_id, description)
             if not persist:
                 return {**updated, 'external_url':employer['url']}, evidence
-            from .platform_connections import import_listing
-            import_listing(self.store, job['url'], job['company'], job['title'], job.get('location',''), description, external_url=destination)
-            # Saved native identities cannot be silently rekeyed; import_listing
-            # holds those conflicts. Fresh inspected listings can reuse the ATS.
+            from .platform_routing import save_route
+            save_route(self.store,job,employer)
             updated = employer
             return updated, evidence
         if not persist:
@@ -586,7 +604,7 @@ class PlatformBrowser(Browser):
     def apply(self, job, live=True):
         self.store.checkpoint()
         config = configuration(self.store, self.connection_id)
-        if not config['enabled'] or not config['native_apply_enabled']:
+        if not config['enabled']:
             raise Blocked('connection_disabled')
         previous = self.store.db.execute('SELECT state FROM applications WHERE job_id=?',(job['id'],)).fetchone()
         if previous and previous[0] != 'prepared':
@@ -595,15 +613,27 @@ class PlatformBrowser(Browser):
         missing = self.store.missing_setup()
         if missing:
             raise Blocked('missing_fact', 'Confirm the required applicant facts and documents before preparing a native application.')
-        if not all(flows(self.store, self.connection_id, capability) for capability in ('inspection', 'preparation', 'submission', 'verification')):
+        # Routing an explicitly saved listing is a read, independent of native
+        # upload/submission capabilities and of bulk platform search support.
+        complete=all(flows(self.store,self.connection_id,capability)
+            for capability in ('inspection','preparation','submission','verification'))
+        if not complete or not config['native_apply_enabled']:
+            if flows(self.store,self.connection_id,'inspection'):
+                inspected,_=self.inspect(job)
+                if not inspected.get('connection_id'):return 'routed'
+            else:
+                from .platform_routing import inspect_external
+                if inspect_external(self,job):return 'routed'
+        if not config['native_apply_enabled']:
+            raise Blocked('connection_disabled','Native platform applications are disabled; this listing has no inspected external ATS link')
+        if not complete:
             raise Blocked('connection_flow_unverified', 'Native applications remain disabled until the complete flow is validated.')
         if not self.check_session():
             session_result(self.store, self.connection_id, False, 'Sign in again on the worker machine.')
             raise Blocked('connection_sign_in_required')
         job, package, evidence = self.prepare(job)
         if package is None:
-            # Close the platform profile before the employer browser is opened.
-            raise Blocked('connection_external_routed', 'This listing uses an employer site. Review its saved employer requisition in Jobs.')
+            return 'routed'
         if not live:
             return 'prepared'
         return self.submit(job, package, evidence)
@@ -624,6 +654,13 @@ class ConnectedBrowser:
 
     def apply(self, job, live=True):
         connection_id = job.get('connection_id')
+        from .browser_dispatch import use_adaptive
+        if use_adaptive(self.store,job):
+            if self.legacy:
+                self.legacy.__exit__();self.legacy=None
+            from .browser_agent import AdaptiveBrowser
+            with AdaptiveBrowser(self.store,connection_id=connection_id) as browser:
+                return browser.apply(job,live=live)
         if connection_id:
             if self.legacy:
                 self.legacy.__exit__(); self.legacy = None
@@ -632,4 +669,10 @@ class ConnectedBrowser:
         if self.legacy is None:
             self.legacy = Browser(self.store)
             self.legacy.__enter__()
-        return self.legacy.apply(job, live=live)
+        try:return self.legacy.apply(job, live=live)
+        except Blocked as error:
+            from .browser_dispatch import can_fallback
+            if not can_fallback(self.store,job,self.legacy,error):raise
+            self.legacy.__exit__();self.legacy=None
+            from .browser_agent import AdaptiveBrowser
+            with AdaptiveBrowser(self.store) as browser:return browser.apply(job,live=live)

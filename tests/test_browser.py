@@ -968,11 +968,10 @@ def test_hidden_upload_group_does_not_authorize_document_selection(store,ats,hid
         b.page.set_content('<section '+hidden+'><div class="file-upload" role="group" aria-labelledby="heading" aria-required="true">'
                            '<div id="heading">Transcript</div><label for="question_42">Attach</label><input id="question_42" type="file"></div></section>')
         fields=b._snapshot()
-    if hidden=='aria-hidden="true"':
-        assert fields==[]  # Existing snapshot filtering excludes these controls entirely.
-        return
-    assert len(fields)==1 and fields[0]['label']=='Attach' and fields[0]['required']
-    assert _document_kind(fields[0]) is None
+    # Hidden conditional upload groups are not current questions. In
+    # particular, they cannot supply a transcript upload target or an
+    # unanswered required document that blocks the visible application.
+    assert fields==[]
 
 
 @pytest.mark.parametrize('title,required',[

@@ -49,6 +49,7 @@ def test_connected_workspace_drafts_focus_filters_and_disabled_capabilities(dash
         expect(page.locator('#jobs .opportunity-details')).to_have_count(1)
         page.locator('#jobs .opportunity-details').click()
         expect(page.locator('#job-dialog')).to_be_visible()
+        expect(page.get_by_role('button',name='Find employer application')).to_be_visible()
         page.locator('#job-writing-panel summary').click()
         draft=page.locator('#artifact-form [name=prompt]');draft.fill('My unsaved narrative prompt for this employer.');draft.focus()
         page.evaluate('refresh()');expect(draft).to_have_value('My unsaved narrative prompt for this employer.');expect(draft).to_be_focused()
@@ -75,13 +76,70 @@ def test_connection_and_artifact_routes_require_token_and_validate_input(dashboa
             assert request.get(path).status==403
             assert request.get(path,headers={'X-Hireme-Token':'fixture-capability'}).status==200
         headers={'X-Hireme-Token':'fixture-capability'}
+        assert request.post('/api/employer-login',data={'job_id':'missing'}).status==403
+        for body in [{},{'job_id':'missing'},{'job_id':'missing','url':'https://attacker.invalid'}]:
+            assert request.post('/api/employer-login',headers=headers,data=body).status==400
         assert request.post('/api/connections/handshake/configure',headers=headers,data={'enabled':True,'discovery_enabled':True}).status==200
         assert request.post('/api/connections/handshake/discover',headers=headers,data={}).status==409
         for body in [[],{'enabled':1},{'live_verified':True}]:assert request.post('/api/connections/handshake/configure',headers=headers,data=body).status==400
         assert request.post('/api/connections/handshake/import',headers=headers,data={'url':None,'title':'Role','company':'Company'}).status==400
+        assert request.post('/api/connections/handshake/inspect',data={'job_id':'missing'}).status==403
+        for body in [{},{'job_id':None},{'job_id':'missing','live_verified':True}]:
+            assert request.post('/api/connections/handshake/inspect',headers=headers,data=body).status==400
         assert request.post('/api/artifacts/generate',headers=headers,data=[]).status==400
         assert request.get('/api/jobs?source=handshake&destination=native',headers=headers).json()['total']==1
         request.dispose()
+
+
+@pytest.mark.parametrize('width',[320,1440])
+def test_external_routing_action_preserves_context_and_disables_duplicate_requests(dashboard,width):
+    from playwright.sync_api import sync_playwright,expect
+    with sync_playwright() as p:
+        browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':1000})
+        requests=[]
+        def inspect(route):
+            requests.append(route.request.post_data_json)
+            route.fulfill(status=200,content_type='application/json',body=json.dumps({
+                'routed':True,'job_id':'employer-job','message':'Employer application found and queued in Jobs. No application was submitted.'}))
+        page.route('**/api/connections/handshake/inspect',inspect)
+        page.goto(dashboard+'/#token=fixture-capability');open_view(page,'opportunities')
+        page.locator('#connection-source').select_option('handshake')
+        page.locator('#jobs .opportunity-details').click()
+        button=page.get_by_role('button',name='Find employer application')
+        expect(button).to_be_enabled();button.click()
+        expect(page.locator('#connected-job-context [role=status]')).to_contain_text('No application was submitted.')
+        expect(button).to_be_disabled()
+        assert len(requests)==1 and set(requests[0])=={'job_id'}
+        expect(page.locator('#job-dialog')).to_be_visible()
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.screenshot(path=f'/tmp/hireme-external-routing-{width}.png',full_page=width>900)
+        browser.close()
+
+
+@pytest.mark.parametrize('width',[320,1440])
+def test_employer_sign_in_handoff_uses_saved_job_and_deduplicates_clicks(dashboard,store,job,width):
+    from hireme.job_holds import hold
+    from playwright.sync_api import sync_playwright,expect
+    store.block(job['id'],'browser_identity_unverified')
+    hold(store,job,'browser_identity_unverified')
+    with sync_playwright() as p:
+        browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':1000});calls=[]
+        def login(route):
+            calls.append(route.request.post_data_json)
+            route.fulfill(status=200,content_type='application/json',body=json.dumps({
+                'started':True,'message':'Sign in in the dedicated employer browser, then close that window.'}))
+        page.route('**/api/employer-login',login)
+        page.goto(dashboard+'/#token=fixture-capability');open_view(page,'opportunities')
+        page.locator('#connection-source').select_option('employer')
+        expect(page.locator('#jobs .opportunity-details')).to_have_count(1)
+        page.locator('#jobs .opportunity-details').click()
+        button=page.get_by_role('button',name='Sign in to employer',exact=True)
+        expect(button).to_be_enabled();button.click()
+        expect(page.locator('#connected-job-context [role=status]')).to_contain_text('dedicated employer browser')
+        expect(button).to_be_disabled();assert calls==[{'job_id':job['id']}]
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.screenshot(path=f'/tmp/hireme-employer-login-{width}.png',full_page=width>900)
+        browser.close()
 
 
 @pytest.mark.parametrize('width',[320,1440])

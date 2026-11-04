@@ -8,7 +8,7 @@ from .util import Blocked, digest, now
 from .answer_context import GENERIC_WORK_COUNTRY, selected_employment_country
 
 MAPPING_VERSION = 26
-ADAPTER_VERSION = 45
+ADAPTER_VERSION = 49
 CAPTCHA_DETECTION_VERSION = 4
 
 def field_context(host, field, context=None):
@@ -30,6 +30,7 @@ def field_context(host, field, context=None):
         r'cards\[[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\]\[field[0-9]+\]',native_name,re.I)
     return {'version': MAPPING_VERSION, 'ats': ats(host), 'scope': host,
             'employer': context.get('company', ''),
+            **({'application_agreement_job':field['application_agreement_job']} if field.get('application_agreement_job') else {}),
             'role': context.get('title',''), 'job_location': context.get('location',''), 'section': field.get('section', ''),
             **({'lever_card_field':native_name} if lever_card else {}),
             **({'section_entry':field['section_entry']} if 'section_entry' in field else {}),
@@ -119,6 +120,7 @@ def present(key, value, field):
         raise Blocked('phone_country_review', field['label'])
     if key == 'phone' and (field.get('phone_component') == 'national' or field.get('maxlength') == 10):
         digits = re.sub(r'\D', '', value)
+        if len(digits) == 10:return digits
         if len(digits) == 11 and digits.startswith('1'): return digits[1:]
         raise Blocked('phone_country_review', field['label'])
     return value

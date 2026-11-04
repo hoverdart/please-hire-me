@@ -425,6 +425,10 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         from .posting_import import preview_postings,import_postings
                         result=preview_postings(store,raw) if path.endswith('-preview') else import_postings(store,raw,self.headers.get('X-Import-Hash',''))
                         return self.send(200,result)
+                    if path=='/api/employer-login':
+                        if not isinstance(data,dict) or set(data)!={'job_id'}:raise ValueError('Choose one saved employer job')
+                        from .browser_login import start
+                        return self.send(200,start(store,data['job_id']))
                     if path.startswith('/api/connections/'):
                         if not isinstance(data,dict):raise ValueError('Provide a connection action object')
                         from . import platform_connections as pc
@@ -434,6 +438,9 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         if action=='configure':result=pc.configure(store,connection_id,data)
                         elif action=='connect':result=pc.start_connect(store,connection_id)
                         elif action=='check':result=pc.check(store,connection_id)
+                        elif action=='inspect':
+                            if set(data)!={'job_id'}:raise ValueError('Choose one saved platform job to inspect')
+                            result=pc.inspect_listing(store,connection_id,data['job_id'])
                         elif action=='disconnect':result=pc.disconnect(store,connection_id)
                         elif action=='discover':
                             from .store import worker_lock

@@ -22,11 +22,23 @@ The session check uses a visible browser on the worker desktop and waits up to t
 
 Native adapters currently provide fixture-validated execution machinery, **not verified production transports**. No production flow records are distributed. Actual platform selectors, read endpoints, upload encodings, request payloads and acknowledgements must be inspected and validated on the dedicated profile before the corresponding capability can become available. There is intentionally no dashboard or CLI switch that manufactures this evidence. Generic JSON/form request fixtures do not establish compatibility with a platform's actual upload API.
 
+**External employer applications have a separate read-only path.** Open a saved platform listing in Jobs and choose **Find employer application**. This works while submissions are paused and does not require automatic search or native-application capabilities. Sign in to the dedicated platform profile first if the listing requires it. The equivalent terminal command is:
+
+```bash
+.venv/bin/python -m hireme connection handshake inspect --job-id SAVED_JOB_ID
+```
+
+Use `workatastartup` for that platform. The inspector reads only the specific saved listing, checks its visible role and employer, and requires one explicit application link identifying a requisition at the same employer. It does not click Quick Apply or upload platform documents. Read-only Handshake GraphQL queries can render the saved listing; mutations remain blocked. Unknown or ambiguous links stay held. Matching an employer to its ATS account uses configured company aliases; an unrecognized account name requires review.
+
+A successful inspection queues the canonical employer posting for a later application batch, preserves its platform origin, and marks the original listing **Employer application found**. It preserves an existing ATS posting's metadata and canonical identifier. Reimporting the same platform link reuses that route. Listings with any prepared, current or archived application record cannot be moved this way. Routing never marks an application submitted or changes an existing employer outcome. Native-only listings still need a compatible native platform adapter.
+
 Handshake automatic discovery remains visibly unavailable until an authorized access route is established. Its [terms prohibit third-party bulk collection using automated scripts](https://joinhandshake.com/legal/tos/); lowering request rates does not establish authorization. For both platforms, automatic discovery is bounded to five pages or 100 distinct jobs per connection per cycle. Platform execution is sequential under existing worker/browser locks, cancellation, time and request budgets. An individual source failure preserves saved listings and permits other sources to continue.
 
 Saved platform links can be imported separately. A verified external requisition destination enters the employer pipeline and retains the platform origin. Canonical employer requisition URLs deduplicate records; company/title similarity never merges jobs. Board URLs are held. Changed destinations or conflicting company/role identities retain a reviewable candidate and hold safe, unattempted jobs without rewriting their identity or past evidence. Opening an external link never records an application as sent.
 
 ## Materials and native execution
+
+An adaptive UI executor is now available alongside validated native transports. With a connection and **Apply automatically on this platform** enabled, saved native-only listings can use observed controls, confirmed values and exact approved uploads without installed native transport evidence. `ui_application` reports this strategy independently of the unchanged native capability flags; enabling it does not enable bulk discovery or manufacture verified native flows. A preselected platform-profile resume whose exact bytes cannot be checked remains held. See [the adaptive browser verification boundaries](ats-reliability.md).
 
 Reusable sources remain separate from generated application revisions. A job can generate a grounded cover letter, tailored introduction or supplemental narrative PDF using the selected model, existing billing mode and existing request allowance. Optional platform-profile suggestions are generated only on demand and can be reviewed and copied. The app does not edit platform profiles automatically.
 
@@ -40,6 +52,8 @@ Native write grants bind a reviewed origin, path, method and complete payload to
 
 ## API and storage compatibility
 
+`POST /api/connections/{platform}/inspect` accepts exactly `{ "job_id": "saved-listing-id" }` and uses the same worker/browser locks as other connection operations. Its response distinguishes a queued employer route from a native-only or unrecognized listing. Status exposes `external_routing` separately from the native capability flags.
+
 Authenticated connection routes live under `/api/connections`; artifact routes live under `/api/artifacts` and `/api/artifact-document`. Existing Host/Origin/capability checks and read-only demo behavior apply. Job responses add origins, destination, requirements, identity-review candidates and capability metadata. Application packages and private receipts load only on explicit evidence requests. Polling preserves active drafts and keyboard focus; drafts remain in page memory.
 
 SQLite additions cover connection settings, versioned flow evidence, listing origins, identity conflicts, artifact revisions, remote-document acknowledgements, application receipts and saved-view connection filters. Existing job IDs, application records and historical evidence are retained. Browser sessions are excluded from portable history and release artifacts.
@@ -48,4 +62,4 @@ SQLite additions cover connection settings, versioned flow evidence, listing ori
 
 Local fixtures cover identity conflicts, revisions, immutable uploads, exact payload grants, pause/budget handling, interrupted operations and conservative restores. They do not establish live platform access, actual transport compatibility or employer acceptance.
 
-Both connections start disabled. Production capabilities remain gated until the dedicated session has independently validated access and matching machine-bound flow evidence. The [release status](public-release.md) records the outstanding gates; [Contributing](../CONTRIBUTING.md) lists reproducible local checks.
+Both connections start disabled. Fixed native transports and bulk discovery remain gated by independent access and matching machine-bound flow evidence. Adaptive UI execution requires the explicitly enabled connection and automatic applications, confirmed source values, verified document contents and an acknowledged final receipt. The [release status](public-release.md) records native transport gates; [Contributing](../CONTRIBUTING.md) lists reproducible local checks.

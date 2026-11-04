@@ -60,8 +60,8 @@ def coverage(store):
         if key not in groups:
             groups[key]={'ats':platform,'source':source,'discovered':0,'eligible':0,'attempted':0,'confirmed':0,'blocked':0,'uncertain':0,
                 'configured':False,
-                'discovery_supported':True,'application_capability':'single-step forms' if platform in {'Greenhouse','Ashby','Lever'} else 'manual completion',
-                'account_required':platform=='Workday','limitations':'Account setup and multi-step submission adapter required.' if platform=='Workday' else 'CAPTCHA and unsupported widgets may require review.',
+                'discovery_supported':True,'application_capability':('native forms with adaptive UI fallback' if platform in {'Greenhouse','Ashby','Lever'} else 'adaptive application browser') if store.settings()['adaptive_browser'] else ('single-step forms' if platform in {'Greenhouse','Ashby','Lever'} else 'manual completion'),
+                'account_required':platform=='Workday','limitations':'Verified employer sign-in and remote draft permission required; unknown questions and CAPTCHA need help.' if platform=='Workday' else 'CAPTCHA and unsupported widgets may require review.',
                 'health':'not_checked','checked_at':None}
         return groups[key]
     from .discovery import board_sources

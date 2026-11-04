@@ -130,7 +130,13 @@ class WorkdayPostingAdapter(SingleStepAdapter):
         from .portals import WORKDAY
         from .net import Network
         configured=next((row for row in WORKDAY if row[4]==job['host']),None)
-        if not configured:raise Blocked('posting_inspection_review','Workday career site is not configured')
+        if not configured:
+            from .workday_site import site_for_url
+            try:
+                observed=site_for_url(job['url'])
+                if observed.host!=job['host']:raise ValueError()
+            except ValueError:raise Blocked('posting_inspection_review','Inspect the exact Workday career-site posting') from None
+            configured=(job.get('company',''),observed.tenant,observed.shard,observed.site,observed.host)
         _,tenant,_,site,host=configured
         def posting_path(url):
             parsed=urlsplit(url)
@@ -139,7 +145,7 @@ class WorkdayPostingAdapter(SingleStepAdapter):
                 raise ValueError('Posting URL does not match its configured career site')
             # Known public path shape. Unknown locale/path/escaped segments require
             # inspection instead of constructing a speculative employer endpoint.
-            match=re.fullmatch(r'/(?:en-US/)?'+re.escape(site)+r'(/job/[A-Za-z0-9._~-]+/[A-Za-z0-9._~-]+)',parsed.path)
+            match=re.fullmatch(r'/(?:[a-z]{2}-[A-Z]{2}/)?'+re.escape(site)+r'(/job/[A-Za-z0-9._~-]+/[A-Za-z0-9._~-]+)',parsed.path)
             if not match or any(part in {'.','..'} for part in parsed.path.split('/')):
                 raise ValueError('Posting path is unrecognized')
             return match[1]

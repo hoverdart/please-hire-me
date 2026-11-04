@@ -70,6 +70,9 @@ def _split_date(record, prefix, precision):
     year, month = record.get(prefix+'Year'), record.get(prefix+'Month')
     if year is None and month is None:
         return None
+    # The owned live GET also represents a year-only value as January 1.
+    if isinstance(year,str) and re.fullmatch(r'[0-9]{4}-01-01',year):
+        year=_date(year)[:4]
     if (not isinstance(year,str) or not re.fullmatch(r'[0-9]{4}',year)
             or type(month) is not int or not 1<=month<=12):
         _hold()

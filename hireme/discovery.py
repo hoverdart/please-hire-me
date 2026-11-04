@@ -22,7 +22,9 @@ PORTAL_HOSTS={"www.amazon.jobs","amazon.jobs","www.google.com","www.deshaw.com",
 
 def posting(url,company,title,location,source,description="",**extra):
     url=canonical_url(url); host=urlsplit(url).hostname
-    if host not in ATS_HOSTS|PORTAL_HOSTS: raise ValueError("Unapproved application host")
+    if host not in ATS_HOSTS|PORTAL_HOSTS:
+        from .workday_site import is_workday_url
+        if not is_workday_url(url):raise ValueError("Unapproved application host")
     if not all(isinstance(x,str) and x.strip() for x in (company,title)):
         raise ValueError("Invalid company/title")
     # Req URL, not title or slug guesses, is the durable identity. Alias URLs can be explicitly reconciled.

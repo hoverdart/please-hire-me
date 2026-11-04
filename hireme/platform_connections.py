@@ -105,7 +105,39 @@ def status(store, connection_id):
     return {**config, 'enabled': bool(config['enabled']), 'discovery_enabled': bool(config['discovery_enabled']),
         'native_apply_enabled': bool(config['native_apply_enabled']), 'name': spec['name'],
         'login_url': spec['login_url'], 'connect_command': f'.venv/bin/python -m hireme connection {connection_id} connect',
-        'capabilities': capabilities, 'session_ready': config['session_state'] == 'ready'}
+        'capabilities': capabilities, 'session_ready': config['session_state'] == 'ready',
+        'ui_application':{'available':store.settings()['adaptive_browser'],
+            'message':'Adaptive browser applications are available for saved listings when this connection and automatic applications are enabled. Confirmed answers and exact resume contents are required; some existing profile documents still need review.' if store.settings()['adaptive_browser'] else 'Adaptive application browser is disabled in Search & automation.'},
+        'external_routing': {'available': True,
+            'message': 'Inspect a saved job link to find its employer ATS application. Native platform submission and automatic search are separate capabilities.'}}
+
+
+def inspect_listing(store, connection_id, job_id):
+    """Explicit read of a saved listing; works while submissions are paused."""
+    from .store import worker_lock
+    from .platform_browser import PlatformBrowser
+    from .platform_routing import inspect_external
+    platform(connection_id)
+    if not isinstance(job_id,str) or not job_id:
+        raise ValueError('Choose a saved platform job')
+    with worker_lock(store.root),worker_lock(store.root,'browser'):
+        row=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not row:raise ValueError('Saved job not found')
+        job=json.loads(row['payload'])
+        if job.get('connection_id')!=connection_id:
+            raise ValueError('Choose a saved job from this platform')
+        # Do not open a session for an identity already bound to an attempt.
+        from .job_holds import safe_state
+        if not safe_state(store,job_id) or store.db.execute('SELECT 1 FROM application_records WHERE job_id=?',(job_id,)).fetchone():
+            raise Blocked('connection_identity_review','This listing has application history; review its existing outcome before routing')
+        with PlatformBrowser(store,connection_id) as browser:
+            employer=inspect_external(browser,job)
+        if not employer:
+            return {'routed':False,'job_id':job_id,
+                'message':'No unambiguous external ATS application link was found. Native platform applications still require a supported flow.'}
+        saved=store.db.execute('SELECT id FROM jobs WHERE url=?',(employer['url'],)).fetchone()
+        return {'routed':True,'job_id':saved['id'],'destination':employer['host'],
+            'message':'Employer application found and queued in Jobs. No application was submitted.'}
 
 
 def list_connections(store):
@@ -280,6 +312,14 @@ def import_listing(store, url, company, title, location='', description='', exte
         previous = store.db.execute('SELECT job_id FROM job_origins WHERE connection_id=? AND platform_job_id=?', (connection_id, native_id)).fetchone()
         if previous:
             previous_url = store.db.execute('SELECT url FROM jobs WHERE id=?', (previous['job_id'],)).fetchone()[0]
+            routed=store.db.execute("SELECT 1 FROM jobs WHERE url=? AND status='routed'",(listing_url,)).fetchone()
+            if routed and not external_url:
+                destination=store.db.execute('SELECT company,title FROM jobs WHERE id=?',(previous['job_id'],)).fetchone()
+                if (store.company(destination['company'])==store.company(company)
+                        and ' '.join(destination['title'].casefold().split())==' '.join(title.casefold().split())):
+                    store.db.execute('UPDATE job_origins SET observed=? WHERE connection_id=? AND platform_job_id=?',
+                                     (now(),connection_id,native_id))
+                    return previous['job_id']
             if previous_url != job['url']:
                 conflict = (previous['job_id'], 'This listing now has a different application destination. Review both records before applying.')
         existing = store.db.execute('SELECT id,company,title FROM jobs WHERE url=?', (job['url'],)).fetchone()
@@ -342,6 +382,10 @@ def annotate_jobs(store, jobs):
         connection_id = payload.get('connection_id')
         job['connection_id'] = connection_id
         job['application_capability'] = status(store, connection_id)['capabilities']['submission'] if connection_id in PLATFORMS else {'available': job['host'] in {'jobs.lever.co', 'boards.greenhouse.io', 'job-boards.greenhouse.io', 'jobs.ashbyhq.com', 'jobs.eu.lever.co', 'boards.eu.greenhouse.io', 'job-boards.eu.greenhouse.io'}, 'message': 'Existing employer application pipeline; posting and form checks still apply'}
+        from .browser_dispatch import use_adaptive
+        if use_adaptive(store,{**payload,**job}):
+            job['application_capability']={'available':True,'strategy':'adaptive_ui',
+                'message':'Adaptive application browser; confirmed information, verified documents and employer acknowledgement required'}
         if payload.get('application_kind') == 'introduction' and job.get('status') == 'confirmed':
             job['status_label'] = 'Introduction sent'
     return jobs
