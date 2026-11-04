@@ -28,8 +28,12 @@ SNAPSHOT=r"""selector => {
  function reference(el) {return {id:el.id||'',name:el.name||'',tag:el.tagName.toLowerCase()};}
  function formIndex(el) {return el.form?Array.from(document.forms).indexOf(el.form):-1;}
  function active(el) {
-  return !el.disabled && !el.closest('[hidden],[inert],[aria-hidden="true"]') &&
-    el.checkVisibility({visibilityProperty:true,opacityProperty:true});
+  if(el.disabled||el.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
+  const native=el.matches('input[type=radio],input[type=checkbox]');
+  if(!el.checkVisibility({visibilityProperty:true,opacityProperty:!native}))return false;
+  if(native)for(let parent=el.parentElement;parent;parent=parent.parentElement)
+    if(Number(getComputedStyle(parent).opacity)===0)return false;
+  return true;
  }
  function leverUniversityProxy(el) {
   if(!el?.matches('select[data-qa="university-dropdown"].select2-hidden-accessible'))return null;

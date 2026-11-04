@@ -68,6 +68,20 @@ def test_hidden_conditional_upload_is_not_a_current_question(store,attribute):
         assert [f['label'] for f in browser._snapshot()]==['Name','Resume/CV']
 
 
+def test_styled_native_choices_remain_observable_while_hidden_sections_stay_excluded(store):
+    with Browser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content('''<form>
+          <label for=consent>Required consent</label><input id=consent type=checkbox required style="opacity:0">
+          <fieldset><legend>Authorization</legend>
+            <label><input type=radio name=authorization value=Yes required style="opacity:0">Yes</label>
+            <label><input type=radio name=authorization value=No style="opacity:0">No</label></fieldset>
+          <section style="opacity:0"><label><input type=checkbox required>Hidden consent</label></section>
+        </form>''')
+        fields=browser._snapshot()
+        assert [(f['label'],f['type']) for f in fields]==[('Required consent','checkbox'),('Authorization','radio')]
+        assert all(f['required'] for f in fields) and fields[1]['options']==['Yes','No']
+
+
 def test_parent_change_is_inspected_before_filling_reused_control(store,ats):
     html=(Path(__file__).parent/'fixtures/application.html').read_text()
     # The name answer replaces the email question while keeping its DOM ID.
