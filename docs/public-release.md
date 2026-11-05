@@ -1,6 +1,6 @@
 # Release status
 
-The configured release-candidate version is **0.5.0rc15**, for a self-hosted, single-applicant installation. Published candidates are available from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). This candidate adds the adaptive application browser and authenticated NVIDIA Workday submission evidence. Optional platforms and unfamiliar forms retain their explicit limits; this is not a universal ATS compatibility claim. See the [rc15 notes](reliability-rc15.md), [browser evidence](ats-reliability.md) and stable-release gates below.
+The configured release-candidate version is **0.5.0rc16**, for a self-hosted, single-applicant installation. Published candidates are available from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). This candidate tightens relevance and retry gates and prioritizes verified completions and human next actions in reports. Optional platforms and unfamiliar forms retain their explicit limits; this is not a universal ATS compatibility claim. See the [rc16 notes](reliability-rc16.md), [browser evidence](ats-reliability.md) and stable-release gates below.
 
 ## Capability boundaries
 

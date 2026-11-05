@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 10
+ELIGIBILITY_VERSION = 11
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -15,7 +15,7 @@ LOCATIONS = {
  "Seattle":r"seattle|bellevue|redmond|kirkland",
  "Remote (US)":r"remote.{0,25}(?:united states|\bus\b|\busa\b)|(?:united states|\bus\b|\busa\b).{0,25}remote",
 }
-SENIOR=re.compile(r"\bsenior\b|\bsr\.?\b|\bprincipal\b|\blead\b|\bmanager\b|\bdirector\b|\bhead of\b|\barchitect\b|\bstaff\b",re.I)
+SENIOR=re.compile(r"\bsenior\b|\bsr\.?\b|\bprincipal\b|\blead\b|\bmanager\b|\bdirector\b|\bhead of\b|\barchitect\b|\bstaff\b|\b(?:engineer|developer|scientist)\s+(?:II|III|IV|V|[2-5])\b",re.I)
 YEARS=re.compile(r"(?:at least|minimum(?: of)?|requires?|must have|\b)(\d+)(?:\s*[-–]\s*\d+)?\+?\s+years?(?: of)?\s+(?:professional|relevant|industry|work|software|engineering|experience)",re.I)
 WRITTEN_YEARS=re.compile(r"(?:two|three|four|five|six|seven|eight|nine|ten)\s+(?:or more\s+)?years?",re.I)
 # Recognize the written numbers omitted by the legacy broad review check only
@@ -161,9 +161,65 @@ def fit_score(job,facts):
     title=job.get("title","").lower()
     skills=[s.strip().lower() for s in facts.get("skills",{}).get("value","").split(",") if s.strip()]
     matches=[s for s in skills if re.search(r"(?<!\w)"+re.escape(s)+r"(?!\w)",text)]
-    score=35+min(40,len(matches)*8)
-    if re.search(r"intern|new.?grad|early career|university|graduate",title): score+=15
+    # Eligibility (including being an intern) is not evidence of relevance.
+    # An internship with no supported technical overlap must not clear the
+    # default 45-point threshold merely because of its advertised level.
+    score=25+min(65,len(matches)*13)
+    if re.search(r"\b(?:software|swe|developer|backend|back.end|frontend|front.end|fullstack|full.stack|machine learning|applied ai|ai engineer)\b",title):score+=10
     return min(100,score),matches
+
+
+SOFTWARE_ROLE = r'\bsoftware\s+(?:engineer\w*|develop\w*|intern\w*|research\w*)\b|\bswe\b|\b(?:front[- ]?end|back[- ]?end|full[- ]?stack|platform)\s+(?:software\s+)?(?:engineer\w*|develop\w*|intern\w*)\b'
+TECHNICAL_RESEARCH = r'\b(?:software|computer science|machine learning|artificial intelligence|applied ai|ai for|deep learning|distributed systems|natural language|computer vision|llm|robotics)\b'
+
+
+def _role_matches(job,roles,*,metadata=False):
+    title=job.get('title','');description=job.get('description','')
+    patterns={'software':SOFTWARE_ROLE,'developer':r'\bdeveloper\b',
+              'machine learning':r'\bmachine learning\b|\bml (?:engineer\w*|research\w*|intern\w*)\b|\b(?:ai|artificial intelligence) (?:engineer\w*|research\w*|intern\w*)\b'}
+    for role in roles:
+        role=role.casefold()
+        if role in {'research','technical staff'}:
+            if not re.search(r'\bresearch\w*\b' if role=='research' else r'\btechnical staff\b',title,re.I):continue
+            # Generic "research" must not authorize trading, mechanical or
+            # clinical work. Explicitly selected specialist roles still can.
+            if re.search(r'\b(?:quantitative|trader|trading|mechanical|clinical|chemical|biolog\w*)\b',title,re.I):continue
+            if metadata:
+                from .posting_inspection import needs_details
+                if needs_details(job):return True
+            if re.search(TECHNICAL_RESEARCH,title+'\n'+description,re.I):return True
+        elif re.search(patterns.get(role,re.escape(role)),title,re.I):return True
+    return False
+
+
+def _summer_2027(job):
+    title=job.get('title','')
+    seasons=set(re.findall(r'\b(winter|spring|summer|fall|autumn)\b',title,re.I))
+    if seasons:
+        # Title intent wins over a different program mentioned in body prose:
+        # "Software Intern (2027 Start) - Winter" is not a summer posting.
+        return {s.casefold() for s in seasons}=={'summer'} and bool(re.search(r'\b2027\b',title))
+    return bool(re.search(r'\bsummer\s*2027\b|\b2027\s*summer\b',job.get('description',''),re.I))
+
+
+def _check_required_technologies(description,facts):
+    """Hold explicit prerequisites lacking evidence; silence never means no skill."""
+    technologies={'Python':r'python','TypeScript':r'typescript','JavaScript':r'javascript',
+                  'Rust':r'rust','Go':r'golang|(?-i:Go)(?=\s*(?:[.,/)]|and\b|or\b|programming\b|language\b|$))','Java':r'java','C++':r'c\+\+','C#':r'c#',
+                  'SQL':r'sql','Kubernetes':r'kubernetes','React':r'react','PyTorch':r'pytorch','TensorFlow':r'tensorflow'}
+    skills=facts.get('skills',{}).get('value','')
+    for clause in re.split(r'[;\n]|\.\s+',re.sub(r'<[^>]+>','\n',description)):
+        if not re.search(r'\bmust (?:have|possess|know|be proficient|be experienced)|\brequires? (?:proficiency|experience|knowledge)|\b(?:proficiency|experience|knowledge)\b.{0,120}\b(?:is )?required\b',clause,re.I):continue
+        if not re.search(r'\b(?:experience|proficiency|knowledge|fluency|skills?|expertise|know|proficient|experienced|familiarity)\b',clause,re.I):continue
+        if re.search(r'\b(?:not required|no .{0,40}required|preferred|optional)\b',clause,re.I):continue
+        present=lambda pattern,text:bool(re.search(r'(?<!\w)(?:'+pattern+r')(?!\w)',text,re.I))
+        required=[name for name,pattern in technologies.items() if present(pattern,clause)]
+        confirmed={s.strip().casefold() for s in skills.split(',')}
+        supported=[name for name in required if name.casefold() in confirmed or present(technologies[name],skills)]
+        alternative=bool(re.search(r'\bor\b|\bone of\b',clause,re.I)) and not re.search(r'\band\b',clause,re.I)
+        missing=not supported if alternative else len(supported)<len(required)
+        if required and missing:
+            raise Blocked('technical_requirement_review','The posting explicitly requires '+', '.join(required)+'. Confirm supporting skills or review the prerequisite before applying.')
 
 
 def employment_kind(job):
@@ -190,24 +246,26 @@ def employment_kind(job):
     return 'new-grad'
 
 
-def listing_scope(job,s):
+def listing_scope(job,s,*,metadata=False):
     title=job.get("title",""); desc=job.get("description","")
     text=title+"\n"+desc
     clean=re.sub(r"member of technical staff|technical staff", "",title,flags=re.I)
     if SENIOR.search(clean): raise Blocked("seniority_mismatch")
-    role_patterns={'software':r'software|\bswe\b|\b(?:front[- ]?end|back[- ]?end|full[- ]?stack|platform) (?:software )?(?:engineer|developer)',
-                   'machine learning':r'machine learning|\bml (?:engineer|research|intern)\b'}
-    if not any(re.search(role_patterns.get(r.casefold(),re.escape(r)),title,re.I) for r in s["roles"]): raise Blocked("role_mismatch")
     kind=employment_kind(job);internship=kind=='internship'
-    summer=bool(re.search(r"\bsummer\s*2027\b|\b2027\s*summer\b",text,re.I))
+    summer=_summer_2027(job)
+    if metadata and not re.search(r'\b(winter|spring|summer|fall|autumn)\b',title,re.I):
+        summer=summer or any(re.search(r'\bsummer\s*2027\b|\b2027\s*summer\b',str(term),re.I) for term in job.get('terms',[]))
     accepted=kind in s['seniority'] or internship and summer and 'summer-internship' in s['seniority']
     if not accepted:
         raise Blocked({'internship':'internship_out_of_scope','part-time':'parttime_out_of_scope','new-grad':'fulltime_out_of_scope'}[kind])
+    if not _role_matches(job,s['roles'],metadata=metadata):raise Blocked('role_mismatch')
     return kind,summer
 
 
 def eligible(job,s,facts):
+    from .posting_inspection import needs_details
     kind,summer=listing_scope(job,s);internship=kind=='internship'
+    if needs_details(job):raise Blocked('posting_details_required','Read the employer posting before evaluating eligibility and relevance')
     title=job.get("title",""); desc=job.get("description",""); location=job.get("location","")
     text=title+"\n"+desc
     _check_doctoral_degree(title,desc,facts)
@@ -262,6 +320,7 @@ def eligible(job,s,facts):
     norm=company_normalizer(s['company_aliases'])
     if norm(job["company"]) in {norm(x) for x in s["skip_companies"]+s["interview_companies"]}:
         raise Blocked("company_blocked")
+    _check_required_technologies(desc,facts)
     score,evidence=fit_score(job,facts)
     if score<s["min_fit_score"]: raise Blocked("low_fit")
     return score,evidence

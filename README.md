@@ -148,7 +148,7 @@ Use **Past applications from email** to scan an employer or build a broader hist
 - **Answers & evidence** joins an attempt's posting identity, exact document references, submission outcome, reviewed recruiting feedback and next action. Export its private JSON record or download the original recorded PDFs. New attempts capture posting identity; older records clearly label unavailable historical context.
 - **Recruiting Insights** in Applications compares reviewed responses by company, exact role title, source and resume PDF. Choose a response window and inspect the attempts behind each metric. Recent or uncertain submissions do not enter mature-response denominators; missing feedback is not a rejection.
 
-The configured release-candidate version is **0.5.0rc15**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). This candidate adds adaptive multi-step applications with live NVIDIA Workday receipt evidence; see the [candidate notes](docs/reliability-rc15.md) and [release status](docs/public-release.md) for tested scope and remaining limits. Each applicant runs a private local instance.
+The configured release-candidate version is **0.5.0rc16**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). This candidate prioritizes verified, relevant completions, preserves missing-information holds across unrelated edits and emphasizes human next actions in reports; see the [candidate notes](docs/reliability-rc16.md) and [release status](docs/public-release.md) for tested scope and remaining limits. Each applicant runs a private local instance.
 
 ## Guides and development
 

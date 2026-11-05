@@ -327,7 +327,7 @@ def test_short_employer_name_does_not_override_prior_work_history(store,job,prio
     store.put_facts({'worked_outside_resume':'No'});store.update_settings({'prior_employers':[prior]})
     with pytest.raises(Blocked):resolve(store,job['host']+'|veeamsoftware',field('Have you previously worked for Veeam?'),context={**job,'company':'Veeam Software'})
 
-def test_model_allowance_hold_waits_for_reset_or_approved_answer(store,job):
+def test_model_allowance_reset_does_not_release_missing_personal_answer(store,job):
     import time
     store.update_settings({'max_model_requests_per_day':1,'max_model_requests_per_cycle':1})
     store.reserve_model_request()
@@ -335,7 +335,7 @@ def test_model_allowance_hold_waits_for_reset_or_approved_answer(store,job):
     q=store.ask(job['id'],job['host'],f['label'],[],field=f,context=job)
     hold(store,job,'model_budget_exhausted',f['label'])
     assert not ready(store,job)
-    assert ready(store,job,at=time.time()+86400)
+    assert not ready(store,job,at=time.time()+86400)
     store.answer_question(q,'Owner approved value')
     assert ready(store,job)
     assert store.db.execute('SELECT count(*) FROM model_requests').fetchone()[0]==1

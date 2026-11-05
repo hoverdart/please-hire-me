@@ -143,7 +143,8 @@ def source_result(store,sid,jobs=None,error=None):
     # Full snapshots eliminate lossy global timestamp watermarks; partial failures keep existing jobs.
     if jobs is not None:
         from .policy import listing_scope
-        from .job_holds import hold,clear,safe_state,category,dependency
+        from .job_holds import hold,clear,safe_state,category,dependency,pending_write_jobs,UNCERTAIN_WRITE_REASONS
+        pending_writes=pending_write_jobs(store)
         scope_reasons={'seniority_mismatch','role_mismatch','internship_out_of_scope','fulltime_out_of_scope','parttime_out_of_scope'}
         pending=iter(jobs);done=False
         while not done:
@@ -159,9 +160,11 @@ def source_result(store,sid,jobs=None,error=None):
                     job=json.loads(store.db.execute('SELECT payload FROM jobs WHERE id=?',(key,)).fetchone()[0])
                     # Recorded outcomes and manual decisions remain authoritative.
                     if safe_state(store,key) and not store.db.execute('SELECT 1 FROM job_decisions WHERE job_id=?',(key,)).fetchone():
-                        try:listing_scope(job,settings)
+                        if key in pending_writes:continue
+                        try:listing_scope(job,settings,metadata=True)
                         except Blocked as exclusion:
                             previous=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(key,)).fetchone()
+                            if previous and previous['reason'] in UNCERTAIN_WRITE_REASONS:continue
                             saved=store.db.execute('SELECT status,reason FROM jobs WHERE id=?',(key,)).fetchone()
                             reason=exclusion.reason+(': '+exclusion.detail if exclusion.detail else '')
                             unchanged=(previous and previous['reason']==exclusion.reason
@@ -229,7 +232,7 @@ def sweep_lists(store,net=None):
             for j in data:
                 if not j.get("active") or not j.get("is_visible",True): continue
                 try: jobs.append(posting(j["url"],j["company_name"],j["title"],"; ".join(j.get("locations") or []),sid,
-                                        "Sponsorship: "+str(j.get("sponsorship") or ""),terms=j.get("terms") or []))
+                                        "",terms=j.get("terms") or [],sponsorship_metadata=str(j.get("sponsorship") or "")))
                 except (ValueError,KeyError,TypeError): continue
             source_result(store,sid,jobs)
         except Blocked as e:

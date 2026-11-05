@@ -14,7 +14,14 @@ REVISION = 'a' * 40
 
 
 @pytest.fixture
-def local_checks(monkeypatch):
+def healthy_storage(monkeypatch):
+    # Release evidence scenarios must not depend on the test machine's disk ratio.
+    monkeypatch.setattr('hireme.storage.capacity',lambda root:{'free_bytes':100*1024**3,'total_bytes':200*1024**3,
+        'ledger_bytes':(Path(root)/'ledger.sqlite3').stat().st_size if (Path(root)/'ledger.sqlite3').is_file() else 0,'critical':False,'low':False})
+
+
+@pytest.fixture
+def local_checks(monkeypatch,healthy_storage):
     monkeypatch.setattr(release_check, '_revision', lambda _: {'revision': REVISION, 'dirty': False, 'available': True})
     monkeypatch.setattr(release_check, '_scheduler', lambda _: {
         'installed_count': 0, 'matches_applicant': True, 'ready': True,
@@ -332,7 +339,7 @@ def test_scheduler_status_never_creates_a_missing_daemon_lock(store, monkeypatch
     assert inventory(store.root) == before
 
 
-def test_active_timer_and_sleeping_daemon_fail_readiness_without_changing_files(store, monkeypatch):
+def test_active_timer_and_sleeping_daemon_fail_readiness_without_changing_files(store, monkeypatch, healthy_storage):
     import threading
     from hireme import scheduler, worker
     store.update_settings({'live_enabled': False})

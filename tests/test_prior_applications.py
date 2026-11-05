@@ -775,7 +775,7 @@ def test_mail_failure_reports_attention_without_inventing_an_application_attempt
     report=store.db.execute('SELECT state,body FROM report_outbox ORDER BY created DESC LIMIT 1').fetchone()
     assert result['attempts']==0 and report['state']=='pending'
     assert 'Email-history checks need attention' in report['body']
-    assert 'Attempts: 0' in report['body'] and 'Optiver' not in report['body']
+    assert 'Browser sessions started: 0' in report['body'] and 'Optiver' not in report['body']
     assert not store.db.execute('SELECT 1 FROM applications').fetchone()
 
 

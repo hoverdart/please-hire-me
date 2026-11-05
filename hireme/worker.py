@@ -40,6 +40,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         store.prior_mail_check_limit=max_attempts
         store.db.execute("INSERT INTO runs(id,started,status,detail) VALUES(?,?,'running',?)",(rid,now(),json.dumps({'mode':'live' if live else 'prepare'})))
         try:
+            from .job_holds import upgrade_information_holds
+            upgrade_information_holds(store)
             from .workday_commission_state import bind_run
             bind_run(store,rid,job_ids=job_ids,live=live,discover=discover,limit=limit,
                      max_attempts=max_attempts,browser_factory=browser_factory)
@@ -62,7 +64,15 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             selected=tuple(job_ids or ())
             if selected:query+=' AND id IN ('+','.join('?' for _ in selected)+')'
             rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            from .application_quality import rescreen_scope
+            for reason,excluded in rescreen_scope(store,rows,s).items():reasons[reason]=reasons.get(reason,0)+excluded
+            from .posting_inspection import refresh_candidates,needs_details
+            # No browser/model work occurs inside the screening transactions.
+            refresh_candidates(store,rows,s,0 if limit==0 else max_attempts)
+            rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
             ranked=[]
+            from .application_quality import relevance
+            confirmed_history=store.history_entries()
             # Screening only makes local decisions. Small bounded transactions
             # group their related writes, avoiding several SD-card fsyncs per
             # excluded job. Browser/model work remains outside transactions.
@@ -78,12 +88,15 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                         except StopIteration:
                             screening_done=True;break
                         job=json.loads(row['payload'])
+                        if needs_details(job):continue
                         if ready(store,job,ashby_snapshot=ashby_snapshot):
                             try:
-                                score,evidence=eligible(job,s,store.facts())
                                 store._check_budget(job,s)
+                                score,evidence=eligible(job,s,store.facts())
+                                score,quality=relevance(job,score,evidence,confirmed_history)
                                 store.db.execute("UPDATE jobs SET score=?,reason='',status=CASE WHEN status='blocked' THEN 'discovered' ELSE status END WHERE id=?",(score,job['id']))
                                 ranked.append((score,job))
+                                job['_quality']=quality
                             except Blocked as e:
                                 store.block(job['id'],e.reason,e.detail);hold(store,job,e.reason,e.detail,'screening');reasons[e.reason]=reasons.get(e.reason,0)+1
                                 store.event('job_screening_blocked',job['id'],{'run_id':rid,'outcome':'blocked','reason':e.reason,'detail':e.detail})
@@ -92,9 +105,9 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             today=datetime.now(ZoneInfo(s['timezone'])).date()
             sent_today=sum(1 for r in store.db.execute("SELECT attempted FROM application_records WHERE state='confirmed'")
                           if r[0] and datetime.fromisoformat(r[0]).astimezone(ZoneInfo(s['timezone'])).date()==today)
-            # Seven normally; use spare slots when behind the daily trajectory. Never exceed ten.
-            expected=max(s['target_per_cycle'],(s['target_per_day']*datetime.now(ZoneInfo(s['timezone'])).hour)//24-sent_today)
-            target=min(s['max_per_cycle'],max(s['target_per_cycle'],expected),s['max_per_day']-sent_today)
+            # A target is a ceiling on verified completions, not a quota to
+            # catch up by consuming more marginal or blocked opportunities.
+            target=min(s['max_per_cycle'],s['target_per_cycle'],s['max_per_day']-sent_today)
             if limit is not None:target=min(target,limit)
             if ranked and target>0:
                 with worker_lock(store.root,'browser'):
@@ -133,8 +146,10 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 if browser is None:browser=browser_stack.enter_context(factory(store))
                                 attempts+=1
                                 attempt_started=True
-                                store.event('application_started',job['id'],{'run_id':rid,'attempt':attempts,'company':job['company'],'title':job['title']})
+                                store.event('application_started',job['id'],{'run_id':rid,'attempt':attempts,'company':job['company'],'title':job['title'],'quality':job.pop('_quality',{})})
                                 outcome=browser.apply(job,live=live)
+                                if live and outcome=='confirmed' and _recorded_outcome(store,job['id'],None)!='confirmed':
+                                    raise Blocked('confirmation_missing','The adapter returned success without a confirmed application record; review the employer result before retrying')
                                 clear(store,job['id'])
                                 outcomes[outcome]=outcomes.get(outcome,0)+1
                                 store.event('application_finished',job['id'],{'run_id':rid,'outcome':outcome})

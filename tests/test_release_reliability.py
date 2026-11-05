@@ -108,7 +108,7 @@ def test_missing_fact_does_not_escalate(store,job):
     m=Model()
     f={'label':'Do you consent to store your data?','type':'select','required':True,'options':['Yes','No'],'maxlength':-1}
     with pytest.raises(Blocked):resolve(store,job['host'],f,m,context=job)
-    assert m.calls==1
+    assert m.calls==0  # No compatible source exists; a model cannot supply consent.
 
 def test_unsupported_cli_stops_without_fallback(monkeypatch):
     monkeypatch.setattr('hireme.provider.shutil.which',lambda _:'/fixture/claude')

@@ -122,7 +122,7 @@ def test_military_status_uses_the_specific_veteran_fact(store, job):
     assert resolve(store, job['host'], field('What is your military status?*', options), context=job)['value'] == options[1]
 
 
-def test_rejected_drafts_are_reported_as_a_retryable_writing_outcome(store, job):
+def test_rejected_drafts_are_held_for_supporting_information(store, job):
     store.update_settings({'tailored_writing': True})
     store.put_template('project', 'I built a scheduling service in Python for a campus club and maintained it for a year.')
     class Model:
@@ -134,7 +134,7 @@ def test_rejected_drafts_are_reported_as_a_retryable_writing_outcome(store, job)
     with pytest.raises(Blocked, match='writing_unsupported'):
         resolve(store, job['host'], field('Tell us about a project you are proud of and its impact.', [], 'textarea'), Model(), context=job)
     from hireme.job_holds import category
-    assert category('writing_unsupported') == 'transient'
+    assert category('writing_unsupported') == 'information'
 
 
 def test_draft_gets_three_reviewed_attempts_before_reporting_the_last_reason():

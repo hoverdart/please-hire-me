@@ -134,16 +134,17 @@ def test_model_abstention_is_not_repeated_until_sources_change(store, job):
     f = field('How many prior internships have you had?', 'text')
     for _ in range(2):
         with pytest.raises(Blocked, match='missing_fact'): resolve(store, job['host'], f, Model(), job)
-    assert Model.calls == 2
+    assert Model.calls == 1  # No compatible fact-matching request is needed.
     store.put_facts({'skills': 'Python, TypeScript, SQL'})
     with pytest.raises(Blocked, match='missing_fact'): resolve(store, job['host'], f, Model(), job)
-    assert Model.calls == 4
+    assert Model.calls == 2
 
 
 def test_provider_failure_is_not_remembered_as_abstention(store, job):
     store.update_settings({'tailored_writing': True})
     class Model:
-        def match_field(self, *a): raise Blocked('provider_timeout')
+        def match_field(self, *a): return {'fact_key':None,'template_id':None}
+        def context_answer(self, *a): raise Blocked('provider_timeout')
     with pytest.raises(Blocked, match='provider_timeout'):
         resolve(store, job['host'], field('How many prior internships have you had?', 'text'), Model(), job)
     assert not store.db.execute('SELECT 1 FROM model_abstentions').fetchone()
@@ -236,7 +237,7 @@ def test_page_without_any_loaded_dropdown_is_a_retryable_load_failure(store, sit
 
 def test_fields_after_budget_exhaustion_wait_for_allowance(store, site, monkeypatch):
     from hireme.browser import Browser
-    store.put_facts({'github': 'https://github.com/test-person'})
+    store.put_facts({'github': 'https://github.com/test-person','school':'Confirmed University'})
     class Model:
         def __init__(self, *a): pass
         def match_field(self, *a, **k): raise Blocked('model_budget_exhausted')
@@ -244,7 +245,7 @@ def test_fields_after_budget_exhaustion_wait_for_allowance(store, site, monkeypa
     with Browser(store, test_url=site) as b:
         original = b._snapshot
         def injected():
-            extra = [('Where was your last internship?', 'text'), ('Why are you interested in this role?', 'textarea'),
+            extra = [('Where are you studying right now?', 'text'), ('Why are you interested in this role?', 'textarea'),
                      ('Name pronounciation', 'text')]
             return original() + [{'index': 90 + i, 'indices': [90 + i], 'label': label, 'type': kind, 'required': True,
                                   'options': [], 'maxlength': -1, 'value': ''} for i, (label, kind) in enumerate(extra)]
@@ -252,6 +253,6 @@ def test_fields_after_budget_exhaustion_wait_for_allowance(store, site, monkeypa
         with pytest.raises(Blocked, match='model_budget_exhausted'):
             b.apply(_job(store, site + '/apply'), live=False)
     reasons = dict(store.db.execute('SELECT label,reason FROM questions WHERE resolved=0').fetchall())
-    assert reasons == {'Where was your last internship?': 'model_budget_exhausted',
+    assert reasons == {'Where are you studying right now?': 'model_budget_exhausted',
                        'Why are you interested in this role?': 'model_budget_exhausted',
                        'Name pronounciation': 'missing_fact'}

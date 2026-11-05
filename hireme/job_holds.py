@@ -8,15 +8,21 @@ from .field_context import MAPPING_VERSION, ADAPTER_VERSION, CAPTCHA_DETECTION_V
 from .presentation import NOT_MATCH_REASONS, WAIT_REASONS, REASON_GUIDANCE
 from .util import digest, now, Blocked
 
-FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stale_answer','answer_too_long','numeric_answer_needed','phone_country_review','model_budget_exhausted','history_confirmation_required','history_changed'}
+FACT_REASONS = {'missing_answers','missing_fact','required_answer_missing','stale_answer','answer_too_long','numeric_answer_needed','phone_country_review','model_budget_exhausted','history_confirmation_required','history_changed','writing_unsupported'}
 MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_verification_failed','unsupported_form','invalid_option_metadata','invalid_binding_source','invalid_date_answer','invalid_fields','invalid_single_line_answer','numeric_answer_out_of_range','repeated_entry_review','unsupported_widget','ashby_draft_unsupported','ashby_submission_unsupported','workday_unapproved_operation','workday_package_incomplete','workday_submit_not_reserved'}
 DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed','writing_link_unverified'}
 ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','account_fields_unavailable','captcha_blocked','account_or_verification_blocked','account_automation_disabled','account_result_uncertain','account_creation_held','account_credentials_unavailable','company_verification_pending','account_blocked','account_required','company_uncertain','email_verification_required','captcha','email_verification_failed'}
 WORKDAY_ACCOUNT_REASONS = {'workday_session_unverified','workday_identity_mismatch','workday_acceptance_unverified','remote_draft_permission_required'}
-TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output','writing_unsupported'}
+TRANSIENT = {'posting_fetch_failed','posting_details_required','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
+UNCERTAIN_WRITE_REASONS={'browser_draft_uncertain','remote_draft_uncertain','ashby_draft_uncertain','ashby_draft_save_failed'}
 
-ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review'}
+
+def pending_write_jobs(store):
+    """Local exclusions must never hide an interrupted employer write."""
+    return {row[0] for row in store.db.execute("SELECT job_id FROM draft_operations WHERE state IN ('intent','unknown') UNION SELECT job_id FROM remote_draft_steps WHERE state IN ('intent','unknown') UNION SELECT job_id FROM workday_drafts WHERE state='unknown'")}
+
+ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review','technical_requirement_review'}
 LEGACY_MAIL_FAILURES={'gmail_reconnect_required','gmail_not_connected','gmail_account_mismatch','gmail_owner_missing','worker_busy'}
 
 
@@ -51,6 +57,7 @@ ELIGIBILITY_INPUTS = {
     'compensation_mismatch': (set(),{'min_annual_usd','min_hourly_usd'}),
     'company_blocked': (set(),{'skip_companies','interview_companies','company_aliases'}),
     'low_fit': ({'skills'},{'min_fit_score'}),
+    'technical_requirement_review': ({'skills'},set()),
     'expired_posting': (set(),set()),
 }
 
@@ -73,7 +80,51 @@ def category(reason):
     if reason in WAIT_REASONS|{'company_uncertain','company_verification_pending','company_submission_rejected'}:return 'limits'
     return 'review'
 
-def dependency(store, job, kind, reason=None):
+
+def information_dependency(store,job,reason,fields=None):
+    """Only a source that can address these questions releases their hold."""
+    from .answers import _compatible_field, AUTOMATIC_ANSWER_VERSION, WRITING_SOURCE_VERSION, STUDENT_QUESTION
+    from .config import FACTS
+    saved_posting=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
+    job=json.loads(saved_posting[0]) if saved_posting else job
+    facts=store.facts();keys=set();labels=[];questions=[];uses_context=False;uses_history=False;uses_writing=reason=='writing_unsupported'
+    if fields is None:
+        held=store.db.execute('SELECT evidence FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+        fields=json.loads(held[0]).get('information_fields') if held else None
+    if fields is None:fields=[dict(row) for row in store.db.execute('SELECT * FROM questions WHERE job_id=? AND resolved=0 ORDER BY id',(job['id'],))]
+    for row in fields:
+        labels.append(row['label'])
+        saved=store.db.execute('SELECT context FROM question_contexts WHERE id=?',(row['id'],)).fetchone()
+        metadata=json.loads(saved[0]) if saved else {}
+        field={'label':row['label'],'type':metadata.get('widget','text'),'options':json.loads(row['options']),
+               'section':metadata.get('section','')}
+        candidates={key for key in FACTS if _compatible_field(key,field,job)}
+        keys.update(candidates)
+        if STUDENT_QUESTION.fullmatch(row['label'].strip()):keys.update({'school','college_start','graduation','degree'})
+        uses_context|=not candidates or row['reason']=='writing_unsupported'
+        uses_writing|=row['reason']=='writing_unsupported'
+        uses_history|=field['section'] in {'education','employment'} or row['reason'] in {'history_confirmation_required','history_changed'}
+        questions.append((row['id'],row['reason']))
+    scopes=sorted({job['host'],job['host']+'|'+store.company(job['company']),job.get('answer_scope',job['host'])})
+    answers=[tuple(row) for row in store.db.execute('SELECT id,question,revision FROM answers WHERE host IN ('
+        +','.join('?' for _ in scopes)+') ORDER BY id',scopes) if row['question'] in labels]
+    data={'version':1,'automatic_answers':AUTOMATIC_ANSWER_VERSION,
+          'questions':questions,'facts':{key:facts[key]['value'] for key in sorted(keys) if key in facts},'answers':answers,
+          'provider':{key:store.settings()[key] for key in ('provider','provider_model','model_effort','model_escalation')},
+          'posting':job.get('_listing_hash') or digest({key:job.get(key) for key in ('title','description','location')}),'adapter':ADAPTER_VERSION,'mapping':MAPPING_VERSION}
+    if uses_context or not questions:
+        if not questions:data['facts']={key:fact['value'] for key,fact in facts.items()}
+        data['templates']=[tuple(row) for row in store.db.execute('SELECT id,revision FROM templates ORDER BY id')]
+        data['materials']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
+        data['documents']=[tuple(row) for row in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')]
+        data['writing_enabled']=store.settings()['tailored_writing']
+    if uses_history or reason in {'history_confirmation_required','history_changed'}:
+        data['history']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed FROM confirmed_history ORDER BY id')]
+    if uses_writing:data['writing_sources']=WRITING_SOURCE_VERSION
+    return digest(data)
+
+def dependency(store, job, kind, reason=None, *, legacy_information=False, information_fields=None):
+    if kind=='information' and not legacy_information:return information_dependency(store,job,reason,information_fields)
     if kind=='mail':
         from .prior_applications import matches
         return digest([(row['id'],row['revision'],row['state'],row['match_reason']) for row in matches(store,job)])
@@ -176,6 +227,26 @@ def dependency(store, job, kind, reason=None):
         if row:data['supplied_credentials_revision']=row['seq']
     return digest(data)
 
+
+def upgrade_information_holds(store):
+    """Narrow unchanged legacy holds without reopening their known blockers.
+
+    A changed legacy fingerprint still gets its ordinary revalidation. This
+    never clears a hold, authorizes a write, or changes an application outcome.
+    """
+    for row in list(store.db.execute("SELECT * FROM job_holds WHERE category='information'")):
+        evidence=json.loads(row['evidence'])
+        if evidence.get('dependency_version')==1:continue
+        saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(row['job_id'],)).fetchone()
+        if not saved:continue
+        job=json.loads(saved[0])
+        if row['dependency']!=dependency(store,job,'information',row['reason'],legacy_information=True):continue
+        evidence['dependency_version']=1
+        evidence['information_fields']=[dict(q) for q in store.db.execute('SELECT * FROM questions WHERE job_id=? AND resolved=0 ORDER BY id',(job['id'],))]
+        store.db.execute('UPDATE job_holds SET dependency=?,evidence=? WHERE job_id=?',
+            (dependency(store,job,'information',row['reason'],information_fields=evidence['information_fields']),json.dumps(evidence),row['job_id']))
+        store.event('information_hold_upgraded',row['job_id'],{'reason':row['reason']})
+
 def safe_state(store, job_id):
     # Retained history is just as authoritative as the current application
     # slot: a changed adapter cannot reopen an earlier uncertain submission.
@@ -200,7 +271,13 @@ def ready(store, job, at=None, ashby_snapshot=None):
     # that reached Ashby without a trustworthy acknowledgement.
     if row['reason']=='ashby_draft_save_failed':return False
     if mail_screening_hold(row):return True
-    if row['reason']=='model_budget_exhausted' and model_available(store,at):return True
+    if row['reason']=='model_budget_exhausted':
+        # A fresh allowance cannot answer missing personal facts from an
+        # earlier field on the same form. Preserve those intervention holds.
+        fields=json.loads(row['evidence']).get('information_fields')
+        manual=(any(field['reason']!='model_budget_exhausted' for field in fields) if fields is not None else
+                store.db.execute("SELECT 1 FROM questions WHERE job_id=? AND resolved=0 AND reason!='model_budget_exhausted' LIMIT 1",(job['id'],)).fetchone())
+        return (row['dependency']!=dependency(store,job,'information',row['reason']) if manual else model_available(store,at))
     if row['category']=='limits':return True # Existing policy checks the current day/company limits.
     if row['category']=='transient':
         # A repaired adapter/mapping or a changed posting starts a new bounded
@@ -255,7 +332,8 @@ def hold(store, job, reason, detail='', stage='application', at=None):
     fields=[dict(row) for row in store.db.execute('SELECT label,reason,options FROM questions WHERE job_id=? AND resolved=0',(job['id'],))]
     if reason=='missing_answers' and any(f['reason'] in MAPPING_REASONS for f in fields):kind='mapping'
     previous=store.db.execute('SELECT retry_count,dependency FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
-    fingerprint=dependency(store,job,kind,reason)
+    information_fields=[dict(row) for row in store.db.execute('SELECT * FROM questions WHERE job_id=? AND resolved=0 ORDER BY id',(job['id'],))] if kind=='information' else None
+    fingerprint=dependency(store,job,kind,reason,information_fields=information_fields)
     retries=previous['retry_count']+1 if previous and previous['dependency']==fingerprint else 0
     retry_at=(at or time.time())+(1800 if retries==0 else 7200) if kind=='transient' and retries<2 else None
     guidance={'eligibility':'Change relevant preferences or wait for a posting update.',
@@ -277,6 +355,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
         'fields':[{**f,'options':json.loads(f['options'])} for f in fields],
         'sources':[{'fact_key':k,'revision':v['revision']} for k,v in store.facts().items()] if kind in {'information','mapping'} else [],
         'next_action':guidance[kind]}
+    if kind=='information':evidence.update(dependency_version=1,information_fields=information_fields)
     store.db.execute('INSERT OR REPLACE INTO job_holds VALUES(?,?,?,?,?,?,?,?)',
         (job['id'],kind,reason,fingerprint,retries,retry_at,json.dumps(evidence),now()))
     store.event('job_held',job['id'],{'reason':reason,**evidence})

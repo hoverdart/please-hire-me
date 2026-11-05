@@ -542,7 +542,7 @@ def test_setup_failure_still_delivers_an_actionable_report_without_browser_activ
     assert store.db.execute('SELECT state FROM report_outbox').fetchone()[0] == 'sent'
     message, = network.mailbox.messages_sent
     body = message.get_body(preferencelist=('plain',)).get_content()
-    assert 'Status: blocked' in body and 'Attempts: 0' in body and 'setup_incomplete' in body
+    assert 'Status: blocked' in body and 'Browser sessions started: 0' in body and 'setup_incomplete' in body
 
 
 def test_preparation_blocks_native_greenhouse_email_validation_on_blur_without_blocking_posting_reads(store,monkeypatch):
@@ -713,7 +713,7 @@ def test_crash_after_native_acceptance_recovers_unknown_and_reports_once_without
         reopened.close()
     message, = network.mailbox.messages_sent
     body = message.get_body(preferencelist=('plain',)).get_content()
-    assert 'Confirmed submissions: 0' in body and 'Attempts: 1' in body
+    assert 'Confirmed submissions: 0' in body and 'Browser sessions started: 1' in body
     assert 'Submission outcome is uncertain.' in body and posting.url in body
     assert posting.requests == before and not network.unexpected
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='submit_intent'").fetchone()[0] == 1
@@ -803,7 +803,7 @@ def test_ten_job_email_regression_reuses_confirmed_facts_and_keeps_real_manual_b
         'SELECT reason FROM jobs WHERE id=?', (postings[1].job['id'],)).fetchone())
     message, = network.mailbox.messages_sent
     body = message.get_body(preferencelist=('plain',)).get_content()
-    assert 'Confirmed submissions: 3' in body and 'Attempts: 10' in body
+    assert 'Confirmed submissions: 3' in body and 'Browser sessions started: 10' in body
     assert all(body.count(p.url) == 1 for p in postings)
     assert '  • Privacy — A personal answer is missing' in body
     assert 'University of Waterloo student?' not in body and 'Have you served in the military?' not in body

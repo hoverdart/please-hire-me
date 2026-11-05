@@ -1202,6 +1202,9 @@ def resolve(store, host, field, provider=None, context=None):
         cat=category(label) if field.get('type') in ('text','textarea') and not options else None
         is_writing=not options and field.get('type') in ('text','textarea') and (cat or re.search(r'example|describe|tell us|why|what.*(?:interests|excites)|share.*(?:work|project)',label,re.I))
         if is_writing and not key and provider and store.settings()['tailored_writing']:
+            writing_abstention=_abstention_key(store,'draft_answer_rejected',context)
+            if _abstained(store,writing_abstention):
+                raise Blocked('writing_unsupported','The same approved sources already failed review for this question; add supporting context or approve an exact answer')
             if writing_context_hash(store,context)!=source_hash:raise Blocked('stale_writing_context','Confirmed facts or approved sources changed before generation')
             from .config import FACTS
             context['confirmed_facts']={k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()}
@@ -1221,6 +1224,7 @@ def resolve(store, host, field, provider=None, context=None):
             if draft_rejection:
                 # A rejected review must not be bypassed by the older generic
                 # template/quotation fallback, which was not reviewed for this question.
+                _abstain(store,writing_abstention,'draft_answer_rejected',label)
                 raise Blocked('writing_unsupported',draft_rejection)
         if not template and cat:
             choices=[t for t in store.templates() if t['category']==cat]
@@ -1248,10 +1252,14 @@ def resolve(store, host, field, provider=None, context=None):
         match_abstention=_abstention_key(store,'match_field',context) if not key and not template and not derived and provider and field.get('required') else None
         if match_abstention and not _abstained(store,match_abstention):
             from .config import FACTS
-            facts={k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items() if k not in {'worked_outside_resume','contacts_outside_resume'}}
+            facts={k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()
+                   if k not in {'worked_outside_resume','contacts_outside_resume'} and _compatible_field(k,field,context)}
             if not re.search(r'summer\s*2027',context.get('title',''),re.I):facts.pop('summer_2027_relocate',None)
-            matched=provider.match_field(field,facts,store.templates(),context)
-            candidate_keys={k for k in facts if _compatible_field(k,field,context)}
+            templates=store.templates() if is_writing else []
+            # The executor would reject every supplied source in this case.
+            # Asking a model cannot create the missing fact or declaration.
+            matched=provider.match_field(field,facts,templates,context) if facts or templates else {}
+            candidate_keys=set(facts)
             proposed=matched.get('fact_key')
             rejected=not proposed or proposed not in candidate_keys or bool(matched.get('template_id'))
             if (rejected and candidate_keys and not is_writing and store.settings()['model_escalation']
@@ -1268,7 +1276,7 @@ def resolve(store, host, field, provider=None, context=None):
                     template=next((t for t in store.templates() if t['id']==tid),None)
                     if template and (not is_writing or category(label) not in (None, template['category'])):template=None
                     if template:pending_binding={'template_id':tid}
-            if not pending_binding:_abstain(store,match_abstention,'match_field',label)
+            if not pending_binding and (facts or templates):_abstain(store,match_abstention,'match_field',label)
         if template and (_foreign_targets(store,template,context) or not _fits_writing_limits(template['body'],field,context)):template=None
         if not template and not key and not derived and provider and is_writing:
             choices=_approved_sentences(store,context)

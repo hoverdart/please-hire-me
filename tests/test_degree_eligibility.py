@@ -57,7 +57,7 @@ def test_explicit_mandatory_doctoral_requirement_is_enforced_without_title_keywo
 ])
 def test_preferences_degree_alternatives_and_colleague_descriptions_do_not_create_doctoral_gate(store, job, title, description):
     store.put_facts({'degree': 'BS'})
-    assert eligible({**job, 'title': title, 'description': description}, store.settings(), store.facts())[0] > 0
+    assert eligible({**job, 'title': title, 'description': job['description']+'\n'+description}, store.settings(), store.facts())[0] > 0
 
 
 def test_ordinary_software_internship_does_not_require_a_degree_fact(store, job):
@@ -112,7 +112,7 @@ def test_confirmed_doctoral_degree_does_not_invent_current_year_of_study(store,j
 ])
 def test_student_wording_does_not_turn_team_prose_preferences_or_bachelor_alternatives_into_a_gate(store,job,description):
     store.put_facts({'degree':'BS'})
-    assert eligible({**job,'description':description},store.settings(),store.facts())[0]>0
+    assert eligible({**job,'description':job['description']+'\n'+description},store.settings(),store.facts())[0]>0
 
 
 def test_graduate_alternative_does_not_invent_a_confirmed_masters_students_year(store,job):
@@ -143,13 +143,13 @@ def test_graduate_alternative_does_not_invent_a_confirmed_masters_students_year(
 def test_required_graduate_study_excludes_confirmed_undergraduate_degree(store, job, title, description):
     store.put_facts({'degree':'B.S.','school':'University of California, Berkeley'})
     with pytest.raises(Blocked,match='degree_mismatch'):
-        eligible({**job,'title':title,'description':description},store.settings(),store.facts())
+        eligible({**job,'title':title,'description':job['description']+'\n'+description},store.settings(),store.facts())
 
 
 @pytest.mark.parametrize('degree',['MS','M.S.','Master of Science',"Master's degree",'PhD','Ph.D.'])
 def test_graduate_alternative_accepts_confirmed_masters_or_doctoral_study(store,job,degree):
     store.put_facts({'degree':degree})
-    assert eligible({**job,'description':'Pursuing PhD or MS in Computer Science or related.'},store.settings(),store.facts())[0]>0
+    assert eligible({**job,'description':job['description']+'\nPursuing PhD or MS in Computer Science or related.'},store.settings(),store.facts())[0]>0
 
 
 @pytest.mark.parametrize('degree',[None,'Engineering student','Professional degree'])
@@ -181,8 +181,9 @@ def test_graduate_requirement_does_not_infer_current_study_from_school_or_comple
     ('Software Engineer Intern Summer 2027','You must have MS SQL experience. Build Python software.'),
 ])
 def test_bachelor_alternatives_preferences_and_team_prose_do_not_create_graduate_gate(store,job,title,description):
-    store.put_facts({'degree':'BS'})
-    assert eligible({**job,'title':title,'description':description},store.settings(),store.facts())[0]>0
+    # Satisfy relevance and the explicit SQL prerequisite while testing degree wording.
+    store.put_facts({'degree':'BS','skills':'Python, TypeScript, SQL'})
+    assert eligible({**job,'title':title,'description':job['description']+'\n'+description},store.settings(),store.facts())[0]>0
 
 
 @pytest.mark.parametrize('changes',[

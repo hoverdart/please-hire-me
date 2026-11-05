@@ -1384,7 +1384,7 @@ class Browser:
         # Screening must inspect the posting, not questions in its application.
         # For example HP IQ asks about graduating before September; that is a
         # question to answer, not evidence of a mandatory eligibility cutoff.
-        posting_text=adapter.posting_text(text,verified_posting)
+        posting_text=adapter.posting_text(text,verified_posting,page=self.page)
         # Portal host registration is not proof of a session; inspect the current page too.
         from .workday import TENANTS
         if job['host'] in PORTAL_HOSTS and job['host'] not in TENANTS and job['host'] not in self.store.settings()['signed_in_portals'] and not self.store.settings()['employer_accounts'] and job['host'] not in {'www.deshaw.com','explore.jobs.netflix.net','career.mlp.com','jobs.uber.com','www.rentec.com'}:

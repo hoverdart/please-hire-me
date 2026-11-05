@@ -1064,6 +1064,7 @@ def test_without_gmail_connection_verification_is_held_and_not_retried(store,ats
 
 @pytest.mark.parametrize('reason',['model_budget_exhausted','provider_rate_limited','cycle_timeout'])
 def test_model_budget_and_rate_limit_stop_before_employer_write(store,ats,monkeypatch,reason):
+    store.put_facts({'school':'Confirmed University'})
     class Model:
         calls=0
         def __init__(self,*args):pass
@@ -1072,7 +1073,7 @@ def test_model_budget_and_rate_limit_stop_before_employer_write(store,ats,monkey
     with Browser(store,test_url=ats[0]) as browser:
         original=browser._snapshot
         def injected():
-            fields=original();fields.append({'index':99,'indices':[99],'label':'Unknown personal fact','type':'text','required':True,'options':[],'maxlength':-1,'value':''})
+            fields=original();fields.append({'index':99,'indices':[99],'label':'Where are you studying right now?','type':'text','required':True,'options':[],'maxlength':-1,'value':''})
             if reason=='model_budget_exhausted':fields.append({**fields[-1],'label':'Another unanswered fact','index':100,'indices':[100]})
             return fields
         browser._snapshot=injected
