@@ -66,7 +66,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
             from .posting_inspection import refresh_candidates,needs_details
             # No browser/model work occurs inside the screening transactions.
-            posting_reads=refresh_candidates(store,rows,s,max_attempts)
+            refresh_candidates(store,rows,s,0 if limit==0 else max_attempts)
             rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
             ranked=[]
             from .application_quality import relevance

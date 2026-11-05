@@ -102,3 +102,12 @@ def test_failed_details_read_is_not_an_application_or_model_attempt(store,job,mo
     assert result['attempts']==0 and result['confirmed']==0
     assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
     assert not ready(store,job)
+
+
+def test_zero_attempt_screening_does_not_open_a_detail_browser(store,job,monkeypatch):
+    store.upsert_job({**job,'description':''})
+    def forbidden(*args):pytest.fail('A zero-attempt local screening requested an employer read')
+    monkeypatch.setattr('hireme.posting_inspection.inspect',forbidden)
+    result=cycle(store,Path.cwd(),discover=False,live=False,limit=0)
+    assert result['attempts']==0
+    assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
