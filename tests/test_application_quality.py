@@ -58,6 +58,8 @@ def test_explicit_non_summer_title_wins_over_summer_program_body(store,job,title
     ('You must have experience with Python and Rust.',True),
     ('You must have experience with Python or Rust.',False),
     ('You must have experience with Python.',False),
+    ('You must know Go.',True),
+    ('You must have the ability to learn Rust.',False),
     ('Rust experience is preferred.',False),
     ('Rust is not required.',False),
     ('You must have initiative to go beyond expectations.',False),
@@ -66,7 +68,7 @@ def test_explicit_technical_prerequisites_need_confirmed_support(store,job,requi
     candidate={**job,'description':job['description']+'\n'+requirement}
     if blocked:
         with pytest.raises(Blocked,match='technical_requirement_review'):eligible(candidate,store.settings(),store.facts())
-        store.put_facts({'skills':'Python, TypeScript, Rust'})
+        store.put_facts({'skills':'Python, TypeScript, Rust, Go'})
     eligible(candidate,store.settings(),store.facts())
 
 

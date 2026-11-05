@@ -205,11 +205,12 @@ def _summer_2027(job):
 def _check_required_technologies(description,facts):
     """Hold explicit prerequisites lacking evidence; silence never means no skill."""
     technologies={'Python':r'python','TypeScript':r'typescript','JavaScript':r'javascript',
-                  'Rust':r'rust','Go':r'golang|(?-i:Go)(?=\s*(?:[,/)]|and\b|or\b|programming\b|language\b|$))','Java':r'java','C++':r'c\+\+','C#':r'c#',
+                  'Rust':r'rust','Go':r'golang|(?-i:Go)(?=\s*(?:[.,/)]|and\b|or\b|programming\b|language\b|$))','Java':r'java','C++':r'c\+\+','C#':r'c#',
                   'SQL':r'sql','Kubernetes':r'kubernetes','React':r'react','PyTorch':r'pytorch','TensorFlow':r'tensorflow'}
     skills=facts.get('skills',{}).get('value','')
     for clause in re.split(r'[;\n]|\.\s+',re.sub(r'<[^>]+>','\n',description)):
         if not re.search(r'\bmust (?:have|possess|know|be proficient|be experienced)|\brequires? (?:proficiency|experience|knowledge)|\b(?:proficiency|experience|knowledge)\b.{0,120}\b(?:is )?required\b',clause,re.I):continue
+        if not re.search(r'\b(?:experience|proficiency|knowledge|fluency|skills?|expertise|know|proficient|experienced|familiarity)\b',clause,re.I):continue
         if re.search(r'\b(?:not required|no .{0,40}required|preferred|optional)\b',clause,re.I):continue
         present=lambda pattern,text:bool(re.search(r'(?<!\w)(?:'+pattern+r')(?!\w)',text,re.I))
         required=[name for name,pattern in technologies.items() if present(pattern,clause)]
@@ -269,7 +270,6 @@ def eligible(job,s,facts):
     text=title+"\n"+desc
     _check_doctoral_degree(title,desc,facts)
     _check_graduate_degree(title,desc,facts)
-    _check_required_technologies(desc,facts)
     seasonal=facts.get("summer_2027_relocate",{}).get("value")=="Yes"
     locations=(s["summer_2027_locations"] if summer else s["school_locations"]) if seasonal else s["locations"]
     patterns=[LOCATIONS.get(l,re.escape(l)) for l in locations]
@@ -320,6 +320,7 @@ def eligible(job,s,facts):
     norm=company_normalizer(s['company_aliases'])
     if norm(job["company"]) in {norm(x) for x in s["skip_companies"]+s["interview_companies"]}:
         raise Blocked("company_blocked")
+    _check_required_technologies(desc,facts)
     score,evidence=fit_score(job,facts)
     if score<s["min_fit_score"]: raise Blocked("low_fit")
     return score,evidence
