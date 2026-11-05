@@ -60,7 +60,7 @@ def test_structured_posting_constraints_release_eligibility_hold(store,job,chang
 
 def test_posting_change_releases_but_uncertainty_still_excludes(store,job,package):
     hold(store,job,'graduation_mismatch')
-    store.upsert_job({**job,'description':'Updated graduation requirement'})
+    store.upsert_job({**job,'description':job['description']+' Updated graduation requirement'})
     assert ready(store,job)
     aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
     store.put_facts({'graduation':'2029-05'})

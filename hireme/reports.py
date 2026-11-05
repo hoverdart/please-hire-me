@@ -7,7 +7,7 @@ import uuid
 
 from .gmail import GmailClient, owner_email
 from .store import worker_lock
-from .util import now
+from .util import now, digest
 
 
 FOOTER = ('\n\nQuestions that keep coming up can be answered once for every employer: Your facts → Add context in your own words.\n'
@@ -46,6 +46,37 @@ def _questions(store, job_id):
     return list(lines.values())
 
 
+def _receipt(store,job_id,started):
+    row=store.db.execute("SELECT * FROM application_records WHERE job_id=? AND state='confirmed' AND updated>=? ORDER BY updated DESC LIMIT 1",(job_id,started)).fetchone()
+    if not row:return ''
+    package=json.loads(row['package'])
+    resumes=sorted({doc['hash'] for doc in package.get('documents',[]) if doc.get('hash') and
+                    (doc.get('kind')=='resume' or re.search(r'resume|cv',doc.get('field',{}).get('label',''),re.I))})
+    return (f"\n  Application record: {row['id']}\n  Confirmed at: {row['updated']}"
+            + ''.join('\n  Resume SHA-256: '+checksum for checksum in resumes)
+            + '\n  Next action: wait for employer follow-up; do not apply again.')
+
+
+def _recruiting_next_steps(store,email):
+    """Reviewed messages only; suggestions cannot manufacture a recruiting stage."""
+    owner=digest(email)
+    rows=list(store.db.execute('''SELECT stage.category,stage.received,j.company,j.title,j.url FROM (
+        SELECT application_id,category,received,ROW_NUMBER() OVER (PARTITION BY application_id
+            ORDER BY (category='acknowledgement'),received DESC,id DESC) AS position
+        FROM recruiting_feedback WHERE owner_hash=? AND state='confirmed' AND application_id IS NOT NULL
+    ) stage JOIN application_records a ON a.id=stage.application_id JOIN jobs j ON j.id=a.job_id
+    WHERE stage.position=1 AND stage.category IN ('assessment','interview') ORDER BY stage.received DESC LIMIT 50''',(owner,)))
+    pending=store.db.execute("SELECT count(*) FROM recruiting_feedback WHERE owner_hash=? AND state='pending'",(owner,)).fetchone()[0]
+    sections=[]
+    for category,heading,action in [('assessment','Assessments — check status and complete required work','Review the employer assessment and its deadline.'),
+                                   ('interview','Interviews — prepare or update status','Review the invitation, confirm scheduling and prepare.')]:
+        entries=[row for row in rows if row['category']==category]
+        if entries:sections.append(heading+'\n\n'+'\n\n'.join(
+            f"{row['company']} — {row['title']}\nReviewed employer update: {row['received']}\nNext action: {action}\n{row['url']}" for row in entries))
+    if pending:sections.append(f'Employer messages awaiting your review: {pending}. Review and link them before treating a suggested assessment or interview as confirmed.')
+    return sections
+
+
 def queue_report(store, run_id):
     run = store.db.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
     if not run or not run['finished']:
@@ -53,7 +84,7 @@ def queue_report(store, run_id):
     email = owner_email(store)
     from .presentation import REASON_GUIDANCE, WAIT_REASONS
     waiting = 'Waiting for a company or daily limit — no action needed'
-    groups = {'Applied successfully': [], 'Blocked — review or apply manually': [], 'Other outcomes — review before retrying': [],
+    groups = {'Applied successfully — employer-confirmed': [], 'Blocked — review or apply manually': [], 'Other outcomes — review before retrying': [],
               waiting: [], 'Waiting for the model allowance — retried automatically': []}
     terminal={}
     for e in store.db.execute("SELECT subject,detail FROM events WHERE kind='application_finished' AND timestamp>=? ORDER BY seq", (run['started'],)):
@@ -64,9 +95,12 @@ def queue_report(store, run_id):
     for job_id,detail in terminal.items():
         job = store.db.execute('SELECT company,title,url FROM jobs WHERE id=?', (job_id,)).fetchone()
         if job:
-            group = ('Applied successfully' if detail['outcome'] == 'confirmed' else
+            manual_questions=store.db.execute("SELECT 1 FROM questions WHERE job_id=? AND resolved=0 AND reason!='model_budget_exhausted' LIMIT 1",(job_id,)).fetchone()
+            receipt=_receipt(store,job_id,run['started']) if detail['outcome']=='confirmed' else ''
+            group = ('Applied successfully — employer-confirmed' if detail['outcome'] == 'confirmed' and receipt else
+                     'Other outcomes — review before retrying' if detail['outcome']=='confirmed' else
                      waiting if detail.get('reason') in WAIT_REASONS else
-                     'Waiting for the model allowance — retried automatically' if detail.get('reason') == 'model_budget_exhausted' else
+                     'Waiting for the model allowance — retried automatically' if detail.get('reason') == 'model_budget_exhausted' and not manual_questions else
                      'Blocked — review or apply manually' if detail['outcome'] == 'blocked' else
                      'Other outcomes — review before retrying')
             questions = _questions(store, job_id)
@@ -81,13 +115,19 @@ def queue_report(store, run_id):
                                  + ('\n'+uncertainty if uncertainty else '')
                                  + (''.join('\n  • ' + line for line in questions) if questions
                                     else f"\n{_short(detail['detail'], 300)}" if detail.get('detail') else '')
+                                 + receipt
                                  + f"\n{job['url']}")
     outcomes = [heading + '\n\n' + '\n\n'.join(items) for heading, items in groups.items() if items]
     detail = json.loads(run['detail']) if run['detail'].startswith('{') else {'reason': run['detail']}
-    body = (f"Application batch {run_id}\nStarted: {run['started']}\nFinished: {run['finished']}\n"
+    human=len(groups['Blocked — review or apply manually'])
+    unconfirmed=len(groups['Other outcomes — review before retrying'])
+    recruiting=_recruiting_next_steps(store,email)
+    body = (f"Confirmed submissions: {run['submitted']}\nHuman interventions: {human}\nUnconfirmed results to verify: {unconfirmed}\n\n"
+            + ('\n\n'.join(recruiting)+'\n\n' if recruiting else '')
+            + f"Application batch {run_id}\nStarted: {run['started']}\nFinished: {run['finished']}\n"
             f"Status: {run['status']}\nMode: {detail.get('mode', 'live')}\n"
-            f"Confirmed submissions: {run['submitted']}\nAttempts: {detail.get('attempts', 0)}\n\n"
             + ('\n\n'.join(outcomes) or 'No application outcomes recorded.'))
+    body+=f"\n\nDiagnostics\nBrowser sessions started: {detail.get('attempts',0)}. These are not completed applications."
     if detail.get('reason'):
         body += '\n\nStopped because: ' + detail['reason']
     mail_failures={reason:count for reason,count in detail.get('reasons',{}).items()
@@ -104,7 +144,7 @@ def queue_report(store, run_id):
     state='suppressed' if idle else 'pending' if enabled else 'disabled'
     with store.transaction():
         store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
-                         (run_id, email, f"Application batch: {run['submitted']} confirmed — {run['status']}",
+                         (run_id, email, f"Application update: {run['submitted']} confirmed; {human} need you; {unconfirmed} to verify",
                           body, f'<{uuid.uuid4().hex}@please-hire-me.local>', state, now()))
     return run_id
 

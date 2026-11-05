@@ -54,7 +54,7 @@ def test_pause_after_an_attempt_still_queues_the_batch_email(store):
     assert store.db.execute('SELECT state FROM report_outbox').fetchone()[0]=='pending'
 
 
-def test_batch_email_links_include_only_browser_attempts(store,job,monkeypatch):
+def test_batch_email_links_include_only_browser_attempts(store,job,package,monkeypatch):
     from hireme.util import digest
     jobs = []
     for outcome in ('confirmed', 'blocked', 'screened'):
@@ -69,12 +69,14 @@ def test_batch_email_links_include_only_browser_attempts(store,job,monkeypatch):
         return 1, []
 
     class Browser:
-        def __init__(self,s):pass
+        def __init__(self,s):self.store=s
         def __enter__(self):return self
         def __exit__(self,*args):pass
         def apply(self,item,live=True):
             if item['company'] == 'blocked':
                 raise Blocked('captcha', 'Complete the employer CAPTCHA')
+            aid=self.store.prepare(item,{**package,'job_id':item['id'],'url':item['url']})
+            self.store.begin_submit(aid);self.store.finish(aid,'confirmed','Synthetic employer receipt')
             return 'confirmed'
 
     monkeypatch.setattr('hireme.worker.eligible',screen)
@@ -88,7 +90,7 @@ def test_batch_email_links_include_only_browser_attempts(store,job,monkeypatch):
     assert 'location_mismatch' not in body and 'Complete the employer CAPTCHA' in body
     assert 'choose Applied manually' in body
     assert 'check with the employer before applying again' in body
-    assert store.db.execute('SELECT count(*) FROM applications').fetchone()[0] == 0
+    assert store.db.execute("SELECT count(*) FROM applications WHERE state='confirmed'").fetchone()[0] == 1
 
 
 def test_report_does_not_include_other_runs_job_links(store,job):
