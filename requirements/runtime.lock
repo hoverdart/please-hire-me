@@ -20,12 +20,12 @@ pillow==13.0.0
 playwright==1.63.0
 proto-plus==1.29.0
 protobuf==7.36.2
-pyasn1==0.6.4
+pyasn1==0.6.5
 pyasn1_modules==0.4.2
 pycparser==3.0
 pyee==13.0.1
 pyparsing==3.3.3
-pypdf==6.21.2
+pypdf==6.21.4
 referencing==0.37.0
 reportlab==4.5.1
 requests==2.34.2

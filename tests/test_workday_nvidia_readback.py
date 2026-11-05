@@ -61,6 +61,12 @@ def test_work_projection_uses_explicit_month_precision_and_source_field_names():
     uncertain('workexperiences',rows(work()),{**expected,'startDate':'2025-09-01'},precision='YYYY-MM-DD')
 
 
+def test_work_year_date_projection_keeps_the_separate_native_month():
+    result=normalize('workexperiences',rows(work(startYear='2025-01-01')),precision='YYYY-MM')
+    assert result[0]['startDate']=='2025-09'
+    uncertain('workexperiences',rows(work(startYear='2025-02-01')),{'startDate':'2025-09'},precision='YYYY-MM')
+
+
 @pytest.mark.parametrize('changes',[{'startMonth':True},{'startMonth':13},{'startYear':'0000'},
                                     {'startYear':2025},{'endYear':'2026','endMonth':None}])
 def test_work_split_date_cannot_be_repaired_or_guessed(changes):

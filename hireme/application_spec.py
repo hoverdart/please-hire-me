@@ -75,10 +75,23 @@ def plan(store, job, package):
                 raise Blocked('unsupported_form','The application has no unique question locator')
             seen.add(key)
             options=field.get('options',[]);native=field.get('option_values',[])
+            checkbox=(kind=='checkbox' and options==['Yes','No'] and isinstance(native,list) and len(native)==1)
             if (not isinstance(options,list) or any(not isinstance(v,str) for v in options)
                     or not isinstance(native,list) or any(not isinstance(v,str) for v in native)
-                    or len(set(options))!=len(options) or native and len(native)!=len(options)):
+                    or native and len(native)!=len(options) and not checkbox):
                 raise Blocked('form_changed','The employer choices are ambiguous')
+            if len(set(options))!=len(options):
+                # A native select can contain duplicate *unselected* labels.
+                # Keep its complete option mapping, but require one approved
+                # label and one unique native value for the actual selection.
+                answers=[a for a in package['answers'] if a['field']==field]
+                value=answers[0]['value'] if len(answers)==1 else None
+                if (kind!='select' or field.get('multiple') or not field.get('ref',{}).get('name')
+                        or not native or options.count(value)!=1):
+                    raise Blocked('form_changed','The employer choices are ambiguous')
+                selected=native[options.index(value)]
+                if not selected or native.count(selected)!=1:
+                    raise Blocked('form_changed','The employer choices are ambiguous')
             questions.append(Question(identity,encoded({k:field.get(k) for k in ('label','help_text','help_links','ashby_path')}),
                 bool(field.get('required')),kind,tuple(options),tuple(native),
                 encoded({k:field.get(k) for k in ('min','max','step','maxlength','pattern','multiple')}),

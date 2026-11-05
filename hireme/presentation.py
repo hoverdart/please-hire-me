@@ -13,6 +13,14 @@ QUIET_REASONS = NOT_MATCH_REASONS | WAIT_REASONS
 
 # (Reason label, next useful step). Unknown reasons keep their exact evidence in the ledger.
 REASON_GUIDANCE = {
+    'browser_draft_uncertain': ('An employer save needs review', 'An application step was sent without a verified result. Check the employer’s saved application before continuing; automatic retries are held.'),
+    'browser_no_progress': ('The application browser needs help with this screen', 'Review the saved step and unresolved questions. Confirm any missing information, then recheck the job.'),
+    'browser_operation_blocked': ('The employer requested an unexpected action', 'Review the application step. The browser blocked a write outside the approved action.'),
+    'browser_identity_unverified': ('Verify the applicant sign-in', 'Sign in as the confirmed applicant using Sign in to employer or the platform connection’s dedicated window, then close it and recheck this job.'),
+    'browser_identity_mismatch': ('The employer account belongs to another email', 'Choose Sign in to employer and switch to the confirmed applicant’s account in that dedicated browser.'),
+    'browser_profile_changed': ('The application browser identity changed', 'Restore the dedicated browser for this applicant before resuming its saved application.'),
+    'browser_preparation_incomplete': ('This application needs live step saves', 'Local preparation reached a multi-step form. Enable live applications and remote draft saves to continue through the employer’s UI.'),
+    'resume_not_attached': ('The selected resume is not verified in this application', 'Attach the confirmed resume in the employer application. A filename or an existing profile resume alone does not verify its contents.'),
     'prior_application_company_review': ('The employer name needs checking', 'Retry the email scan or add a confirmed company alias. A board slug alone is not an employer name.'),
     'prior_application_email': ('An earlier application was found in email', 'Review Past applications in Settings → Connections. Check the original message before applying again.'),
     'prior_application_scan_incomplete': ('Email history still needs checking', 'Continue scanning past applications in Connections. This role stays held until the company scan completes.'),
@@ -102,7 +110,7 @@ REASON_GUIDANCE = {
 }
 STATUS_LABELS = {'manually_applied': 'Applied manually', 'skipped': 'Don’t apply', 'confirmed': 'Submitted', 'discovered': 'Ready to evaluate', 'blocked': 'Needs action',
                  'unknown': 'Uncertain', 'awaiting_verification': 'Check email', 'prepared': 'Prepared',
-                 'submitting': 'Submitting', 'rejected': 'Not a match'}
+                 'submitting': 'Submitting', 'rejected': 'Not a match', 'routed': 'Employer application found'}
 
 
 def reason_code(reason):

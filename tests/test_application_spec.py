@@ -36,3 +36,49 @@ def test_entire_visible_plan_is_validated_without_transport(store,job,package,ch
 def test_planner_holds_changed_approved_source(store,job,package):
     store.put_facts({'email':'changed@candidate.invalid'})
     with pytest.raises(Blocked):plan(store,job,package)
+
+
+@pytest.mark.parametrize('value',['Yes','No'])
+def test_single_checkbox_binds_one_checked_wire_value_without_a_fake_no_control(store,job,package,value):
+    from hireme.answers import resolve
+    from hireme.field_context import field_context
+    field={'label':'Consent to receiving text messages','type':'checkbox','required':True,
+        'options':['Yes','No'],'option_values':['native-checked'],'maxlength':-1,'ref':{'id':'sms'}}
+    store.put_facts({'sms':value})
+    answer=resolve(store,job['host'],field,context=job)
+    assert answer['value']==value
+    package['answers'].append(answer);package['steps'][0]['fields'].append(field)
+    from hireme.util import digest
+    package['facts_hash']=digest(store.facts())
+    approved=plan(store,job,package)
+    checkbox=next(q for q in approved.specification.questions if q.kind=='checkbox')
+    assert checkbox.native_values==('native-checked',)
+    assert field_context(job['host'],field,job)['options']==[('No',''),('Yes','native-checked')]
+    field['type']='radio'
+    with pytest.raises(Blocked):field_context(job['host'],field,job)
+
+
+@pytest.mark.parametrize('change',['none','chosen_duplicate','native_duplicate','no_native','no_name','multiple','radio','unanswered'])
+def test_duplicate_unselected_native_select_labels_allow_only_one_exact_approved_choice(store,job,package,change):
+    from hireme.answers import resolve
+    from hireme.util import digest
+    store.put_facts({'school':'Fixture University'})
+    f={'label':'Current school or university','type':'select','required':True,'maxlength':-1,
+       'ref':{'name':'university'},'options':['Other school','Fixture University','Other school'],
+       'option_values':['other-a','approved-id','other-b']}
+    answer=resolve(store,job['host'],f,context=job)
+    package['answers'].append(answer);package['steps'][0]['fields'].append(f)
+    package['facts_hash']=digest(store.facts())
+    if change=='chosen_duplicate':f['options'][0]='Fixture University'
+    elif change=='native_duplicate':f['option_values'][0]='approved-id'
+    elif change=='no_native':f.pop('option_values')
+    elif change=='no_name':f['ref']={}
+    elif change=='multiple':f['multiple']=True
+    elif change=='radio':f['type']='radio'
+    elif change=='unanswered':package['answers'].remove(answer);f['required']=False
+    if change!='none':
+        with pytest.raises(Blocked):plan(store,job,package)
+        return
+    approved=plan(store,job,package)
+    q=next(q for q in approved.specification.questions if q.identity=='name:university')
+    assert q.choices==tuple(f['options']) and q.native_values==tuple(f['option_values'])

@@ -8,6 +8,23 @@ from tests.ashby_document_fixture import AshbyDocuments
 from tests.test_ashby_drafts import form,REQ,RENDER,DEFINITION
 
 
+@pytest.mark.parametrize('change',['none','required','name','native','form','populated'])
+def test_only_empty_native_autofill_picker_is_excluded_from_application_fields(store,change):
+    from hireme.browser import SNAPSHOT,CONTROLS
+    from playwright.sync_api import sync_playwright
+    attrs='required' if change=='required' else 'name="extra"' if change=='name' else ''
+    wrapper='data-field-path="extra"' if change=='native' else ''
+    html='<div class="ashby-application-form-autofill-input-root" '+wrapper+'><input type="file" '+attrs+'></div>'
+    if change=='form':html='<form>'+html+'</form>'
+    html+='<label>Resume<input type="file" id="_systemfield_resume" required></label>'
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True);page=browser.new_page();page.set_content(html)
+        if change=='populated':page.locator('input[type=file]').first.set_input_files({'name':'unapproved.pdf','mimeType':'application/pdf','buffer':b'not-approved'})
+        fields=page.evaluate(SNAPSHOT,CONTROLS);browser.close()
+    assert len(fields)==(1 if change=='none' else 2)
+    assert fields[-1]['label']=='Resume/CV' and fields[-1]['required']
+
+
 @pytest.mark.parametrize('change',['unsupported_native_answer','optional_unknown','malformed_document','changed_source','bad_final_control'])
 def test_visible_application_is_compiled_before_any_remote_write(store,job,monkeypatch,change):
     url=f'https://jobs.ashbyhq.com/acme/{REQ}'

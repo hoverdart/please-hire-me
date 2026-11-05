@@ -103,6 +103,33 @@ def test_experience_narrative_uses_repairable_writing_review_instead_of_short_ex
     assert not answer['provenance'].get('context_answer')
 
 
+def test_short_work_description_repairs_an_unsupported_claim_before_caching(store,job):
+    from hireme.provider import ClaudeProvider
+    text='I analyzed coding-agent execution traces and documented reproducible defects.'
+    store.put_template('project',text)
+    store.update_settings({'tailored_writing':True})
+    model=ClaudeProvider.__new__(ClaudeProvider);model.observer=None;drafts=[];reviews=[]
+    def request(instruction,data,schema):
+        if 'answer' in schema['properties']:
+            drafts.append(data)
+            if len(drafts)>1:assert 'production' in data['repair_feedback']
+            answer=text.replace('execution traces','production execution traces') if len(drafts)==1 else text
+            return {'answer':answer,'sentence_ids':[next(c['id'] for c in data['samples'] if c['text']==text)]}
+        reviews.append(data)
+        supported='production' not in data['draft']['answer']
+        return {'supported':supported,'reason':'' if supported else 'Remove production: the source does not establish that provenance.'}
+    model.request=request
+    model.match_field=lambda *args:pytest.fail('A work description needs narrative review')
+    model.context_answer=lambda *args:pytest.fail('A work description needs repairable narrative review')
+    field={'label':"Please include a short description of the work you're proudest of.",
+           'type':'textarea','required':True,'options':[]}
+    answer=resolve(store,job['host'],field,model,job)
+    assert answer['value']==text
+    assert len(drafts)==len(reviews)==2
+    assert answer['provenance']['tailored'] and not answer['provenance'].get('context_answer')
+    assert store.writing_answer(job['host'],field['label'],[])['value']==text
+
+
 def test_current_fact_change_invalidates_a_narrative_citing_older_personal_wording(store,job):
     store.update_settings({'tailored_writing':True});store.put_facts({'gpa':'3.2'})
     text='My current cumulative GPA is 3.2.'
@@ -165,6 +192,24 @@ def test_current_facts_remain_available_in_a_bounded_large_factual_library(store
     assert sum(len(c['text']) for c in choices)<=24000
     assert any(c['id']=='fact:gpa' and c['text']=='3.41' for c in choices)
     assert len({c['id'] for c in choices})==len(choices)
+
+
+def test_large_context_library_preserves_current_resume_dates_and_results(store,job,monkeypatch):
+    from hireme.answers import _approved_sentences
+    store.update_settings({'tailored_writing':True})
+    resume='Fixture Manufacturing | April 2026 - Present\nBuilt regression checks across 1,037 pricing cases.\n'
+    monkeypatch.setattr('hireme.answers._resume_evidence',lambda _:('approved-resume-hash',resume))
+    # These are individually legal sources; repeated job keywords used to
+    # consume the entire budget ahead of dates and specific measured results.
+    for i in range(5):store.put_template('experience',f'Context {i}: '+('Python TypeScript software engineering internship. '*200))
+    story='I taught myself to deploy a small community tool by working through errors and testing each change.'
+    store.put_template('experience',story)
+    choices=_approved_sentences(store,{**job,'field_context':{'label':'Describe something difficult you taught yourself'}})
+    assert sum(len(c['text']) for c in choices)<=24000
+    assert [c['text'] for c in choices if 'resume_hash' in c]==resume.splitlines()
+    assert all(c['resume_hash']=='approved-resume-hash' for c in choices if 'resume_hash' in c)
+    assert any(c.get('fact_key')=='graduation' for c in choices)
+    assert any(c['text']==story for c in choices)
 
 
 def test_structured_context_receives_unique_fact_source_ids(store,job):

@@ -167,6 +167,7 @@ CREATE TABLE IF NOT EXISTS saved_view_connections (view_id TEXT PRIMARY KEY, sou
  destination TEXT NOT NULL, min_fit INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS applications_company_state ON applications(company_key,state);
 CREATE INDEX IF NOT EXISTS applications_state_attempted ON applications(state,attempted);
+CREATE INDEX IF NOT EXISTS draft_operations_state_operation ON draft_operations(state,operation,job_id);
 CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(first_seen DESC,id);
 CREATE INDEX IF NOT EXISTS jobs_fit ON jobs(score DESC,first_seen DESC,id);
 CREATE INDEX IF NOT EXISTS jobs_dashboard_rank ON jobs(status,reason,score DESC,first_seen DESC,id);
@@ -501,6 +502,7 @@ class Store:
                     # Rule updates invalidate model bindings, not an unchanged
                     # explicit user approval. Resolve still validates its value.
                     result=dict(candidate);result.pop('context');return result
+        if field is not None and field.get('application_agreement_job'):return None
         qid = self.question_key(host,label,options)
         r = self.db.execute("SELECT * FROM answers WHERE id=?",(qid,)).fetchone()
         if not r and '|' in host:
@@ -648,6 +650,8 @@ class Store:
 
     def _check_budget(self, job, s, *, application_id=None):
         self.check_job_decision(job["id"])
+        from .browser_agent_protocol import guard_pending
+        guard_pending(self,job)
         from .prior_applications import check_saved
         check_saved(self,job)
         from .retry_authorization import permits
@@ -743,6 +747,11 @@ class Store:
             if retry:self.db.execute('UPDATE retry_authorizations SET application_id=? WHERE previous_id=?',(aid,retry['previous_id']))
             from .application_journey import capture_context
             self.event("prepared",aid,{"package_hash":digest(package),'job_context':capture_context(self,job)})
+            if package.get('browser_agent'):
+                # Facts edits invalidate the reusable prepared row. Retain the
+                # acknowledged UI checkpoint independently so a newly supplied
+                # answer cannot cause an earlier remote step to be repeated.
+                self.event('browser_agent_checkpoint',job['id'],{'package':package,'package_hash':digest(package)})
         return aid
 
     def begin_submit(self, aid):
@@ -760,6 +769,8 @@ class Store:
             from .prior_applications import require_recent_check
             require_recent_check(self,job)
             package=json.loads(app["package"])
+            if package.get('browser_agent') and package['browser_agent'].get('complete') is not True:
+                raise Blocked('browser_preparation_incomplete','Complete every UI step before final submission')
             if digest(package)!=app["hash"]:
                 raise Blocked("package_tampered")
             eligible(job,s,self.facts())

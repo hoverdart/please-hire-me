@@ -26,6 +26,29 @@ SNAPSHOT=r"""selector => {
   return copy.textContent.trim();
  }
  function reference(el) {return {id:el.id||'',name:el.name||'',tag:el.tagName.toLowerCase()};}
+ function formIndex(el) {return el.form?Array.from(document.forms).indexOf(el.form):-1;}
+ function active(el) {
+  if(el.disabled||el.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
+  const native=el.matches('input[type=radio],input[type=checkbox]');
+  if(!el.checkVisibility({visibilityProperty:true,opacityProperty:!native}))return false;
+  if(native)for(let parent=el.parentElement;parent;parent=parent.parentElement)
+    if(Number(getComputedStyle(parent).opacity)===0)return false;
+  return true;
+ }
+ function leverUniversityProxy(el) {
+  if(!el?.matches('select[data-qa="university-dropdown"].select2-hidden-accessible'))return null;
+  const match=el.name.match(/^cards\[([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\]\[field([0-9]+)\]$/i);
+  if(!match||el.id!==`university-picker-${match[1]}-${match[2]}`)return null;
+  const parent=el.parentElement,container=el.nextElementSibling;
+  if(!parent?.matches('.application-university')||parent.querySelectorAll('select').length!==1||
+     !container?.matches('.select2-container')||parent.querySelectorAll('.select2-container').length!==1||
+     parent.closest('[hidden],[inert],[aria-hidden="true"]'))return null;
+  const proxies=container.querySelectorAll('[role=combobox]'),id='select2-'+el.id+'-container';
+  if(proxies.length!==1||proxies[0].getAttribute('aria-labelledby')!==id||
+     !container.querySelector('[id="'+id+'"]')||
+     !proxies[0].checkVisibility({opacityProperty:true,visibilityProperty:true}))return null;
+  return proxies[0];
+ }
  function details(el) {
   const wrapper=el.closest('[data-field-path],.ashby-application-form-field-entry,.application-question,.field,.field-wrapper');
   const descriptions=Array.from(wrapper?.querySelectorAll('.ashby-application-form-question-description,.field-description,.helper-text,.body__secondary')||[]);
@@ -49,7 +72,10 @@ SNAPSHOT=r"""selector => {
   const help_links=descriptions.flatMap(n=>Array.from(n.querySelectorAll('a[href]')).map(a=>({text:a.textContent.trim(),url:a.href})));
   const date_format=el.type==='date'?'YYYY-MM-DD':el.classList.contains('ashby-application-form-input-date')?'MM/DD/YYYY':null;
   const ashby=el.closest('[data-field-path][data-field-entry-id]');
-  return {...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {}),...(date_format?{date_format}: {}),
+  const card=el.closest('.application-form[data-qa="additional-cards"]');
+  const titles=card?.querySelectorAll('h4[data-qa="card-name"]');
+  const section=titles?.length===1&&/^cards\[/.test(el.name||'')?labelText(titles[0]):'';
+  return {...(section?{section:'Lever: '+section}:{}),...(help_text?{help_text}:{}),...(help_links.length?{help_links}: {}),...(date_format?{date_format}: {}),
     ...(ashby?{ashby_path:ashby.dataset.fieldPath,ashby_entry_id:ashby.dataset.fieldEntryId}:{}),
     ...(texting&&['communicationConsent','smsConsent'].includes(el.name)?{ashby_texting_consent:'sms'}:{})};
  }
@@ -76,17 +102,36 @@ SNAPSHOT=r"""selector => {
   return (el.getAttribute('description')||el.getAttribute('aria-label')||aria||leverHeading||direct||legend||labelText(wrapper?.querySelector('label'))||el.getAttribute('placeholder')||'').trim();
  }
  controls.forEach((el,index)=>{
-  if(!el.getClientRects().length && el.type!=='file')return;
+  const university=leverUniversityProxy(el);
+  const universityContainer=el.matches('[role=combobox]')&&el.closest('.select2-container');
+  if(universityContainer&&leverUniversityProxy(universityContainer.previousElementSibling)===el)return;
+  // Hidden conditional sections often retain their controls (including file
+  // inputs) in React's DOM. They are not current application questions. File
+  // pickers themselves can be visually hidden, so inspect their ancestors.
+  if(!university && el.closest('[hidden],[inert],[aria-hidden="true"]'))return;
+  if(el.type==='file'){
+   for(let parent=el.parentElement;parent;parent=parent.parentElement){
+    const style=getComputedStyle(parent);
+    if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||Number(style.opacity)===0)return;
+   }
+  }
+  if(el.type!=='file' && !university && !active(el))return;
+  // Ashby's optional "Autofill from resume" picker is separate from the
+  // native resume question. Never select it or treat it as an employer field.
+  // A named, populated, required or form-owned input still needs validation.
+  if(el.type==='file' && el.closest('.ashby-application-form-autofill-input-root') &&
+     !el.closest('[data-field-path],.ashby-application-form-field-entry') &&
+     !el.form && !el.id && !el.name && !el.required && !el.files.length)return;
   if(el.matches('.ashby-application-form-input-yesno-option')){
    const group=el.closest('.ashby-application-form-input-yesno');
    if(!group||seen.has(group))return;seen.add(group);
    const entry=el.closest('.ashby-application-form-field-entry');
    const heading=entry?.querySelector('.ashby-application-form-question-title');
-   const buttons=controls.filter(x=>x.matches('.ashby-application-form-input-yesno-option')&&x.closest('.ashby-application-form-input-yesno')===group);
-   out.push({index,indices:buttons.map(x=>controls.indexOf(x)),ref:reference(el),refs:buttons.map(reference),label:heading?.textContent.trim()||'',...details(el),type:'yesno',options:buttons.map(x=>x.textContent.trim()),required:!!heading?.className.includes('_required_'),maxlength:-1,value:buttons.find(x=>x.getAttribute('aria-pressed')==='true')?.textContent.trim()||'',multiple:false});
+   const buttons=controls.filter(x=>active(x)&&x.matches('.ashby-application-form-input-yesno-option')&&x.closest('.ashby-application-form-input-yesno')===group);
+   out.push({index,form_index:formIndex(el),indices:buttons.map(x=>controls.indexOf(x)),ref:reference(el),refs:buttons.map(reference),label:heading?.textContent.trim()||'',...details(el),type:'yesno',options:buttons.map(x=>x.textContent.trim()),required:!!heading?.className.includes('_required_'),maxlength:-1,value:buttons.find(x=>x.getAttribute('aria-pressed')==='true')?.textContent.trim()||'',multiple:false});
    return;
   }
-  if(el.disabled || el.closest('[aria-hidden=true]') || (el.readOnly && el.tabIndex<0))return;
+  if(el.disabled || el.closest('[aria-hidden=true]') && !university || (el.readOnly && el.tabIndex<0))return;
   let type=el.tagName==='SELECT'?'select':el.tagName==='TEXTAREA'?'textarea':el.getAttribute('role')==='combobox'?'combobox':el.type||'text';
   const leverLocation=el.matches('input.location-input[name=location]')&&
     !!el.parentElement.querySelector('input[type=hidden][name=selectedLocation]')&&!!el.parentElement.querySelector('.dropdown-results');
@@ -118,10 +163,11 @@ SNAPSHOT=r"""selector => {
   }
   const ashbyGroup=type==='checkbox' ? el.closest('fieldset.ashby-application-form-input-checkbox-group') : null;
   const leverGroup=type==='checkbox' ? el.closest('.application-question') : null;
-  const checkboxGroup=ashbyGroup || leverGroup && el.name && controls.filter(x=>x.type==='checkbox'&&x.name===el.name&&x.closest('.application-question')===leverGroup).length>1 || type==='checkbox' && el.name && el.getAttribute('description') && controls.filter(x=>x.type==='checkbox'&&x.name===el.name&&x.getAttribute('description')===el.getAttribute('description')).length>1;
+  const checkboxGroup=ashbyGroup || leverGroup && el.name && controls.filter(x=>active(x)&&x.type==='checkbox'&&x.name===el.name&&x.closest('.application-question')===leverGroup).length>1 || type==='checkbox' && el.name && el.getAttribute('description') && controls.filter(x=>active(x)&&x.type==='checkbox'&&x.name===el.name&&x.getAttribute('description')===el.getAttribute('description')).length>1;
   if(type==='radio'||checkboxGroup){
-   const name=ashbyGroup||el.name; if(!name||seen.has(name))return;seen.add(name);
-   const group=controls.filter(x=>x.type===el.type&&(ashbyGroup?x.closest('fieldset.ashby-application-form-input-checkbox-group')===ashbyGroup:x.name===name));
+   const name=ashbyGroup||(el.name?formIndex(el)+':'+el.name:null); if(!name||seen.has(name))return;seen.add(name);
+   const group=controls.filter(x=>active(x)&&x.type===el.type&&(ashbyGroup?x.closest('fieldset.ashby-application-form-input-checkbox-group')===ashbyGroup:x.name===el.name&&x.form===el.form));
+   required=required||group.some(x=>x.required||x.getAttribute('aria-required')==='true');
    if(checkboxGroup)type='checkbox-group';
    indices=group.map(x=>controls.indexOf(x)); options=group.map(x=>Array.from(x.labels||[]).map(l=>l.innerText).join(' ').trim()||x.value);
    const parent=el.closest('fieldset');
@@ -138,7 +184,7 @@ SNAPSHOT=r"""selector => {
   const entrySelector='.education--form,.employment--form,.employment-form,.experience--form,[data-automation-id="educationSection"],[data-automation-id="education"],[data-automation-id="workExperienceSection"],[data-automation-id="workExperience"]';
   const entry=el.closest(entrySelector);
   const entryPeers=entry ? Array.from(document.querySelectorAll(entrySelector)).filter(x=>x.getClientRects().length&&x.tagName===entry.tagName&&(entry.getAttribute('data-automation-id') ? x.getAttribute('data-automation-id')===entry.getAttribute('data-automation-id') : x.className===entry.className)) : [];
-  out.push({index,indices,...(leverLocation?{lever_location:true}:{}),...(uploadHeading?{upload_heading:true}:{}),...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
+  out.push({index,form_index:formIndex(el),indices,...(leverLocation?{lever_location:true}:{}),...(uploadHeading?{upload_heading:true}:{}),...(type==='select'?{option_values:Array.from(el.options).filter(o=>o.value&&!o.disabled).map(o=>o.value)}:{}),ref:reference(el),refs:indices.map(i=>reference(controls[i])),label:question.replace(/\s+/g,' ').trim(),...details(el),type,options,
    ...((type==='radio'&&el.closest('.ashby-application-form-texting-consent-description')
         || ['checkbox','radio','checkbox-group'].includes(type)&&/^jobs(?:\.eu)?\.lever\.co$/i.test(location.hostname))
        ?{option_values:indices.map(i=>controls[i].value)}:{}),
@@ -176,18 +222,18 @@ def submission_receipt(text,before=''):
         re.search(r"our talent team will carefully review your qualifications and experience",text,re.I) and
         not re.search(r"thanks again for applying[!.]",before,re.I)))
 # Model outcomes that may succeed on a later attempt, unlike missing applicant information.
-PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output','writing_unsupported')
+PROVIDER_FAILURES=('provider_timeout','provider_error','provider_invalid_output','writing_unsupported','provider_unavailable','provider_cli_incompatible')
 
 
 _DOCUMENT_REQUEST=re.compile(
     r'(?:(?:please\s+)?(?:upload|attach|provide|submit)\s+)?'
     r'(?:(?:a|an|the|your|copy|of|most\s+recent|latest|current|official|unofficial|academic|college|university)\s+)*'
-    r'(?:transcripts?|resumes?(?:\s*(?:/|or)\s*cvs?)?|cvs?(?:\s*(?:/|or)\s*resumes?)?|cover[\s_-]*letters?)'
+    r'(?:(?:(?:undergraduate|graduate)\s+)?transcripts?|resumes?(?:\s*(?:/|or)\s*cvs?)?|cvs?(?:\s*(?:/|or)\s*resumes?)?|cover[\s_-]*letters?)'
     r'(?:\s*\((?:pdf|pdf only|required)\))?',re.I)
 
 
 def _document_kind(field):
-    label=' '.join(field['label'].split()).strip(' *✱:')
+    label=' '.join(field['label'].split()).strip(' *✱:').removesuffix('.')
     kinds=[kind for kind,pattern in (('transcript',r'\btranscripts?\b'),('resume',r'\b(?:resumes?|cvs?)\b'),('cover_letter',r'\bcover.?letters?\b'))
            if re.search(pattern,label,re.I)]
     # A mention in another request is not permission to disclose that document.
@@ -438,6 +484,8 @@ class Browser:
                     self.denied_write=True
                     self.denied_request={'host':host,'path':p.path,'method':route.request.method}
                     if isinstance(data,dict):
+                        if self.ashby_submission and getattr(self.ashby_submission,'denial',None):
+                            self.denied_request['native_denial']=self.ashby_submission.denial
                         # Retain only known operation names and a query digest;
                         # variables, tokens and arbitrary client strings stay private.
                         operation=data.get('operationName')
@@ -906,11 +954,29 @@ class Browser:
         self.store.finish(self.aid,outcome,text,screenshot_name)
         return outcome
 
-    def _snapshot(self):
+    def _raw_snapshot(self):
         fields=self.page.evaluate(SNAPSHOT,CONTROLS)
+        forms={f.get('form_index',-1) for f in fields if f['type']=='file' and _document_kind(f)=='resume'}-{-1}
+        identities={}
+        for f in fields:
+            owner=f.get('form_index',-1)
+            key=field_key(f['label'])
+            if owner>=0 and key in {'email','full_name','first_name','last_name'}:
+                identities.setdefault(owner,set()).add(key)
+        forms.update(owner for owner,keys in identities.items() if 'email' in keys and len(keys)>1)
+        if len(forms)>1:raise Blocked('unsupported_form','Multiple forms contain applicant identity or resume controls')
+        if forms:
+            owner=next(iter(forms))
+            # Unowned controls still require inspection. Only controls explicitly
+            # owned by another form (such as newsletter/search) are excluded.
+            fields=[f for f in fields if f.get('form_index',-1) in {-1,owner}]
         if self.ashby_draft:
             from .ashby_education import snapshot
             fields=snapshot(self,fields)
+        return fields
+
+    def _snapshot(self):
+        fields=self._raw_snapshot()
         # Custom dropdown option enumeration is a read task, before any personal value is filled.
         for f in fields:
             self.store.checkpoint()
@@ -997,7 +1063,7 @@ class Browser:
         from decimal import Decimal, InvalidOperation
         shapes=[]
         for f in fields:
-            shape={k:v for k,v in f.items() if k not in ('value','index','indices','ref','refs') and not (k=='options' and f['type']=='combobox')}
+            shape={k:v for k,v in f.items() if k not in ('value','index','indices','ref','refs','form_index') and not (k=='options' and f['type']=='combobox')}
             if f['type']=='number':
                 # React mirrors the entered value into the value attribute.
                 # Compare the allowed numeric lattice, not its changing origin;
@@ -1052,7 +1118,7 @@ class Browser:
             locator=self.page.locator(ref.get('tag','input')+'[name='+json.dumps(ref['name'])+']')
             if locator.count()==1:return locator
         # Reacquire anonymous controls by current semantic shape instead of stale indices.
-        fresh=self.page.evaluate(SNAPSHOT,CONTROLS)
+        fresh=self._raw_snapshot()
         matches=[f for f in fresh if f['label']==field['label'] and f['type']==field['type']]
         if len(matches)!=1:raise Blocked('form_changed',field['label'])
         index=matches[0]['indices'][option] if option is not None else matches[0]['index']
@@ -1210,7 +1276,10 @@ class Browser:
             sizes=el.evaluate('(e)=>Array.from(e.files||[]).map(f=>f.size)')
             expected=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents').stat().st_size
             if sizes!=[expected] and not (d['hash'] in self.uploaded_files and d['filename'] in self.page.locator('body').inner_text()):raise Blocked('upload_verification_failed')
-        if self.page.locator('[aria-invalid=true]').count() or not self.page.evaluate('''preparing => Array.from(document.forms).every(f=>Array.from(f.elements).every(e=>{
+        scope=self._application_scope(answers)
+        root=self.page.locator('body') if scope is self.page else scope
+        if root.locator('[aria-invalid=true]:visible').count() or not root.evaluate('''(root,preparing) =>
+          Array.from(root.tagName==='FORM'?[root]:root.querySelectorAll('form')).every(f=>Array.from(f.elements).every(e=>{
             if(preparing && e.type==='file')return true;
             if(e.type==='checkbox' && e.name && e.getAttribute('description')){
                 const group=Array.from(f.elements).filter(x=>x.type==='checkbox'&&x.name===e.name&&x.getAttribute('description')===e.getAttribute('description'));
@@ -1235,6 +1304,7 @@ class Browser:
                 with contextlib.suppress(Exception):finish(self.store,self.ashby_draft_fence)
 
     def _apply(self,job,live=True):
+        self.navigation_visited=set()
         self.workday_grant=None
         self.workday_read_scope=None
         self.preparing=not live
@@ -1316,7 +1386,8 @@ class Browser:
         # question to answer, not evidence of a mandatory eligibility cutoff.
         posting_text=adapter.posting_text(text,verified_posting)
         # Portal host registration is not proof of a session; inspect the current page too.
-        if job['host'] in PORTAL_HOSTS and job['host'] not in self.store.settings()['signed_in_portals'] and not self.store.settings()['employer_accounts'] and job['host'] not in {'www.deshaw.com','explore.jobs.netflix.net','career.mlp.com','jobs.uber.com','www.rentec.com'}:
+        from .workday import TENANTS
+        if job['host'] in PORTAL_HOSTS and job['host'] not in TENANTS and job['host'] not in self.store.settings()['signed_in_portals'] and not self.store.settings()['employer_accounts'] and job['host'] not in {'www.deshaw.com','explore.jobs.netflix.net','career.mlp.com','jobs.uber.com','www.rentec.com'}:
             raise Blocked('account_blocked','Sign in through the dedicated browser and register this portal')
         # Read the actual posting again before policy checks: list feeds are not eligibility proof.
         from .policy import eligible
@@ -1342,6 +1413,9 @@ class Browser:
                 return outcome
             return controller.apply(live=live)
         all_answers=[]; all_docs=[]; steps=[]; refreshes=0; retained_docs=[]
+        from .provider import LazyProvider
+        answer_provider=LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,
+            checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail))
         for step in range(8):
             try:self._guard(job)
             except Blocked as e:
@@ -1350,6 +1424,12 @@ class Browser:
                     complete_native_account(self,job)
                     continue
                 raise
+            # A posting can contain a newsletter/search input. Its presence
+            # does not mean we have reached the applicant's form.
+            from .browser_navigation import navigate
+            navigation_job={**job,'url':self.ashby_draft.navigation_url if self.ashby_draft else job['url']}
+            if navigate(self,navigation_job,answer_provider):
+                continue
             fields=self._snapshot()
             if not fields:
                 entry=self._ashby_application_entry(job)
@@ -1382,8 +1462,7 @@ class Browser:
                     if kind=='cover_letter' and f['required']:
                         try:
                             from .letters import generate_cover_letter
-                            from .provider import LazyProvider
-                            doc=generate_cover_letter(self.store,job,LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail)))
+                            doc=generate_cover_letter(self.store,job,answer_provider)
                         except Blocked as e:
                             if e.reason in ('paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'):raise
                             self.store.event('document_blocked',job['id'],{'label':f['label'],'reason':e.reason,'detail':e.detail})
@@ -1393,8 +1472,7 @@ class Browser:
                         continue
                     documents.append({**dict(doc),'field':f});continue
                 try:
-                    from .provider import LazyProvider
-                    provider=None if budget_error else LazyProvider(self.store.settings()['model_timeout_seconds'],store=self.store,checkpoint=self.store.checkpoint,observer=lambda stage,detail:self.store.event(stage,job['id'],detail))
+                    provider=None if budget_error else answer_provider
                     answer_context={**job,'previous_answers':answers,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]}
                     a=resolve(self.store,job['answer_scope'],f,provider,context=answer_context)
                     if a:
@@ -1486,6 +1564,21 @@ class Browser:
                 self.store.event('field_filling',job['id'],{'label':a['field']['label']})
                 if live and self.ashby_draft:self._fill_ashby_answer(a)
                 else:self._fill(a)
+                # A parent answer can synchronously reveal another question or
+                # replace controls. Stop using the old plan immediately. The
+                # verification/re-resolution below inspects the new questions
+                # before any later answer is written to a stale control.
+                fresh=self._filled_number_fields(fields,self._raw_snapshot(),answers)
+                body=self.page.locator('body').inner_text()
+                # File inputs may be replaced before the asynchronous upload
+                # response is observed. That removal cannot redirect a text
+                # answer; defer its acknowledgement to the full verifier.
+                # A visible filename alone still grants no upload/submission.
+                removed_uploads=[d['field'] for d in documents if d['filename'] in body
+                    and not any(f['type']=='file' and f['label']==d['field']['label'] for f in fresh)]
+                before_fill=[f for f in fields if f not in removed_uploads]
+                if digest(self._shape(self._pending_verification_fields(fresh,documents,body)))!=digest(self._shape(self._pending_verification_fields(before_fill,documents,body))):
+                    break
             if live and self.lever_resume:self.lever_resume.clear_unapproved_prefills(fields,answers,job['id'])
             try:self._verify_with_prepare_recovery(answers,documents,fields)
             except Blocked as error:

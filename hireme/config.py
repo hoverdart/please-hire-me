@@ -10,6 +10,7 @@ DEFAULTS = {
     "model_effort": "medium",
     "model_escalation": False,
     "remote_drafts": False,
+    "adaptive_browser": True,
     "deployment": "local",
     "max_attempts_per_cycle": 10,
     "max_model_requests_per_cycle": 40,
@@ -67,6 +68,7 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
     s = copy.deepcopy(DEFAULTS)
     s.update(copy.deepcopy(current or {}))
     s.update(changes)
+    if type(s['adaptive_browser']) is not bool:raise ValueError('Invalid adaptive_browser')
     import re
     aliases=s['gmail_confirmed_aliases']
     if (not isinstance(aliases,list) or len(aliases)>30 or any(not isinstance(a,str)
@@ -129,6 +131,7 @@ FACTS = {
     "full_name": "Full legal name", "first_name": "First name", "last_name": "Last name",
     "preferred_name": "Preferred name", "name_pronunciation": "How to pronounce your name, in your own spelling",
     "email": "Personal email", "alternate_email": "Alternate email (different from personal email)", "phone": "Phone",
+    "phone_type": "Phone type (Mobile or Landline)",
     "location": "Current city / state", "street": "Street address", "city": "City",
     "state": "State", "postal_code": "Postal code", "country": "Country of residence",
     "linkedin": "LinkedIn URL", "github": "GitHub URL", "website": "Website",
@@ -186,6 +189,8 @@ def validate_fact(key: str, value: str) -> str:
         raise ValueError("Replace placeholder values")
     if key in BOOLEANS and value not in ("Yes", "No"):
         raise ValueError("Answer exactly Yes or No")
+    if key=='phone_type' and value not in ('Mobile','Landline'):
+        raise ValueError('Answer exactly Mobile or Landline')
     if key=='high_school_graduation_year' and not re.fullmatch(r'(?:19|20)\d{2}',value):
         raise ValueError('Use a four-digit high school graduation year')
     if key in {"graduation", "college_start", "earliest_start", "latest_start"} and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):

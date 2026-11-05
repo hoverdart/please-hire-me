@@ -72,6 +72,11 @@ def test_ordinary_software_internship_does_not_require_a_degree_fact(store, job)
     'M.S. or Ph.D. student (or evidence of equivalent level of expertise) in Computer Science.',
     'Requirements:\n3 year PhD student and above.',
     'Qualifications:\nCurrently a Ph.D. candidate in Computer Science.',
+    'Qualifications:\nPh.D. candidate working in: computer vision, machine learning, robotics, or related fields.',
+    'Qualifications:\nPhD student working on computer vision systems.',
+    "Qualifications:\nMaster's student working in robotics.",
+    '<h3>Qualifications</h3><ul><li>Current MS or PhD student or recent graduate in Computer Science.</li></ul>',
+    'Qualifications:\nCurrent PhD student or a recent graduate in Computer Science.',
 ])
 def test_direct_student_standing_requirements_exclude_undergraduate_before_browsing(store,job,requirement):
     store.put_facts({'degree':'BS'})
@@ -97,6 +102,8 @@ def test_confirmed_doctoral_degree_does_not_invent_current_year_of_study(store,j
 @pytest.mark.parametrize('description',[
     'PhD students mentor interns on our team. Build Python software.',
     'PhD students in our team mentor interns. Build Python software.',
+    'PhD students working in our team mentor interns. Build Python software.',
+    "Master's students working in our lab mentor interns. Build Python software.",
     'Our team includes second-year PhD students. Build Python software.',
     'You must collaborate with second-year PhD students. Build Python software.',
     'PhD student preferred. Build Python software.',

@@ -44,6 +44,22 @@ def test_snapshot_keeps_malformed_exact_ids_and_ignores_acknowledged_steps(store
     assert not snapshot.blocks(other) and not snapshot.blocks(completed)
 
 
+def test_dashboard_hold_annotations_bound_alias_scans_and_refresh_per_request(store,job):
+    from hireme.job_holds import annotate
+    original=posting(store,job);marker(store,original)
+    aliases=[posting(store,job,'alias-'+str(i)) for i in range(100)]
+    for alias in aliases:hold(store,alias,'missing_answers')
+    statements=[];store.db.set_trace_callback(statements.append)
+    try:result=annotate(store,[{**alias,'status':'blocked'} for alias in aliases])
+    finally:store.db.set_trace_callback(None)
+    assert all(row['hold']['reason']=='ashby_draft_uncertain' for row in result)
+    broad_scans=[sql for sql in statements if 'JOIN' in sql and 'remote_draft_steps' in sql]
+    assert len(broad_scans)<=2
+    store.db.execute("UPDATE remote_draft_steps SET state='acknowledged' WHERE job_id=?",(original['id'],))
+    refreshed=annotate(store,[{**aliases[0],'status':'blocked'}])
+    assert refreshed[0]['hold']['reason']=='missing_answers'
+
+
 def test_worker_uses_one_screening_snapshot_per_transaction_batch(store,job,monkeypatch):
     import hireme.worker as worker
     for number in range(101):

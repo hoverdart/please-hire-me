@@ -77,9 +77,12 @@ def main(argv=None):
     p=sub.add_parser('login');p.add_argument('url')
     p=sub.add_parser('connection',help='Manage an optional job-platform connection on this machine')
     p.add_argument('platform',choices=['handshake','workatastartup'])
-    p.add_argument('action',choices=['connect','check','status','disconnect','discover'])
+    p.add_argument('action',choices=['connect','check','status','disconnect','discover','inspect'])
+    p.add_argument('--job-id',help='Saved platform job to inspect for an external ATS application')
     p=sub.add_parser('import-legacy');p.add_argument('path',type=Path,default=REPO,nargs='?')
     args=parser.parse_args(argv)
+    if args.command=='connection' and args.action=='inspect' and not args.job_id:
+        parser.error('connection inspect requires --job-id')
     os.umask(0o077)
     if args.command=='backup-agent':
         from .backup_agent import run_agent,install_agent
@@ -297,7 +300,8 @@ def main(argv=None):
             from .util import canonical_url,public_host
             from urllib.parse import urlsplit
             url=canonical_url(args.url);host=urlsplit(url).hostname
-            if host not in ATS_HOSTS|PORTAL_HOSTS or not public_host(host):raise ValueError('Unapproved portal')
+            from .workday_site import is_workday_url
+            if (host not in ATS_HOSTS|PORTAL_HOSTS and not is_workday_url(url)) or not public_host(host):raise ValueError('Unapproved portal')
             from playwright.sync_api import sync_playwright
             with worker_lock(store.root,'browser'),sync_playwright() as p:
                 from .util import private_dir
@@ -319,10 +323,12 @@ def main(argv=None):
                         from .workday_sessions import read_profile,capture
                         capture(store,ctx,read_profile(page))
                 finally:ctx.close()
-            store.update_settings({'signed_in_portals':sorted(set(store.settings()['signed_in_portals'])|{host})})
+            from .browser_login import login_completed
+            login_completed(store,host)
         elif args.command=='connection':
             from . import platform_connections as pc
             if args.action=='status':result=pc.status(store,args.platform)
+            elif args.action=='inspect':result=pc.inspect_listing(store,args.platform,args.job_id)
             elif args.action=='discover':
                 with worker_lock(store.root),worker_lock(store.root,'browser'):
                     result=pc.discover(store,args.platform)

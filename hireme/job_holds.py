@@ -55,6 +55,9 @@ ELIGIBILITY_INPUTS = {
 }
 
 def category(reason):
+    if reason=='browser_draft_uncertain':return 'review'
+    if reason in {'browser_identity_unverified','browser_identity_mismatch','browser_profile_changed'}:return 'account'
+    if reason in {'browser_no_progress','browser_operation_blocked','browser_step_limit','browser_preparation_incomplete'}:return 'mapping'
     if reason=='prior_application_email':return 'mail'
     if reason.startswith('prior_application_'):return 'limits'
     if reason=='workday_schema_unreviewed':return 'unsupported'
@@ -89,6 +92,7 @@ def dependency(store, job, kind, reason=None):
         from .workday_profiles import owner_hash,profile_binding,transport,operational_evidence
         profile=transport(job['host'])
         workday={'version':VERSION,'profile':profile.signature if profile else None,
+            'ui_executor':1 if store.settings()['adaptive_browser'] else None,
             'binding':profile_binding(store,job['host']),'owner':owner_hash(store),
             'verified':[tuple(sorted(row.items())) for row in operational_evidence(store,job['host'],VERSION)],
             'remote_drafts':store.settings()['remote_drafts']}
@@ -101,7 +105,7 @@ def dependency(store, job, kind, reason=None):
         from .platform_connections import configuration,VERSION
         connection_id=job.get('connection_id')
         if connection_id:
-            return digest({'version':VERSION,'connection':configuration(store,connection_id),
+            return digest({'version':VERSION,'external_routing':1,'ui_executor':store.settings()['adaptive_browser'],'connection':configuration(store,connection_id),
                 'flows':[tuple(row) for row in store.db.execute('SELECT capability,version,signature,evidence,verified FROM connection_flows WHERE connection_id=? ORDER BY capability,signature',(connection_id,))],
                 'facts':store.facts(),'documents':[tuple(row) for row in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')],
                 'posting':posting.get('_listing_hash')})
@@ -121,7 +125,22 @@ def dependency(store, job, kind, reason=None):
             from .policy import CITIZENSHIP_VERSION
             data['citizenship_policy']=CITIZENSHIP_VERSION
         return digest(data)
-    data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION}
+    data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION,
+          'adaptive_browser':store.settings()['adaptive_browser']}
+    if reason and reason.startswith('browser_'):data['remote_drafts']=store.settings()['remote_drafts']
+    if kind in {'mapping','transient','unsupported'}:
+        data['browser_channel']=store.settings()['browser_channel']
+    if reason=='writing_unsupported' or (reason=='missing_answers' and store.db.execute(
+            "SELECT 1 FROM questions WHERE job_id=? AND resolved=0 AND reason='writing_unsupported' LIMIT 1",
+            (job['id'],)).fetchone()):
+        from .answers import WRITING_SOURCE_VERSION
+        data['writing_sources']=WRITING_SOURCE_VERSION
+    if kind in {'information','mapping','documents','transient'} or reason in {'provider_unavailable','provider_cli_incompatible'}:
+        # A repaired model connection can resolve an unattempted form, including
+        # mixed forms with both provider failures and missing facts. This is
+        # below safe_state/draft checks and cannot release an uncertain write.
+        settings=store.settings()
+        data['provider']={key:settings[key] for key in ('provider','provider_model','model_effort','model_escalation')}
     if reason=='ashby_submission_unsupported':
         from .ashby_submission import VERSION
         data['ashby_submission']=VERSION
@@ -139,12 +158,16 @@ def dependency(store, job, kind, reason=None):
         from .answers import AUTOMATIC_ANSWER_VERSION
         data['automatic_answers']=AUTOMATIC_ANSWER_VERSION
         data['history']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed FROM confirmed_history ORDER BY id')]
-        data['answers']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM answers ORDER BY id')]
+        scopes=sorted({job['host'],job['host']+'|'+store.company(job['company']),job.get('answer_scope',job['host'])})
+        data['answers']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM answers WHERE host IN ('
+            +','.join('?' for _ in scopes)+') ORDER BY id',scopes)]
         data['templates']=[tuple(r) for r in store.db.execute('SELECT id,revision FROM templates ORDER BY id')]
         data['documents']=[tuple(r) for r in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')]
         data['document_files']=[(r['filename'], (store.root/'documents'/r['filename']).stat().st_mtime_ns if (store.root/'documents'/r['filename']).is_file() else None) for r in store.db.execute('SELECT filename FROM documents ORDER BY kind')]
         data['materials']=[tuple(r) for r in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
     if kind=='account':
+        login=store.db.execute("SELECT seq FROM events WHERE kind='browser_login_completed' AND subject=? ORDER BY seq DESC LIMIT 1",(job['host'],)).fetchone()
+        if login:data['browser_login_revision']=login['seq']
         data['accounts']=[tuple(r) for r in store.db.execute('SELECT id,state,updated FROM employer_accounts ORDER BY id')]
         from .accounts import account_key
         key=account_key('https://'+job['host'],store.company(job['company']))
@@ -187,6 +210,8 @@ def ready(store, job, at=None, ashby_snapshot=None):
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':
+        if row['reason'] in {'provider_unavailable','provider_cli_incompatible'}:
+            return row['dependency']!=dependency(store,job,'review',row['reason'])
         if row['reason']=='ambiguous_experience':
             # Legacy screening holds were classified as manual reviews. Only
             # revalidate this one policy reason, never an application attempt
@@ -245,7 +270,7 @@ def hold(store, job, reason, detail='', stage='application', at=None):
         'limits':'Wait for existing company or daily limits to clear.',
         'review':'Review this failure before allowing another attempt.'}
     if reason=='model_budget_exhausted':guidance[kind]='Approve the unanswered fields, or wait for the next model allowance. Request limits remain unchanged.'
-    if reason in REASON_GUIDANCE and (reason.startswith(('workday_','prior_application_')) or reason in {'ashby_draft_save_failed','ashby_draft_uncertain','remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
+    if reason in REASON_GUIDANCE and (reason.startswith(('workday_','prior_application_','browser_')) or reason in {'ashby_draft_save_failed','ashby_draft_uncertain','remote_draft_uncertain','remote_draft_permission_required','history_confirmation_required','history_changed'}):
         guidance[kind]=REASON_GUIDANCE[reason][1]
     # References and field labels only: no answer values, passwords, or OTPs.
     evidence={'stage':stage,'category':kind,'field':str(detail)[:300] if reason in FACT_REASONS|MAPPING_REASONS else '',
@@ -259,13 +284,16 @@ def hold(store, job, reason, detail='', stage='application', at=None):
 def clear(store,job_id):store.db.execute('DELETE FROM job_holds WHERE job_id=?',(job_id,))
 
 def annotate(store,jobs):
+    # Display one consistent alias-hold view for this request. Transport checks
+    # continue to query current durable state immediately before every write.
+    from .ashby_guard import screening_snapshot
+    ashby_snapshot=screening_snapshot(store)
     for job in jobs:
         if job.get('status')!='blocked':continue
         row=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
         if row:
             job['hold']={**json.loads(row['evidence']),'reason':row['reason'],'retry_at':row['retry_at'],'retry_count':row['retry_count']}
-            from .ashby_guard import uncertain,legacy_failed
-            ashby_uncertain=uncertain(store,job['id']) or legacy_failed(store,job['id'])
+            ashby_uncertain=ashby_snapshot.blocks(job)
             if ashby_uncertain:
                 job['hold'].update(reason='ashby_draft_uncertain',category='review',retry_at=None,next_action=REASON_GUIDANCE['ashby_draft_uncertain'][1])
             elif row['reason']=='ashby_draft_save_failed':

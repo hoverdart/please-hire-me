@@ -1,5 +1,7 @@
 # HireMeMaybe
 
+Multi-step applications now have an [adaptive local browser executor](docs/ats-reliability.md): it observes the current screen, fills confirmed answers, verifies uploads, saves steps and checks the final receipt. It covers fresh Workday postings and supported ATS fallbacks without attaching to your personal browser. Enable remote draft saves for live multi-step applications; employer sign-in and unknown questions remain visible in the dashboard.
+
 **A self-hosted AI agent that finds jobs, builds tailored applications, submits supported applications, and tracks the results.**
 
 I got tired of applying to the same kinds of jobs, day after day, and entering the same information, application after application.
@@ -54,7 +56,7 @@ For a different private workspace, put the same absolute `--data-dir` before **e
 
 A checkout is code; the private workspace is your applicant identity and history. Move between machines with a [history backup and restore](docs/guide.md#back-up-and-move-your-data), then reconnect credentials on the destination. Use one active worker per applicant.
 
-Applications use isolated browser sessions. Supported unattended forms require approved answers and documents, a reviewed native transport, and a matching employer acknowledgement and receipt. Unknown controls or changed questions hold the application before further writes. CAPTCHA handoffs require an opt-in visible session; unsupported forms need manual completion. An uncertain outcome stays protected until independently reconciled. See the [reliability changes and remaining release gates](docs/reliability-rc14.md).
+Applications use isolated browser sessions. The worker executes supported forms through a reviewed native transport or the adaptive UI executor, with approved answers and documents and a matching employer acknowledgement and receipt. Unknown controls or changed questions hold the application before further writes. CAPTCHA handoffs require an opt-in visible session; unsupported forms need manual completion. An uncertain outcome stays protected until independently reconciled. See the [execution evidence and limits](docs/ats-reliability.md).
 
 ## Try it without personal data
 
@@ -139,13 +141,14 @@ Use **Past applications from email** to scan an employer or build a broader hist
 - Model inference uses your selected remote provider. Claude Code and Codex subscription modes reject API-only authentication; paid API usage must be selected explicitly. Request counters measure this worker's usage, not your vendor balance.
 - Submission budgets, durable intents and local locks limit work and preserve uncertain outcomes across restarts.
 - Login walls, CAPTCHA, unknown questions, unsupported controls and ambiguous receipts need manual review. Discovering an ATS posting does not establish support for its application form.
+- Saved Handshake and Work at a Startup listings can use **Find employer application** in job details to inspect an explicit external ATS link, including while submissions are paused. A matching employer requisition is queued for a later batch; routing does not record a submission. Enabled platform applications can also use the adaptive browser when confirmed answers, account identity and exact documents can be verified. Fixed native transports remain independently gated.
 - An optional visible-browser wait lets you complete a post-click challenge on compatible Ashby forms within the existing attempt. It starts disabled and is capped at 600 seconds. The worker does not solve the challenge or retry an uncertain application.
 - Optional Gmail handles recognized Greenhouse verification codes, batch reports and recruiting-feedback suggestions. Review matching acknowledgements, assessments, interviews, rejections and offers against an exact application attempt. Inbox text stays out of models, and reviewed feedback never changes submission status or authorizes a retry.
 - Opt-in Gmail history checks find past applications made outside this app. Exact posting or company/role matches hold duplicate applications before the browser opens; company-only mail can be linked to an exact saved role after review. The first scan includes archived mail, Spam and Trash without a date cutoff.
 - **Answers & evidence** joins an attempt's posting identity, exact document references, submission outcome, reviewed recruiting feedback and next action. Export its private JSON record or download the original recorded PDFs. New attempts capture posting identity; older records clearly label unavailable historical context.
 - **Recruiting Insights** in Applications compares reviewed responses by company, exact role title, source and resume PDF. Choose a response window and inspect the attempts behind each metric. Recent or uncertain submissions do not enter mature-response denominators; missing feedback is not a rejection.
 
-The configured release-candidate version is **0.5.0rc14**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). Stable-release validation remains incomplete; see the [release status](docs/public-release.md) for capability limits and remaining gates. Each applicant runs a private local instance.
+The configured release-candidate version is **0.5.0rc15**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). This candidate adds adaptive multi-step applications with live NVIDIA Workday receipt evidence; see the [candidate notes](docs/reliability-rc15.md) and [release status](docs/public-release.md) for tested scope and remaining limits. Each applicant runs a private local instance.
 
 ## Guides and development
 

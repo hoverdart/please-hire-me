@@ -6,6 +6,9 @@ embed.job_app-CgQ1D6ea.js, SHA256
 30542f66f9ea490d54bdc45ddb843f37b937fe208e8b6f8887769db2807186ee.
 Pelias city formatting: vendor-Ann2cuF6.js, SHA256
 3ad72a1df8aa7ef0b61ffc534c09cc689174e47e38a491735eab005dcef2da18.
+EEOC localization and single custom checkbox encoding reviewed 2026-11-01:
+entry.client-C2IOVNfH.js, SHA256
+a7e2d38ee080a0e27a2bc60eb23e5ae962ec9f2ca199114f192290aca77b6e00.
 Its response.ok acknowledgement still requires the exact confirmation route and
 a fresh completed-application receipt. Unknown/legacy encodings remain held.
 """
@@ -415,8 +418,14 @@ class GreenhouseSubmission:
                 if question is not None:
                     label = question.get('label')
                     approved = found[0][1]['field'].get('label')
+                    # The English EEOC renderer localizes this canonical API
+                    # label. This alias changes no approved demographic value.
+                    race_label = (name == 'race' and label == 'Race'
+                        and _identity(found[0][1]['field']) == {'race'}
+                        and isinstance(approved, str)
+                        and ' '.join(approved.split()).rstrip(' *✱') == 'Please identify your race')
                     if (not isinstance(label, str) or not isinstance(approved, str)
-                            or ' '.join(label.split()).rstrip(' *✱') != ' '.join(approved.split()).rstrip(' *✱')):
+                            or (not race_label and ' '.join(label.split()).rstrip(' *✱') != ' '.join(approved.split()).rstrip(' *✱'))):
                         _unsupported()
                 consumed.add(found[0][0])
                 return found[0][1]['value']
@@ -426,6 +435,31 @@ class GreenhouseSubmission:
             labels = [choice.get('label') for choice in choices]
             if len(labels) != len(set(labels)) or not all(isinstance(label, str) for label in labels):
                 _unsupported()
+            name = question['fields'][0].get('name')
+            found = [a for a in answers if name in _identity(a['field'])]
+            if len(found) == 1 and found[0]['field']['type'] == 'checkbox':
+                field = found[0]['field']
+                if (question['fields'][0].get('type') != 'multi_value_multi_select' or len(choices) != 1
+                        or field.get('options') != ['Yes', 'No'] or value not in {'Yes', 'No'}
+                        or type(choices[0].get('value')) not in (str, int)):
+                    _unsupported()
+                identifier = str(choices[0]['value'])
+                ref = field.get('ref', {})
+                if (not re.fullmatch(r'[0-9]{1,24}', identifier)
+                        or ref.get('id') != name + '_' + identifier or ref.get('name') != name
+                        or field.get('refs', [ref]) != [ref]):
+                    _unsupported()
+                control = self.browser._control(field).evaluate('''e => ({
+                    id:e.id,name:e.name,type:e.type,value:e.value,checked:e.checked,
+                    labels:Array.from(e.labels||[]).map(l=>l.textContent.trim())})''')
+                if (not isinstance(control, dict) or control.get('id') != ref['id']
+                        or control.get('name') != name or control.get('type') != 'checkbox'
+                        or control.get('value') != identifier or control.get('checked') is not (value == 'Yes')
+                        or control.get('labels') != [labels[0]]):
+                    _unsupported()
+                if question.get('required') and value == 'No':
+                    raise Blocked('required_answer_missing', field['label'])
+                return [identifier] if value == 'Yes' else []
             from .answers import selections
             chosen = selections(value, labels)
             if not chosen:

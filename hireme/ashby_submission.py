@@ -16,7 +16,7 @@ from .util import Blocked, digest
 
 
 # Reviewed public client operations, including their read-only fragments.
-VERSION = 3
+VERSION = 4
 SINGLE_QUERY='d864727b5ae0be0e85510892f568d41013b931c09cd6cc4996763dc12873aa7a'
 MULTIPLE_QUERY='15686c0685d88037f73c7c7000e0714455bc118c808c56af965ee6c32042f376'
 COMMON={'organizationHostedJobsPageName','jobPostingId','recaptchaToken','sourceAttributionCode',
@@ -63,6 +63,7 @@ class AshbySubmission:
         self.draft=draft;self.store=draft.store;self.aid=application_id;self.used=False
         self.acknowledged=False;self.failed=False;self.response_seen=False;self.request_signature=None
         self.write_deadline=time.monotonic()+45
+        self.denial={}
         if not draft.identity or not draft.complete:
             raise Blocked('ashby_submission_unsupported','The approved employer draft is not acknowledged')
         row=self.store.db.execute('SELECT * FROM applications WHERE id=?',(application_id,)).fetchone()
@@ -124,6 +125,7 @@ class AshbySubmission:
                 raise Blocked('ashby_submission_unsupported','An approved field acknowledgement changed')
 
     def allow(self,request,data):
+        self.denial={'reason':'expired_or_changed_envelope'}
         if (self.used or time.monotonic()>=self.write_deadline
                 or not isinstance(data,dict) or set(data)!={'operationName','query','variables'}):return False
         parsed=urlsplit(request.url)
@@ -131,6 +133,7 @@ class AshbySubmission:
                 or parsed.path!='/api/non-user-graphql' or parsed.port not in (None,443)
                 or parsed.username or parsed.password or parsed.fragment):return False
         multiple=bool(self.surveys)
+        self.denial={'reason':'operation_or_variable_schema'}
         operation='ApiSubmitMultipleFormsAction' if multiple else 'ApiSubmitSingleApplicationFormAction'
         if parse_qsl(parsed.query,keep_blank_values=True) not in ([],[('op',operation)]):return False
         query=data.get('query');variables=data.get('variables')
@@ -139,6 +142,7 @@ class AshbySubmission:
                 or not isinstance(variables,dict) or set(variables)-(COMMON|(MULTIPLE if multiple else SINGLE))):return False
         render,definition,action=self.application
         tenant=variables.get('organizationHostedJobsPageName')
+        self.denial={'reason':'posting_tenant'}
         if not isinstance(tenant,str) or tenant.casefold()!=self.tenant:return False
         expected={'jobPostingId':self.posting,
                   'sourceAttributionCode':self.attribution,'viewedAutomatedProcessingLegalNoticeRuleId':self.notice,
@@ -148,17 +152,28 @@ class AshbySubmission:
                 applicationFormActionIdentifier=action,surveyIdentifiers=[
                     {'formRenderId':r,'sourceFormDefinitionId':d,'actionIdentifier':a} for r,d,a in self.surveys])
         else:expected.update(formRenderIdentifier=render,formDefinitionIdentifier=definition,actionIdentifier=action)
-        if any(not same(variables.get(key),value) for key,value in expected.items()):return False
+        mismatched=[key for key,value in expected.items() if not same(variables.get(key),value)]
+        if mismatched:
+            self.denial={'reason':'native_form_identity','fields':sorted(mismatched)}
+            return False
         # These values are produced by the employer's verification client, never
         # by the model. Their contents are not written to events or the ledger.
         token=variables.get('recaptchaToken');fingerprint=variables.get('deviceFingerprint')
+        self.denial={'reason':'native_verification_shape','token_length':len(token) if isinstance(token,str) else None,
+            'fingerprint_length':len(fingerprint) if isinstance(fingerprint,str) else None,
+            'fingerprint_type':type(fingerprint).__name__}
         if not isinstance(token,str) or not 0<len(token)<=20000:return False
-        if fingerprint is not None and (not isinstance(fingerprint,str) or len(fingerprint)>2000):return False
+        # The current official client produces opaque session strings over
+        # 3,800 characters. This is verification metadata, not applicant data;
+        # retain its native bytes within the same bounded token envelope.
+        if fingerprint is not None and (not isinstance(fingerprint,str) or len(fingerprint)>20000):return False
+        self.denial={'reason':'approval_or_deadline'}
         if not self.valid_intent() or time.monotonic()>=self.write_deadline:return False
         self.boundary.check()
         if time.monotonic()>=self.write_deadline:return False
         self.used=True
         self.request_signature=(request.url,request.method,digest(data))
+        self.denial={}
         self.store.event('ashby_submission_write',self.aid,{'operation':operation,'survey_forms':len(self.surveys)})
         return True
 

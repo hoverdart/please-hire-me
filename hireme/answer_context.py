@@ -3,7 +3,7 @@ import re
 
 
 GENERIC_WORK_COUNTRY = re.compile(
-    r'\b(?:the )?country (?:where|for which|in which|of (?:the )?(?:role|position|employment))\b|\b(?:this|that) country\b', re.I)
+    r'\b(?:the )?country (?:where|for which|in which|of (?:the )?(?:role|position|employment))\b|\b(?:this|that) country\b|\[country\]', re.I)
 
 
 def employment_country_question(label):

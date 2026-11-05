@@ -131,7 +131,7 @@ def test_coverage_counts_attempts_before_submit_and_workday_limits(store,job):
     group=next(g for g in result['groups'] if g['source']=='test')
     assert group['attempted']==1 and group['confirmed']==0
     workday=[g for g in result['groups'] if g['ats']=='Workday']
-    assert len(workday)==5 and all(g['account_required'] and g['application_capability']=='manual completion' for g in workday)
+    assert len(workday)==5 and all(g['account_required'] and g['application_capability']=='adaptive application browser' for g in workday)
     nvidia=next(g for g in workday if g['source']=='portal:Nvidia')
     assert nvidia['configured'] and nvidia['discovered']==1
     assert not group['configured']

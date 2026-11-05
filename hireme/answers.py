@@ -7,7 +7,8 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 3
+AUTOMATIC_ANSWER_VERSION = 6
+WRITING_SOURCE_VERSION = 3
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
@@ -22,7 +23,7 @@ RULES = [
     (r"^(street address|address line 1)\*?$", "street"), (r"^country( of residence)?\*?$", "country"),
     (r"^linkedin( profile)?( url| link)?\*?$", "linkedin"), (r"^github( profile)?( url| link)?\*?$", "github"),
     (r"^(website|personal website|portfolio)( url| link)?\*?$", "website"),
-    (r"^(school|university|college|school name|university name|college\s*/\s*university|university\s*/\s*college)\*?$", "school"),
+    (r"^(school|university|college|school name|university name|school (?:or|/) university|college\s*/\s*university|university\s*/\s*college)\*?$", "school"),
     (r"^(major|field of study|discipline|discipline\s*/\s*field of study)\*?$", "major"), (r"^(cumulative )?gpa\*?$", "gpa"),
     (r"^(expected |anticipated )?graduation( date| semester| term| season| month| year| month\s*/\s*year| month and year)?\*?$", "graduation"),
     (r"^are you (legally )?authorized to work in (the )?(united states|us|u\.s\.)\??\*?$", "work_authorized_us"),
@@ -98,6 +99,7 @@ def field_key(label):
     if re.fullmatch(r'have you worked with humanoids',label):return 'humanoids_experience'
     if re.match(r'when will you be available to work as a full.time,? permanent employee\?',label):return 'fulltime_start'
     if re.fullmatch(r'if offered a full.time position upon graduation,? what is your earliest available start date',label):return 'fulltime_start'
+    if re.fullmatch(r'if given a return offer(?: \(not guaranteed\))?,? what year would you be able to start',label):return 'fulltime_start'
     if re.fullmatch(r'(?:earliest (?:available )?start(?: date)?|available start date|start date availability)',label):return 'earliest_start'
     if re.fullmatch(r'what is the earliest date you are available to start (?:this|the) (?:position|role|job)',label):return 'earliest_start'
     if re.search(r'\bhigh school\b',label):
@@ -105,7 +107,8 @@ def field_key(label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
         if re.fullmatch(pattern,label): return key
-    if re.fullmatch(r'(?:phone )?(?:country|dial|calling) code',label):return 'phone'
+    if re.fullmatch(r'(?:phone )?(?:country|dial|calling) code|country phone code',label):return 'phone'
+    if re.fullmatch(r'(?:phone|telephone)(?: number| device)? type',label):return 'phone_type'
     if label=='consent to receiving text messages':return 'sms'
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
     if re.fullmatch(r'(?:please )?(?:select|indicate|enter) the country where you (?:currently )?(?:reside|live)\.?',label):return 'country'
@@ -132,6 +135,8 @@ def field_key(label):
     if re.search(r'(?:zip|postal) code.*(?:primary residence|home|address)',label):return 'postal_code'
     if re.search(r'confirm.*availability.*summer\s*2027',label):return 'summer_2027_available'
     if re.search(r"(?:which|what).*(?:college|university|school).*(?:attend|enroll)|name of (?:your |the )?(?:college|university|school)",label):return 'school'
+    if re.fullmatch(r'(?:please )?select (?:a |your )?(?:university or college|college or university)',label):return 'school'
+    if re.fullmatch(r'current (?:school or university|university or school)',label):return 'school'
     if re.fullmatch(r"(?:current |pursuing |academic )?degree(?: type)?",label):return 'degree'
     if re.search(r'\bdegree\b.*\b(?:currently pursuing|pursuing|working (?:toward|towards|on))\b',label) and not re.search(r'completed|earned|obtained',label):return 'degree'
     if re.search(r'when.*(?:expect|plan).*graduat|(?:expected|anticipated).*graduation|what year.*graduat|^when (?:do|will) you graduate$',label):return 'graduation'
@@ -145,6 +150,7 @@ def field_key(label):
 
 
 def category(label):
+    if re.search(r'\b(?:description|overview|summary)\b.{0,60}\b(?:projects?|work (?:you|that you))\b',label,re.I):return 'project'
     if re.search(r"^what is your (?:prior |previous |relevant )?experience (?:with|in|related to)\b",label.strip(),re.I):return 'experience'
     if re.search(r'what qualities.{0,150}(?:great|successful).{0,180}(?:how|skills|experiences)|(?:how|why).{0,100}(?:skills|experiences|background).{0,100}(?:best|good|strong|ideal) candidate',label,re.I):return 'experience'
     if re.search(r'what (?:are you )?(?:most )?excited (?:to|about)',label,re.I):return 'motivation'
@@ -213,6 +219,8 @@ def _option_value(key, value, options, context=None):
                   'ms':{"master", "masters", "mastersdegree", "masterofscience"}},
         'country':{'unitedstates':{"us", "usa", "unitedstatesofamerica","unitedstates1"}},
         'state':{'ca':{'california'},'california':{'ca'}},
+        'major':{'electricalengineeringandcomputersciences':{'electricalengineeringandcomputerscience'}},
+        'phone_type':{'mobile':{'cell','cellular','mobilephone','homecellular'},'landline':{'home','homephone','homelandline'}},
         'pronouns':{'hehim':{'hehimhis'},'sheher':{'sheherhers'},'theythem':{'theythemtheirs'}},
         'location':{'berkeleyca':{'berkeleycaliforniaunitedstates','berkeleycaunitedstates','berkeleycalifornia','berkeleycausa'}},
         'citizenship':{'unitedstates':{"us", "usa", "unitedstatesofamerica"}},
@@ -343,7 +351,7 @@ def _discovery_answer(label, options, context):
         answer=names.get(source.split(':',1)[0]) if ':' in source else None
         return {'value':answer,'provenance':{'job_source':source}} if answer else None
     normal=lambda x:re.sub(r'[^a-z0-9]','',x.casefold())
-    preferred=['companywebsite','companycareerssite','companycareerspage'] if source.startswith(('gh:','ash:','lv:','portal:')) else ['jobboard','onlinejobboard']
+    preferred=['companywebsite','companycareerssite','companycareerspage','careerswebsite','website'] if source.startswith(('gh:','ash:','lv:','portal:')) else ['jobboard','onlinejobboard']
     company=normal(context.get('company',''))
     if company and source.startswith(('gh:','ash:','lv:','portal:')):
         # ATS boards sometimes abbreviate their employer in the source choice:
@@ -353,13 +361,68 @@ def _discovery_answer(label, options, context):
         first=normal(re.split(r'[\s_-]+',context.get('company','').strip())[0])
         brands=[company]+([first] if len(first)>=4 and first!=company else [])
         preferred=[brand+kind for brand in brands for kind in
-                   ('careerswebsite','careerssite','careerspage','websitecareerspage','website')]+preferred
+                   ('careerswebsite','careerssite','careerspage','websitecareerspage','website','com')]+preferred
     unions=[x for x in options if re.search(r'(?:/|\bor\b)\s*(?:online )?job board\s*$',x,re.I)]
     for candidate in preferred+['other']:
         matches=[x for x in options if normal(x)==candidate]
         if len(matches)==1:return {'value':matches[0],'provenance':{'job_source':source}}
     if len(unions)==1:return {'value':unions[0],'provenance':{'job_source':source}}
     return None
+
+
+def _phone_country_answer(store,field):
+    if not re.fullmatch(r'(?:phone )?(?:country|dial|calling) code|country phone code',field['label'].strip().rstrip(' *✱?:'),re.I):return None
+    facts=store.facts();phone=facts.get('phone');country=facts.get('country');location=facts.get('location')
+    if not phone:return None
+    from .field_context import present
+    code=present('phone',phone['value'],field)
+    if code!='+1':return None
+    if country and country['value'].strip().casefold() in {'us','usa','united states','united states of america'}:
+        evidence={'country_revision':country['revision']}
+    elif not country and location and re.fullmatch(r'Berkeley,?\s+(?:CA|California)(?:,?\s+United States)?',location['value'],re.I):
+        evidence={'location_revision':location['revision']}
+    else:return None
+    choices=[value for value in field.get('options',[]) if re.fullmatch(r'United States(?: of America)?\s*\(\+1\)',value,re.I)]
+    if len(choices)!=1:return None
+    return {'value':choices[0],'provenance':{'phone_country':{'phone_revision':phone['revision'],**evidence}}}
+
+
+def _employer_authorization_support(store,field,context):
+    label=' '.join(field['label'].strip().split()).rstrip(' *✱')
+    if not re.fullmatch(r'Will you require employer support to obtain or maintain authorization to work in that country\? e\.g\. \(work permit\)',label,re.I):return None
+    if not _us_location(work_country_location(context)):return None
+    facts=store.facts();premises={'work_authorized_us':'Yes','unrestricted_authorization':'Yes','needs_sponsorship':'No'}
+    if any(facts.get(key,{}).get('value')!=value for key,value in premises.items()):return None
+    options=field.get('options',[])
+    if options and options.count('No')!=1:return None
+    return {'value':'No','provenance':{'employer_authorization_support':{
+        key+'_revision':facts[key]['revision'] for key in premises}}}
+
+
+def _us_eeo_ethnicity(store,field,context):
+    if field_key(field['label'])!='race' or not _us_location(work_country_location(context)):return None
+    options=field.get('options',[])
+    annotated=[re.fullmatch(r'(.+)\s+\(United States of America\)',option,re.I) for option in options]
+    if not options or not all(annotated):return None
+    facts=store.facts();hispanic=facts.get('hispanic_latino');race=facts.get('race')
+    if not hispanic or hispanic['value'] not in {'Yes','No'}:return None
+    normalize=lambda text:re.sub(r'[^a-z0-9]','',text.casefold())
+    race_category=normalize(race['value']) if race else ''
+    # Translate an explicitly confirmed regional identity into the employer's
+    # broader EEO category; never derive identity from name or citizenship.
+    # https://www.eeoc.gov/federal-sector/management-directive/frequently-asked-questions-about-management-directive-715
+    if race_category in {'southeastasian','southasian','eastasian'}:race_category='asian'
+    matches=[]
+    for option,match in zip(options,annotated):
+        category=match[1].strip()
+        if hispanic['value']=='Yes' and normalize(category)=='hispanicorlatino':matches.append(option)
+        if hispanic['value']=='No' and race:
+            group=re.fullmatch(r'(.+)\s+\(Not Hispanic or Latino\)',category,re.I)
+            if group and normalize(group[1])==race_category:matches.append(option)
+    if len(matches)!=1:return None
+    evidence={'hispanic_latino_revision':hispanic['revision']}
+    if hispanic['value']=='No':evidence['race_revision']=race['revision']
+    return {'value':matches[0],'provenance':{'us_eeo_ethnicity':evidence}}
 
 
 def _local_campus_answer(store,label):
@@ -599,6 +662,49 @@ def _context_preference(store, label, options, context, field=None):
     return {'value':value,'provenance':{'contextual_preference':evidence}} if value else None
 
 
+def _routine_logistics(store, field, context):
+    """Observed compound questions, with every premise bound to current facts."""
+    label=' '.join(field['label'].casefold().split()).rstrip(' *✱?:')
+    facts=store.facts()
+    if (context.get('field_context',{}).get('ats')=='Lever'
+            and label=='if you selected other, please specify below' and field.get('required')
+            and field.get('type') in {'text','textarea'} and not field.get('options')):
+        previous=context.get('previous_answers',[])
+        parent=previous[-1] if previous else None
+        if parent and field_key(parent['field']['label'])=='degree':
+            before=parent['field'];provenance=parent.get('provenance',{});degree=facts.get('degree')
+            pattern=r'cards\[([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\]\[field([0-9]+)\]'
+            earlier=re.fullmatch(pattern,before.get('ref',{}).get('name',''),re.I)
+            current=re.fullmatch(pattern,field.get('ref',{}).get('name',''),re.I)
+            others=[v for v in before.get('options',[]) if re.match(r'^other\b',v.strip(),re.I)]
+            if (earlier and current and earlier[1]==current[1] and int(current[2])==int(earlier[2])+1
+                    and field.get('section','').startswith('Lever: ') and field['section']==before.get('section')
+                    and len(others)==1 and parent['value'] in before['options'] and parent['value']!=others[0]
+                    and degree and provenance.get('fact_key')=='degree' and provenance.get('revision')==degree['revision']):
+                return {'value':'Not applicable','provenance':{'conditional_degree_other':{
+                    'parent_field':digest(before),'parent_value':parent['value'],'degree_revision':degree['revision']}}}
+    if (label=='earliest start date. if applying for an internship, include your available dates.'
+            and not field.get('options') and field.get('type') in {'text','textarea'}):
+        from .policy import employment_kind
+        fact=facts.get('earliest_start')
+        if fact and employment_kind(context)=='internship':
+            # No end date or exact start day has been supplied.
+            return {'value':present('earliest_start',fact['value'],field),
+                    'provenance':{'routine_logistics':{'earliest_start_revision':fact['revision']}}}
+    local_questions={
+        'are you able and willing to work from our san francisco hq 5 days a week (or relocate if needed)',
+        'are you okay spending this internship in san francisco',
+        'relocation to san francisco is mandatory for this role. are you able to relocate and work in person in san francisco',
+    }
+    if label not in local_questions or set(field.get('options',[]))!={'Yes','No'}:return None
+    location=facts.get('location');onsite=facts.get('onsite')
+    if (not location or not onsite or onsite['value']!='Yes'
+            or not re.fullmatch(r'(?:Berkeley|San Francisco),?\s+(?:CA|California)(?:,?\s+United States)?',location['value'],re.I)):
+        return None
+    return {'value':'Yes','provenance':{'routine_logistics':{
+        'location_revision':location['revision'],'onsite_revision':onsite['revision']}}}
+
+
 def _context_pronunciation(store, field):
     """Read an explicitly approved spelling; never invent pronunciation from a name."""
     if (field_key(field['label'])!='name_pronunciation' or field.get('type') not in {'text','textarea'}
@@ -669,6 +775,7 @@ def _compatible_binding(key, label):
         'full_name':r'\bname\b', 'first_name':r'\bfirst.*name\b', 'last_name':r'\blast.*name\b',
         'preferred_name':r'preferred.*name|nickname|(?:should|may|can) we call you', 'native_name':r'native.*name|name.*native',
         'email':r'\be.?mail\b', 'alternate_email':r'\b(?:alternate|alternative|secondary|additional|other|backup) e.?mail\b', 'phone':r'phone|mobile|dial|calling code',
+        'phone_type':r'(?:phone|telephone)(?: number| device)? type',
         'location':r'location|located|based|resid|\bcity\b', 'street':r'street|address',
         'city':r'\bcity\b', 'state':r'\bstate\b|province', 'postal_code':r'postal|\bzip\b',
         'country':r'country|residen', 'linkedin':r'linkedin', 'github':r'github', 'website':r'website|portfolio',
@@ -702,7 +809,7 @@ def _compatible_binding(key, label):
         'finra_registered':r'^are you (?:currently )?registered with finra[? *]*$',
         'securities_licenses':r'^(?:are you actively maintaining|do you (?:actively )?(?:hold|maintain)) (?:any )?securities licenses[? *]*$',
         'over_18':r'^(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)[? *]*$',
-        'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?|^if offered a full.time position upon graduation,? what is your earliest available start date[? *]*$',
+        'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?|^if offered a full.time position upon graduation,? what is your earliest available start date[? *]*$|^if given a return offer(?: \(not guaranteed\))?,? what year would you be able to start[? *]*$',
         'nights_weekends':r'^are you willing and able to work nights and weekends[? *]*$',
         'robots_experience':r'^do you have experience working with robots[? *]*$',
         'humanoids_experience':r'^have you worked with humanoids[? *]*$',
@@ -867,7 +974,12 @@ def _approved_sentences(store, context):
     source_budget=24000-sum(len(x['text']) for x in fact_choices)
     if sum(len(x['text']) for x in choices)>source_budget:
         terms=set(re.findall(r'[a-z]{4,}',(context.get('title','')+' '+context.get('description','')).casefold()))
-        ranked=sorted(enumerate(choices),key=lambda item:(-len(terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),item[0]))
+        question_terms=set(re.findall(r'[a-z]{4,}',context.get('field_context',{}).get('label','').casefold()))
+        # A keyword-heavy context note must not crowd the current approved
+        # resume's dates, role headings and results out of its own evidence.
+        ranked=sorted(enumerate(choices),key=lambda item:('resume_hash' not in item[1],
+            -len(question_terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),
+            -len(terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),item[0]))
         selected=[];budget=source_budget
         for index,choice in ranked:
             if len(choice['text'])<=budget:
@@ -880,7 +992,7 @@ def _abstention_key(store, method, context):
     """Every input a structured model call sees. Retrying identical inputs only spends requests."""
     from .materials import writing_context_hash
     settings=store.settings()
-    return digest(['model_abstention',method,context['field_context'],writing_context_hash(store,context),
+    return digest(['model_abstention',WRITING_SOURCE_VERSION,method,context['field_context'],writing_context_hash(store,context),
                    {k:v['revision'] for k,v in store.facts().items()},sorted((t['id'],t['revision']) for t in store.templates()),
                    [r[0] for r in store.db.execute("SELECT hash FROM documents WHERE kind='resume'")],
                    [settings[k] for k in ('provider','provider_model','model_effort','model_escalation','tailored_writing')]])
@@ -993,7 +1105,16 @@ def resolve(store, host, field, provider=None, context=None):
     # This historical date cannot be inferred from a college start date. It
     # must use the explicit fact, including when older model writing is cached.
     explicit_year=field_key(label)=='high_school_graduation_year'
-    writing=None if explicit_year or student_confirmation else store.writing_answer(host,label,options)
+    graduation_confirmation=_graduation_confirmation(store,field)
+    saved=None if graduation_confirmation or student_confirmation else store.saved_answer(host,label,options,field=field,context=context)
+    if not saved:
+        ordinary=_phone_country_answer(store,field) or _employer_authorization_support(store,field,context) or _us_eeo_ethnicity(store,field,context)
+        if ordinary:
+            store.resolve_known_question(host,label,options,field=field,context=context)
+            return {'field':field,**ordinary}
+    # Exact saved approvals take precedence over generated answer caches.
+    # Chronological confirmations still use the current confirmed dates.
+    writing=None if explicit_year or student_confirmation or graduation_confirmation or saved else store.writing_answer(host,label,options)
     if writing:
         try:
             _validate_writing(store,writing)
@@ -1009,9 +1130,6 @@ def resolve(store, host, field, provider=None, context=None):
         else:
             store.resolve_known_question(host,label,options,field=field,context=context)
             return {'field':field,**writing}
-    graduation_confirmation=_graduation_confirmation(store,field)
-    # An old literal approval cannot override a comparison with the current date.
-    saved=None if graduation_confirmation or student_confirmation else store.saved_answer(host,label,options,field=field,context=context)
     if field.get('section_entry',0)>0 and field.get('section') in {'education','employment'} and not saved:
         if field.get('required') or field.get('value'):raise Blocked('repeated_entry_review','Confirm the answer for this specific '+field['section']+' entry')
         return None
@@ -1110,7 +1228,7 @@ def resolve(store, host, field, provider=None, context=None):
             template=next((t for t in choices if t['id']==selected),None)
         if graduation_confirmation:
             key=None;template=None;derived=graduation_confirmation
-        if not key and not derived:derived=_context_preference(store,label,options,context,field)
+        if not key and not derived:derived=_routine_logistics(store,field,context) or _context_preference(store,label,options,context,field)
         if not key and not template:derived=derived or _role_answer(label,options,context,store) or _resume_internship(store,label) or _discovery_answer(label,options,context) or _local_campus_answer(store,label) or _chronological_academic_year(store,label) or _current_enrollment(store,label,options) or _us_citizen_or_resident(store,label,options) or _export_citizenship_answer(store,label,options) or _cohort_answer(store,field,context)
         if key and key not in store.facts() and provider and store.settings()['tailored_writing'] and key in {'school','degree','major','skills','location','city','state','alternate_email'}:
             key=None  # Approved context may state an ordinary fact not separately entered.
@@ -1303,3 +1421,6 @@ def validate_package(store, job, package):
     if package.get('connection'):
         from .platform_browser import validate_connection_package
         validate_connection_package(store,job,package)
+    if package.get('browser_agent'):
+        from .browser_agent_protocol import validate_browser_package
+        validate_browser_package(store,job,package)

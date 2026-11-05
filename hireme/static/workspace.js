@@ -45,6 +45,7 @@
   const drafts = new Map();
   const pendingConnections = new Set();
   const pendingSuggestions = new Set();
+  const pendingRouting = new Set();
   const artifactForm = document.getElementById('artifact-form');
 
   function placeLedger() {
@@ -85,6 +86,7 @@
         const item=el('div');item.append(el('dt',label),el('dd',connection.capabilities[key].message));capabilities.append(item);
       }
       section.append(capabilities);
+      if(connection.ui_application)section.append(el('p',connection.ui_application.message,'help'));
       const actions=el('div',undefined,'actions');const statusLine=el('p',undefined,'help');
       for (const [action,label] of [['connect','Sign in'],['check','Check connection'],['discover','Search now'],['disconnect','Disconnect']]) {
         const button=el('button',label,'secondary');button.type='button';button.dataset.action=action;
@@ -101,7 +103,7 @@
         event.preventDefault();if(snapshot.demo||pendingConnections.has(connection.id))return;
         const data=Object.fromEntries([...form.querySelectorAll('input')].map(input=>[input.name,input.checked]));
         pendingConnections.add(connection.id);form.dataset.saving='true';section.querySelectorAll('button,input').forEach(c=>c.disabled=true);
-        try{await api(`/api/connections/${connection.id}/configure`,data);saved(form);await refresh();note('Connection settings saved. Unverified capabilities remain unavailable.');}
+        try{await api(`/api/connections/${connection.id}/configure`,data);saved(form);await refresh();note('Connection settings saved.');}
         catch(error){feedback(statusLine,error.message,true);}
         finally{form.dataset.saving='false';pendingConnections.delete(connection.id);restoreConnectionControls(section,connection.id);if(!dirtyForms.has(form)){connectionsSignature='';renderConnections(state);} }
       };
@@ -161,12 +163,40 @@
     for(const origin of job.origins||[]){const link=el('a',origin.connection_id==='handshake'?'Handshake listing':'Startup listing');link.href=origin.listing_url;link.target='_blank';link.rel='noopener noreferrer';context.append(link);}
     for(const conflict of job.identity_conflicts||[]){const candidate=conflict.candidate;context.append(el('h3','Identity review required'),el('p',conflict.detail,'help'),el('p',`${candidate.company} · ${candidate.title} · ${candidate.url}`,'help'));}
     if(job.application_capability&&!job.application_capability.available)context.append(el('p',job.application_capability.message,'help'));
+    const record=(ledgerState?.applications||state.applications).find(a=>a.job_id===job.id);
+    if(!job.connection_id&&job.hold?.category==='account'&&!['unknown','submitting','confirmed','awaiting_verification'].includes(record?.state)){
+      const login=el('button','Sign in to employer','secondary');login.type='button';
+      const status=el('p','Opens a separate application browser on the worker desktop. Close it after signing in.','help');status.setAttribute('role','status');
+      login.disabled=state.demo||state.worker_running;
+      login.onclick=async()=>{login.disabled=true;feedback(status,'Opening the dedicated employer browser…');
+        try{const result=await api('/api/employer-login',{job_id:job.id});if(request===jobRequest)feedback(status,result.message);}
+        catch(error){if(request===jobRequest)feedback(status,error.message,true);login.disabled=state.demo||state.worker_running;}};
+      context.append(login,status);
+    }
+    if(['handshake','workatastartup'].includes(job.connection_id)&&!record&&job.status!=='routed'){
+      const inspect=el('button','Find employer application','secondary');inspect.type='button';
+      const routingStatus=el('p','Checks this saved listing for an employer application link.','help');
+      routingStatus.setAttribute('role','status');let routed=false;
+      inspect.disabled=state.demo||state.worker_running||pendingRouting.has(job.id);
+      inspect.onclick=async()=>{
+        if(state.demo||state.worker_running||pendingRouting.has(job.id))return;
+        pendingRouting.add(job.id);inspect.disabled=true;
+        feedback(routingStatus,'Checking the saved listing in your dedicated platform browser…');
+        try{
+          const result=await api(`/api/connections/${job.connection_id}/inspect`,{job_id:job.id});
+          routed=Boolean(result.routed);
+          if(request===jobRequest)feedback(routingStatus,result.message);
+          await refresh();await loadLedger();
+        }catch(error){if(request===jobRequest)feedback(routingStatus,error.message,true);}
+        finally{pendingRouting.delete(job.id);inspect.disabled=routed||state.demo||state.worker_running;}
+      };
+      context.append(inspect,routingStatus);
+    }
     for(const question of state.questions.filter(q=>q.job_id===job.id)){const button=el('button',question.label,'secondary');button.type='button';button.onclick=async()=>{show('questions');if(!questionDrafts().length){document.getElementById('question-search').value=job.company;await loadQuestionLedger(true,true);}};context.append(el('p','Unresolved requirement: '+question.label,'help'),button);}
     const requirements=job.requirements||jobPayload(job).requirements||[];
     if(requirements.length){context.append(el('h3','Required materials'));for(const item of requirements)context.append(el('p',item.label||String(item),'help'));}
     const draft=drafts.get(job.id);artifactForm.elements.kind.value=draft?.kind||'introduction';artifactForm.elements.prompt.value=draft?.prompt||`Share something about you, what you are looking for, and why ${job.company} interests you for this ${job.title} role.`;
     writingPurpose();document.getElementById('artifact-status').textContent='';
-    const record=(ledgerState?.applications||state.applications).find(a=>a.job_id===job.id);
     const evidence=document.getElementById('job-record-evidence');evidence.replaceChildren();evidence.dataset.loaded='false';evidence.dataset.loading='false';evidence.dataset.applicationId=record?.id||'';
     const recordPanel=document.getElementById('job-record-panel');recordPanel.open=false;
     recordPanel.ontoggle=()=>{if(recordPanel.open){if(record)loadEvidence(record,evidence);else evidence.replaceChildren(el('p','No application package has been recorded for this job.','help'));}};

@@ -91,6 +91,42 @@ def test_one_native_post_rebuilds_approved_pdf_and_requires_correlated_native_ht
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='native_submission_write'").fetchone()[0]==1
 
 
+@pytest.mark.parametrize('change',['none','required','answered','extra_value','account','identity','choices','duplicate','wire_duplicate','wire_changed'])
+def test_unanswered_optional_survey_metadata_can_travel_without_inventing_demographics(store,lever,change):
+    identity='33333333-3333-4333-8333-333333333333'
+    field={'type':'multiple-choice','text':'Age range','description':'','required':False,
+        'id':'44444444-4444-4444-8444-444444444444','options':[{'text':'First range'},{'text':'Second range'}]}
+    template={'type':'survey','id':identity,'accountId':dict(lever.pairs)['accountId'],'fields':[field]}
+    if change=='required':field['required']=True
+    if change=='extra_value':field['value']='unapproved personal answer'
+    if change=='account':template['accountId']='another-account'
+    if change=='identity':template['id']='another-survey'
+    metadata=[(f'surveysResponses[{identity}][baseTemplate]',json.dumps(template)),
+        (f'surveysResponses[{identity}][surveyId]','55555555-5555-4555-8555-555555555555')]
+    lever.pairs.extend(metadata)
+    for name,value in metadata:
+        lever.form['controls'].append({'name':name,'type':'hidden','hidden':True,'value':value})
+        lever.form['entries'].append({'name':name,'value':value})
+    name=f'surveysResponses[{identity}][responses][field0]'
+    for index,value in enumerate(['First range','Second range']):
+        lever.form['controls'].append({'name':name,'type':'radio','hidden':False,
+            'value':'changed' if change=='choices' and index==0 else value,'checked':change=='answered' and index==0})
+    if change=='answered':lever.form['entries'].append({'name':name,'value':'First range'})
+    if change=='duplicate':lever.form['controls'].append(copy.deepcopy(lever.form['controls'][-4]))
+    if change=='wire_duplicate':lever.form['entries'].append({'name':metadata[0][0],'value':metadata[0][1]})
+    if change=='wire_changed':lever.form['entries'][-2]['value']='unreviewed metadata'
+    if change!='none':
+        with pytest.raises(Blocked,match='unsupported_form'):LeverSubmission(lever.browser,lever.job,lever.package,lever.aid)
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+        return
+    grant=LeverSubmission(lever.browser,lever.job,lever.package,lever.aid)
+    store.begin_submit(lever.aid);req=request(lever)
+    outgoing=grant.grant(req,key(req))
+    assert outgoing and name.encode() not in outgoing['post_data']
+    assert metadata[0][0].encode() in outgoing['post_data']
+    grant.observe(response(req),key(req));assert grant.acknowledged
+
+
 @pytest.mark.parametrize('change',['answer','account','storage','extra','captcha','duplicate','file','url','method'])
 def test_native_body_identity_and_approved_content_cannot_change(store,lever,change):
     grant=LeverSubmission(lever.browser,lever.job,lever.package,lever.aid);store.begin_submit(lever.aid)

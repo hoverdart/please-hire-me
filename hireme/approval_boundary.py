@@ -18,7 +18,7 @@ SETTINGS = ('live_enabled', 'onboarding_complete', 'roles', 'seniority', 'locati
             'interview_companies', 'company_aliases', 'max_per_company',
             'company_cooldown_days', 'max_per_day', 'timezone', 'headless',
             'human_verification_wait_seconds', 'human_verification_handoff', 'remote_drafts', 'employer_accounts',
-            'contextual_preferences', 'signed_in_portals', 'tailored_writing', 'cover_letters', 'gmail_prior_applications', 'gmail_confirmed_aliases')
+            'contextual_preferences', 'signed_in_portals', 'tailored_writing', 'cover_letters', 'gmail_prior_applications', 'gmail_confirmed_aliases','adaptive_browser')
 
 
 def source_fingerprint(store):

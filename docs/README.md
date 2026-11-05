@@ -12,6 +12,7 @@ The [main README](../README.md) has the story, installation instructions and a s
 | [Raspberry Pi](pi.md) | Setup, background services, restarts and upgrades |
 | [Platform connections](connected-workspace.md) | Optional Handshake/Work at a Startup connections and capability gates |
 | [Release status](public-release.md) | Candidate scope, verification boundaries and remaining release gates |
+| [rc15 candidate notes](reliability-rc15.md) | Adaptive applications, Workday evidence, setup and compatibility limits |
 | [AutoApply comparison](autoapply-comparison.md) | Ideas adopted, strengths retained and the next improvements |
 | [Job-search feedback loop](feedback-loop.md) | Unified application records and the reliability, measurement and networking roadmap |
 | [Architecture](architecture.md) | Component authority, persistence, concurrency, browser boundaries and recovery |

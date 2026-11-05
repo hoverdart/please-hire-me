@@ -66,3 +66,35 @@ def test_lever_read_requires_the_expected_public_host_and_requisition(monkeypatc
                 'https://jobs.lever.co/acme/not-a-posting']:
         with pytest.raises(Blocked,match='posting_inspection_review'):adapter_for(job).navigation({**job,'url':url})
     assert not calls
+
+
+def test_discovery_and_fresh_inspection_use_rendered_lever_text_over_stale_plain_copies(monkeypatch):
+    from hireme.discovery import probe
+    job,data=posting()
+    data.update(description='<p>Summer <strong>2027</strong> interns build software.</p>',
+        descriptionPlain='Summer 2026. Applications close October 10, 2025.',
+        additional='',additionalPlain='Old deadline October 10, 2025.',
+        salaryDescription='<p>Pay &amp; benefits.</p>',salaryDescriptionPlain='Old compensation.',
+        categories={'location':'San Francisco'},country='US')
+    class Net:
+        def json(self,url):return [data]
+    discovered=probe(Net(),'lv','acme')[0]
+    monkeypatch.setattr('hireme.net.Network.json',lambda *a:data)
+    _,current=adapter_for(job).navigation(job)
+    assert discovered['description']==current
+    assert 'Summer 2027 interns' in current and 'Pay & benefits.' in current
+    assert '2026' not in current and '2025' not in current and 'Old compensation' not in current
+    assert '\nRequirements\n' in current and '<strong>' not in current
+
+
+@pytest.mark.parametrize('value',['',42,[],{}])
+def test_empty_or_malformed_rendered_body_never_revives_a_stale_plain_body(monkeypatch,value):
+    job,data=posting();data['description']=value
+    monkeypatch.setattr('hireme.net.Network.json',lambda *a:data)
+    with pytest.raises(Blocked,match='posting_inspection_review'):adapter_for(job).navigation(job)
+
+
+def test_rendered_lever_text_preserves_inline_words_and_block_boundaries():
+    from hireme.ats_adapters import lever_posting_text
+    text=lever_posting_text({'description':'<p>Build soft<b>ware</b> &amp; tools.</p><p>Current MS student.</p><script>Stale requirement</script>'},required=True)
+    assert text=='Build software & tools.\n\nCurrent MS student.'

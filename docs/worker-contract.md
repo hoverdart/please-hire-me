@@ -2,6 +2,8 @@
 
 The authoritative settings, facts, answers, jobs, attempts and events are in the shared private SQLite ledger. JSON exports are review snapshots, not editable authority. Use the dashboard or CLI to change state.
 
+Adaptive UI execution follows the same fact, policy and final-intent contract. The model may choose only offered opaque action IDs. The executor binds each visible control to current confirmed sources, journals an intent before an employer mutation, and captures its exact upstream response without automatic retries. Verified step positions and uploads have durable checkpoints; uncertain UI saves block the job and company. Local adaptive preparation sends no values, files or saves. Fixed native grants and their commissioning evidence remain separate; switching executors cannot abandon a native draft or uncertain application.
+
 1. Take an OS file lock shared by all checkouts using this ledger.
 2. Recover unfinished submit intents to UNKNOWN; block retries.
 3. Fetch full discovery snapshots into durable jobs. Individual source failures retain previous jobs and show degraded health; no global timestamp skips work.

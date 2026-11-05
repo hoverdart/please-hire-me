@@ -87,8 +87,23 @@ def fingerprint(store):
                    for row in store.db.execute('SELECT id,kind,revision,payload FROM confirmed_history WHERE confirmed=1 ORDER BY id')])
 
 
-def resolve_field(store, field):
-    """An adapter explicitly selects an entry/key; DOM ordinal order is not proof."""
+def _reviewed_option(store,row,key,value,field,provider):
+    if key not in {'degree','institution','field_of_study'} or not field.get('required'):return None
+    options=field.get('options',[])
+    mapping=digest(['history_option',row['id'],row['revision'],key,value,
+        field['label'],field.get('type'),sorted(options),field.get('help_text',''),field.get('help_links',[])])
+    saved=store.db.execute('SELECT value FROM option_mappings WHERE id=?',(mapping,)).fetchone()
+    if saved:return saved['value'] if options.count(saved['value'])==1 else None
+    if not provider or not hasattr(provider,'map_option'):return None
+    choice=provider.map_option(field,{'key':'history:'+row['id']+':'+key,'label':key.replace('_',' '),'value':value})
+    if not isinstance(choice,str) or options.count(choice)!=1:return None
+    store.db.execute('INSERT INTO option_mappings VALUES(?,?,?,?,?)',
+        (mapping,'history:'+row['id']+':'+key,row['revision'],choice,now()))
+    return choice
+
+
+def resolve_field(store, field, provider=None):
+    """Bind each answer to a confirmed entry/key; a DOM row cannot create a claim."""
     entry_id, key = field.get('history_entry_id'), field.get('history_key')
     row = next((row for row in entries(store) if row['id'] == entry_id), None)
     if not row or key not in row['values'] or field.get('section') != row['kind']:
@@ -100,7 +115,9 @@ def resolve_field(store, field):
         value = 'Yes' if value else 'No'
     elif key in {'start', 'end', 'expected_end'}:
         label = field.get('label', '').casefold()
-        if re.search(r'\byear\b', label) and not re.search(r'\bmonth\b', label):
+        if field.get('history_date_part')=='month_number':
+            value=str(int(value[5:])) if field['type']=='number' else value[5:]
+        elif re.search(r'\byear\b', label) and not re.search(r'\bmonth\b', label):
             value = value[:4]
         elif re.search(r'\bmonth\b', label) and not re.search(r'\byear\b', label):
             import calendar
@@ -108,6 +125,13 @@ def resolve_field(store, field):
     options = field.get('options', [])
     if options:
         matches = [option for option in options if option.casefold().strip() == value.casefold().strip()]
+        if not matches and key in {'degree','institution','field_of_study'}:
+            from .answers import _option_value
+            try:mapped=_option_value({'degree':'degree','institution':'school','field_of_study':'major'}[key],value,options)
+            except Blocked as error:
+                if error.reason!='option_mismatch':raise
+                mapped=_reviewed_option(store,row,key,value,field,provider)
+            matches=[mapped] if mapped in options else []
         if len(matches) != 1:
             raise Blocked('mapping_review', field.get('label', 'History entry'))
         value = matches[0]

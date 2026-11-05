@@ -77,6 +77,50 @@ def cached(store):
     return context, binding, path
 
 
+def test_dashboard_login_retains_verified_session_before_window_closes(store,monkeypatch):
+    from contextlib import nullcontext
+    from hireme.browser_login import start
+    url='https://'+NVIDIA+'/en-US/NVIDIAExternalCareerSite/job/US-CA/Synthetic_JR12345'
+    job={'id':'synthetic-dashboard-login','url':url,'host':NVIDIA,'company':'Nvidia','title':'Synthetic Intern','source':'fixture'}
+    store.upsert_job(job)
+    context=Context();context.closed=False
+    context.close=lambda:setattr(context,'closed',True)
+    response=profile(store);response.url=PROFILE_READ
+    page=SimpleNamespace(url=url,goto=lambda *args,**kwargs:None,is_closed=lambda:False,evaluate=lambda *args:True)
+    oauth_page=SimpleNamespace(url=url,is_closed=lambda:False,evaluate=lambda *args:True)
+    context.pages=[page,oauth_page]
+    def self_read(candidate,job):
+        assert candidate is oauth_page
+        return response
+    monkeypatch.setattr('hireme.browser_identity.workday_profile_response',self_read)
+    playwright=SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=lambda *args,**kwargs:context))
+    monkeypatch.setattr('playwright.sync_api.sync_playwright',lambda:nullcontext(playwright))
+    monkeypatch.setattr('hireme.browser_login.public_host',lambda host:True)
+    class InlineThread:
+        def __init__(self,target,**kwargs):self.target=target
+        def start(self):self.target()
+    monkeypatch.setattr('hireme.browser_login.threading.Thread',InlineThread)
+    assert start(store,job['id'])['started']
+    assert context.closed and (store.root/'browser'/'workday-session-nvidia.json').exists()
+    restored=Context();assert sessions.restore(store,restored)
+    assert restored.added==cookies()
+
+
+@pytest.mark.parametrize('signed_in',['wrong_owner','not_signed_in'])
+def test_sign_in_handoff_never_retains_an_unverified_account(store,monkeypatch,signed_in):
+    from hireme.browser_login import retain_nvidia_sign_in
+    context=Context()
+    page=SimpleNamespace(url='https://'+NVIDIA+'/en-US/NVIDIAExternalCareerSite',is_closed=lambda:False,
+        evaluate=lambda *args:True,wait_for_timeout=lambda delay:context.pages.clear())
+    context.pages=[page]
+    response=profile(store,data={'emailAddress':'someone-else@candidate.invalid'},status=200 if signed_in=='wrong_owner' else 403)
+    monkeypatch.setattr('hireme.browser_identity.workday_profile_response',lambda *args:response)
+    job={'host':NVIDIA,'url':page.url}
+    assert not retain_nvidia_sign_in(store,context,job)
+    assert not (store.root/'browser'/'workday-session-nvidia.json').exists()
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='browser_login_verified'").fetchone()
+
+
 @pytest.mark.parametrize('csrf_site', ['Lax', 'Strict'])
 def test_private_session_restores_exact_attributes_without_refreshing_owner_evidence(store, monkeypatch, csrf_site):
     monkeypatch.setattr(sessions.time, 'time', lambda: 1000)

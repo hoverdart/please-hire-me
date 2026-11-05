@@ -265,6 +265,9 @@ class ClosedNvidiaEmployer:
 
 def test_nvidia_native_worker_success_report_and_duplicate_protection(store,monkeypatch):
     employer=ClosedNvidiaEmployer(store,monkeypatch)
+    # The native owner-bound session read is the authority. A separate manual
+    # "signed in" preference must not block an authenticated supported flow.
+    store.update_settings({'signed_in_portals':[]})
     employer.install_driver(monkeypatch)
     result=employer.run()
     assert result['confirmed']==result['attempts']==1,{'reasons':result.get('reasons'),'job':store.db.execute('SELECT reason FROM jobs WHERE id=?',(employer.job['id'],)).fetchone()[0],'unexpected':employer.unexpected}
