@@ -319,3 +319,29 @@ def test_exhausted_automation_retries_remain_actionable_in_idle_reports(store,jo
     queue_report(store,'exhausted')
     body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
     assert 'Human interventions: 1' in body and 'Automatic retries are exhausted' in body
+
+
+@pytest.mark.parametrize('entry',['worker','discovery'])
+def test_new_scope_exclusion_cannot_hide_an_unknown_employer_write(store,job,entry):
+    item={**job,'title':'Software Intern Winter 2027'};store.upsert_job(item)
+    store.db.execute('INSERT INTO draft_operations VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        ('operation',job['id'],'session','ui:fill','field','request','sources','unknown',now(),now(),'{}'))
+    hold(store,item,'browser_draft_uncertain')
+    store.update_settings({'seniority':['summer-internship']})
+    if entry=='worker':cycle(store,Path.cwd(),discover=False,live=False,limit=0)
+    else:
+        from hireme.discovery import source_result
+        source_result(store,'synthetic:feed',[item])
+    assert store.db.execute('SELECT reason FROM job_holds').fetchone()[0]=='browser_draft_uncertain'
+    assert store.db.execute('SELECT state FROM draft_operations').fetchone()[0]=='unknown'
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+def test_interrupted_ui_write_without_a_hold_is_escalated_before_fit_exclusion(store,job):
+    item={**job,'title':'Software Intern Winter 2027'};store.upsert_job(item)
+    store.db.execute('INSERT INTO draft_operations VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        ('operation',job['id'],'session','ui:fill','field','request','sources','unknown',now(),now(),'{}'))
+    store.update_settings({'seniority':['summer-internship']})
+    result=cycle(store,Path.cwd(),discover=False,live=False,limit=0)
+    assert result['attempts']==0
+    assert store.db.execute('SELECT reason FROM job_holds').fetchone()[0]=='browser_draft_uncertain'

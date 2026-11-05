@@ -15,6 +15,12 @@ ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','acco
 WORKDAY_ACCOUNT_REASONS = {'workday_session_unverified','workday_identity_mismatch','workday_acceptance_unverified','remote_draft_permission_required'}
 TRANSIENT = {'posting_fetch_failed','posting_details_required','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
+UNCERTAIN_WRITE_REASONS={'browser_draft_uncertain','remote_draft_uncertain','ashby_draft_uncertain','ashby_draft_save_failed'}
+
+
+def pending_write_jobs(store):
+    """Local exclusions must never hide an interrupted employer write."""
+    return {row[0] for row in store.db.execute("SELECT job_id FROM draft_operations WHERE state IN ('intent','unknown') UNION SELECT job_id FROM remote_draft_steps WHERE state IN ('intent','unknown') UNION SELECT job_id FROM workday_drafts WHERE state='unknown'")}
 
 ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review','technical_requirement_review'}
 LEGACY_MAIL_FAILURES={'gmail_reconnect_required','gmail_not_connected','gmail_account_mismatch','gmail_owner_missing','worker_busy'}

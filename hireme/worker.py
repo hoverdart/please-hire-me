@@ -91,8 +91,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                         if needs_details(job):continue
                         if ready(store,job,ashby_snapshot=ashby_snapshot):
                             try:
-                                score,evidence=eligible(job,s,store.facts())
                                 store._check_budget(job,s)
+                                score,evidence=eligible(job,s,store.facts())
                                 score,quality=relevance(job,score,evidence,confirmed_history)
                                 store.db.execute("UPDATE jobs SET score=?,reason='',status=CASE WHEN status='blocked' THEN 'discovered' ELSE status END WHERE id=?",(score,job['id']))
                                 ranked.append((score,job))

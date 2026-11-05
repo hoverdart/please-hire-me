@@ -31,18 +31,20 @@ def relevance(job, score, matched_skills, history):
 def rescreen_scope(store,rows,settings):
     """Eligibility changes take precedence over old missing-answer holds."""
     import json
-    from .job_holds import hold,dependency
+    from .job_holds import hold,dependency,pending_write_jobs,UNCERTAIN_WRITE_REASONS
     from .policy import listing_scope,eligible
     from .posting_inspection import needs_details
     from .retry_authorization import safe_state
     from .util import Blocked
     counts={}
+    pending=pending_write_jobs(store)
     for offset in range(0,len(rows),100):
         with store.transaction():
             for row in rows[offset:offset+100]:
                 store.checkpoint();job=json.loads(row['payload'])
                 if not safe_state(store,job['id']) or store.db.execute('SELECT 1 FROM job_decisions WHERE job_id=?',(job['id'],)).fetchone():continue
                 previous=store.db.execute('SELECT category,reason,dependency FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+                if job['id'] in pending or previous and previous['reason'] in UNCERTAIN_WRITE_REASONS:continue
                 if previous and previous['category']=='eligibility' and previous['dependency']==dependency(store,job,previous['category'],previous['reason']):continue
                 try:
                     listing_scope(job,settings,metadata=True)
