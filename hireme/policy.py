@@ -173,7 +173,7 @@ SOFTWARE_ROLE = r'\bsoftware\s+(?:engineer\w*|develop\w*|intern\w*|research\w*)\
 TECHNICAL_RESEARCH = r'\b(?:software|computer science|machine learning|artificial intelligence|applied ai|ai for|deep learning|distributed systems|natural language|computer vision|llm|robotics)\b'
 
 
-def _role_matches(job,roles):
+def _role_matches(job,roles,*,metadata=False):
     title=job.get('title','');description=job.get('description','')
     patterns={'software':SOFTWARE_ROLE,'developer':r'\bdeveloper\b',
               'machine learning':r'\bmachine learning\b|\bml (?:engineer\w*|research\w*|intern\w*)\b|\b(?:ai|artificial intelligence) (?:engineer\w*|research\w*|intern\w*)\b'}
@@ -184,6 +184,9 @@ def _role_matches(job,roles):
             # Generic "research" must not authorize trading, mechanical or
             # clinical work. Explicitly selected specialist roles still can.
             if re.search(r'\b(?:quantitative|trader|trading|mechanical|clinical|chemical|biolog\w*)\b',title,re.I):continue
+            if metadata:
+                from .posting_inspection import needs_details
+                if needs_details(job):return True
             if re.search(TECHNICAL_RESEARCH,title+'\n'+description,re.I):return True
         elif re.search(patterns.get(role,re.escape(role)),title,re.I):return True
     return False
@@ -242,22 +245,26 @@ def employment_kind(job):
     return 'new-grad'
 
 
-def listing_scope(job,s):
+def listing_scope(job,s,*,metadata=False):
     title=job.get("title",""); desc=job.get("description","")
     text=title+"\n"+desc
     clean=re.sub(r"member of technical staff|technical staff", "",title,flags=re.I)
     if SENIOR.search(clean): raise Blocked("seniority_mismatch")
     kind=employment_kind(job);internship=kind=='internship'
     summer=_summer_2027(job)
+    if metadata and not re.search(r'\b(winter|spring|summer|fall|autumn)\b',title,re.I):
+        summer=summer or any(re.search(r'\bsummer\s*2027\b|\b2027\s*summer\b',str(term),re.I) for term in job.get('terms',[]))
     accepted=kind in s['seniority'] or internship and summer and 'summer-internship' in s['seniority']
     if not accepted:
         raise Blocked({'internship':'internship_out_of_scope','part-time':'parttime_out_of_scope','new-grad':'fulltime_out_of_scope'}[kind])
-    if not _role_matches(job,s['roles']):raise Blocked('role_mismatch')
+    if not _role_matches(job,s['roles'],metadata=metadata):raise Blocked('role_mismatch')
     return kind,summer
 
 
 def eligible(job,s,facts):
+    from .posting_inspection import needs_details
     kind,summer=listing_scope(job,s);internship=kind=='internship'
+    if needs_details(job):raise Blocked('posting_details_required','Read the employer posting before evaluating eligibility and relevance')
     title=job.get("title",""); desc=job.get("description",""); location=job.get("location","")
     text=title+"\n"+desc
     _check_doctoral_degree(title,desc,facts)

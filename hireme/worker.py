@@ -64,6 +64,10 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             selected=tuple(job_ids or ())
             if selected:query+=' AND id IN ('+','.join('?' for _ in selected)+')'
             rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            from .posting_inspection import refresh_candidates,needs_details
+            # No browser/model work occurs inside the screening transactions.
+            posting_reads=refresh_candidates(store,rows,s,max_attempts)
+            rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
             ranked=[]
             from .application_quality import relevance
             confirmed_history=store.history_entries()
@@ -82,6 +86,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                         except StopIteration:
                             screening_done=True;break
                         job=json.loads(row['payload'])
+                        if needs_details(job):continue
                         if ready(store,job,ashby_snapshot=ashby_snapshot):
                             try:
                                 score,evidence=eligible(job,s,store.facts())

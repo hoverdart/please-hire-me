@@ -93,6 +93,7 @@ REASON_GUIDANCE = {
     'stale_writing_context': ('A saved written answer is being refreshed', 'The worker rewrites it from your current sources on the next attempt.'),
     'missing_answers': ('Some answers are needed', 'Answer them under Needs you, or once for every employer under Your facts → Add context.'),
     'posting_fetch_failed': ('The posting did not load', 'The worker retries this later.'),
+    'posting_details_required': ('Employer posting details are needed', 'The worker must read the official role before judging eligibility or relevance. Metadata-only listings do not count as application attempts.'),
     'navigation_failed': ('The posting did not load', 'The worker retries this later.'),
     'unexpected_redirect': ('The employer moved this application to its own site', 'Open the posting and apply there.'),
     'posting_changed_review': ('The posting changed', 'Review the official posting before applying.'),

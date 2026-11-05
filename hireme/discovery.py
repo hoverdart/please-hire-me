@@ -159,7 +159,7 @@ def source_result(store,sid,jobs=None,error=None):
                     job=json.loads(store.db.execute('SELECT payload FROM jobs WHERE id=?',(key,)).fetchone()[0])
                     # Recorded outcomes and manual decisions remain authoritative.
                     if safe_state(store,key) and not store.db.execute('SELECT 1 FROM job_decisions WHERE job_id=?',(key,)).fetchone():
-                        try:listing_scope(job,settings)
+                        try:listing_scope(job,settings,metadata=True)
                         except Blocked as exclusion:
                             previous=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(key,)).fetchone()
                             saved=store.db.execute('SELECT status,reason FROM jobs WHERE id=?',(key,)).fetchone()
@@ -229,7 +229,7 @@ def sweep_lists(store,net=None):
             for j in data:
                 if not j.get("active") or not j.get("is_visible",True): continue
                 try: jobs.append(posting(j["url"],j["company_name"],j["title"],"; ".join(j.get("locations") or []),sid,
-                                        "Sponsorship: "+str(j.get("sponsorship") or ""),terms=j.get("terms") or []))
+                                        "",terms=j.get("terms") or [],sponsorship_metadata=str(j.get("sponsorship") or "")))
                 except (ValueError,KeyError,TypeError): continue
             source_result(store,sid,jobs)
         except Blocked as e:

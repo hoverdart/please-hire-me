@@ -13,7 +13,7 @@ MAPPING_REASONS = {'mapping_review','option_mismatch','form_changed','field_veri
 DOCUMENT_REASONS = {'document_tampered','document_missing','upload_verification_failed','missing_resume','missing_transcript','stale_writing_context','unsupported_or_stale_sample','writing_upgrade_needed','writing_link_unverified'}
 ACCOUNT_REASONS = {'account_identity_unconfirmed','account_fields_changed','account_fields_unavailable','captcha_blocked','account_or_verification_blocked','account_automation_disabled','account_result_uncertain','account_creation_held','account_credentials_unavailable','company_verification_pending','account_blocked','account_required','company_uncertain','email_verification_required','captcha','email_verification_failed'}
 WORKDAY_ACCOUNT_REASONS = {'workday_session_unverified','workday_identity_mismatch','workday_acceptance_unverified','remote_draft_permission_required'}
-TRANSIENT = {'posting_fetch_failed','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output'}
+TRANSIENT = {'posting_fetch_failed','posting_details_required','network_error','navigation_failed','provider_timeout','provider_error','provider_invalid_output'}
 UNCERTAIN = {'unknown','submitting','awaiting_verification','confirmed','rejected','not_submitted'}
 
 ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review','technical_requirement_review'}
