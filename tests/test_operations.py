@@ -14,6 +14,9 @@ from hireme.util import atomic_json,now
 
 def health_ready(store,monkeypatch):
     from hireme import health
+    # These cases exercise service/ledger health, independently of host disk use.
+    monkeypatch.setattr(health,'capacity',lambda root:{'free_bytes':100*1024**3,'total_bytes':200*1024**3,
+        'ledger_bytes':(Path(root)/'ledger.sqlite3').stat().st_size,'critical':False,'low':False})
     monkeypatch.setattr('hireme.release_check._integrations',lambda *_:{'ready':True})
     store.update_settings({'live_enabled':False})
     atomic_json(store.root/'operations/backup-ack.json',{'verified_at':now()})

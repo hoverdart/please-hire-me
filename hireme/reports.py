@@ -81,13 +81,20 @@ def _recruiting_next_steps(store,email):
 
 def _outstanding(store):
     """Keep earlier unresolved work visible without replaying applications."""
+    from .job_holds import ELIGIBILITY_REVIEWS
     manual={};uncertain={}
     for row in store.db.execute('''SELECT h.*,j.company,j.title,j.url FROM job_holds h JOIN jobs j ON j.id=h.job_id
-        WHERE h.category IN ('information','mapping','documents','account','review','connection','unsupported')
+        WHERE (h.category IN ('information','mapping','documents','account','review','connection','unsupported')
+        OR (h.category='transient' AND h.retry_at IS NULL AND h.retry_count>=2)
+        OR h.reason IN ('''+','.join('?' for _ in ELIGIBILITY_REVIEWS)+'''))
         AND NOT EXISTS (SELECT 1 FROM job_decisions d WHERE d.job_id=h.job_id)
         AND NOT EXISTS (SELECT 1 FROM application_records a WHERE a.job_id=h.job_id AND a.state='confirmed')
-        ORDER BY j.score DESC,h.updated'''):
+        ORDER BY j.score DESC,h.updated''',tuple(sorted(ELIGIBILITY_REVIEWS))):
         item=dict(row)
+        # These are consequences of an earlier attempt, not separate human
+        # tasks for every newly discovered role at that company. The original
+        # uncertain/verification-pending record is reported below.
+        if item['reason'] in {'company_uncertain','company_verification_pending'}:continue
         if item['reason']=='model_budget_exhausted':
             evidence=json.loads(item['evidence'])
             fields=evidence.get('information_fields',evidence.get('fields',[]))
@@ -115,10 +122,11 @@ def queue_report(store, run_id):
         if detail.get('run_id') != run_id:
             continue
         terminal[e['subject']]=detail
+    outstanding,held_outcomes=_outstanding(store)
     for job_id,detail in terminal.items():
         job = store.db.execute('SELECT company,title,url FROM jobs WHERE id=?', (job_id,)).fetchone()
         if job:
-            manual_questions=store.db.execute("SELECT 1 FROM questions WHERE job_id=? AND resolved=0 AND reason!='model_budget_exhausted' LIMIT 1",(job_id,)).fetchone()
+            manual_questions=job_id in outstanding or store.db.execute("SELECT 1 FROM questions WHERE job_id=? AND resolved=0 AND reason!='model_budget_exhausted' LIMIT 1",(job_id,)).fetchone()
             receipt=_receipt(store,job_id,run['started']) if detail['outcome']=='confirmed' else ''
             group = ('Applied successfully — employer-confirmed' if detail['outcome'] == 'confirmed' and receipt else
                      'Other outcomes — review before retrying' if detail['outcome']=='confirmed' else
@@ -142,7 +150,6 @@ def queue_report(store, run_id):
                                  + f"\n{job['url']}")
     outcomes = [heading + '\n\n' + '\n\n'.join(items) for heading, items in groups.items() if items]
     detail = json.loads(run['detail']) if run['detail'].startswith('{') else {'reason': run['detail']}
-    outstanding,held_outcomes=_outstanding(store)
     human=len(groups['Blocked — review or apply manually'])+len(set(outstanding)-terminal.keys())
     unconfirmed=len(groups['Other outcomes — review before retrying'])+len(set(held_outcomes)-terminal.keys())
     recruiting=_recruiting_next_steps(store,email)
@@ -155,6 +162,7 @@ def queue_report(store, run_id):
             lines=[]
             for item in items[:20]:
                 action=REASON_GUIDANCE.get(item.get('reason'),('',default))[1]
+                if item.get('category')=='transient':action='Automatic retries are exhausted. Review the problem in the dashboard and use Recheck after repairing it.'
                 lines.append(f"{item['company']} — {item['title']}\nNext action: {action}"
                     + ''.join('\n  • '+question for question in _questions(store,item['job_id']))+f"\n{item['url']}")
             earlier.append(heading+f' ({len(items)}; showing up to 20)\n\n'+'\n\n'.join(lines))
@@ -281,9 +289,9 @@ def _combined(store, rows):
     confirmed = sum(r[0] for r in store.db.execute(
         'SELECT submitted FROM runs WHERE id IN (' + ','.join('?' for _ in rows) + ')', [r['id'] for r in rows]))
     sections = [r['body'][:-len(FOOTER)] if r['body'].endswith(FOOTER) else r['body'].rstrip() for r in rows]
-    body = (f'{len(rows)} application batches finished since the last report.\n\n'
+    body = (f'Confirmed submissions: {confirmed}\nReview the next actions below.\n\n'
             + ('\n\n' + '─' * 24 + '\n\n').join(sections) + FOOTER)
-    return f'Application batches: {confirmed} confirmed across {len(rows)} batches', body
+    return f'Recruiting update: {confirmed} confirmed — review next actions', body
 
 
 def flush_reports(store, client_factory=GmailClient, limit=25):

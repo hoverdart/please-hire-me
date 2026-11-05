@@ -211,7 +211,8 @@ def test_pending_batches_are_sent_as_one_email(store):
         def send_report(self,subject,body,message_id):Client.sent.append((subject,body));return 'one'
     assert flush_reports(store,Client)=={'sent':1,'enabled':True,'batches':3}
     (subject,body),=Client.sent
-    assert subject=='Application batches: 2 confirmed across 3 batches'
+    assert subject=='Recruiting update: 2 confirmed — review next actions'
+    assert body.startswith('Confirmed submissions: 2\nReview the next actions below.')
     assert all(f'Application batch run-{i}' in body for i in range(3))
     assert body.count('Open HireMeMaybe on the computer running the worker')==1
     assert {r[0] for r in store.db.execute('SELECT state FROM report_outbox')}=={'sent'}

@@ -79,6 +79,8 @@ def information_dependency(store,job,reason,fields=None):
     """Only a source that can address these questions releases their hold."""
     from .answers import _compatible_field, AUTOMATIC_ANSWER_VERSION, WRITING_SOURCE_VERSION, STUDENT_QUESTION
     from .config import FACTS
+    saved_posting=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
+    job=json.loads(saved_posting[0]) if saved_posting else job
     facts=store.facts();keys=set();labels=[];questions=[];uses_context=False;uses_history=False;uses_writing=reason=='writing_unsupported'
     if fields is None:
         held=store.db.execute('SELECT evidence FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
@@ -103,7 +105,7 @@ def information_dependency(store,job,reason,fields=None):
     data={'version':1,'automatic_answers':AUTOMATIC_ANSWER_VERSION,
           'questions':questions,'facts':{key:facts[key]['value'] for key in sorted(keys) if key in facts},'answers':answers,
           'provider':{key:store.settings()[key] for key in ('provider','provider_model','model_effort','model_escalation')},
-          'posting':{key:job.get(key) for key in ('title','description','location')},'adapter':ADAPTER_VERSION,'mapping':MAPPING_VERSION}
+          'posting':job.get('_listing_hash') or digest({key:job.get(key) for key in ('title','description','location')}),'adapter':ADAPTER_VERSION,'mapping':MAPPING_VERSION}
     if uses_context or not questions:
         if not questions:data['facts']={key:fact['value'] for key,fact in facts.items()}
         data['templates']=[tuple(row) for row in store.db.execute('SELECT id,revision FROM templates ORDER BY id')]

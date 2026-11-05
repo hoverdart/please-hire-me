@@ -20,7 +20,7 @@ def test_us_person_does_not_establish_us_citizenship(store,job,citizenship,requi
 
 
 def test_generic_export_definition_does_not_require_separate_citizenship(store,job):
-    eligible({**job,'description':'ITAR: U.S. persons include U.S. citizens and lawful permanent residents.'},store.settings(),store.facts())
+    eligible({**job,'description':job['description']+' ITAR: U.S. persons include U.S. citizens and lawful permanent residents.'},store.settings(),store.facts())
 
 
 def test_us_citizenship_never_establishes_clearance(store,job):

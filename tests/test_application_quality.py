@@ -290,3 +290,32 @@ def test_outstanding_reminder_resumes_on_a_new_local_day_without_retrying_old_ma
         queue_report(store,run_id)
     assert [(r['id'],r['state']) for r in store.db.execute('SELECT id,state FROM report_outbox ORDER BY rowid')]==[
         ('old-day','uncertain'),('new-day','pending'),('same-new-day','suppressed')]
+
+
+def test_required_eligibility_reviews_remain_human_tasks_in_reports(store,job):
+    hold(store,job,'citizenship_or_clearance_review')
+    store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',('review-needed',now(),now(),'finished',0,json.dumps({'attempts':0})))
+    queue_report(store,'review-needed')
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'Human interventions: 1' in body and job['url'] in body
+    assert 'own confirmed status' in body
+
+
+def test_company_uncertainty_reports_the_original_attempt_once(store,job,package):
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    for i in range(3):
+        other={**job,'id':digest(i),'url':job['url']+str(i)}
+        store.upsert_job(other);hold(store,other,'company_uncertain')
+    store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',('one-company',now(),now(),'finished',0,json.dumps({'attempts':0})))
+    queue_report(store,'one-company')
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'Human interventions: 0\nUnconfirmed results to verify: 1' in body
+    assert body.count(job['url'])==1
+
+
+def test_exhausted_automation_retries_remain_actionable_in_idle_reports(store,job):
+    for _ in range(3):hold(store,job,'provider_timeout')
+    store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',('exhausted',now(),now(),'finished',0,json.dumps({'attempts':0})))
+    queue_report(store,'exhausted')
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'Human interventions: 1' in body and 'Automatic retries are exhausted' in body
