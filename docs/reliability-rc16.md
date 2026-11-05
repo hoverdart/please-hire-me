@@ -15,4 +15,6 @@ Reports lead with confirmed submissions, human interventions and unconfirmed res
 
 The worker no longer increases a batch's completion target to catch up with a daily trajectory. Existing submission ceilings and model limits remain enforced. An undersupplied search can finish below its target; it must not widen eligibility to compensate.
 
+The dependency audit also requires `oauthlib` 4.0.1 in both locks and the Gmail extra, following the [upstream security release](https://github.com/oauthlib/oauthlib/releases/tag/v4.0.1). Existing Gmail environments receive the patched minimum when upgraded.
+
 Applicants who want only summer internships should select Summer 2027 internships rather than the broader internship option. Part-time school-year work remains a separate choice. Missing facts, agreements, login verification and applicant work samples still need the applicant. These changes reduce wasted work; they do not establish new employer acceptance or guarantee unattended completion. The NVIDIA receipt evidence from [rc15](reliability-rc15.md) remains specific to that application.
