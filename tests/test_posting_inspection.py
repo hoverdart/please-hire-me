@@ -39,7 +39,7 @@ def test_verified_api_details_need_no_browser_or_model(store,job,monkeypatch):
 def test_anonymous_public_browser_never_uses_applicant_profile_or_sends_mutations(store,job,monkeypatch):
     class Adapter:
         def navigation(self,*args,**kwargs):return job['url'],None
-        def posting_text(self,text):return text
+        def posting_text(self,text,**kwargs):return text
     monkeypatch.setattr('hireme.ats_adapters.adapter_for',lambda item:Adapter())
     profile=store.root/'browser';profile.mkdir();sentinel=profile/'private-session-sentinel';sentinel.write_text('untouched')
     blocked=[];writes=[]
@@ -111,3 +111,21 @@ def test_zero_attempt_screening_does_not_open_a_detail_browser(store,job,monkeyp
     result=cycle(store,Path.cwd(),discover=False,live=False,limit=0)
     assert result['attempts']==0
     assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
+
+
+def test_title_only_cached_text_requires_details_instead_of_a_low_fit_verdict(store,job):
+    item={**job,'description':job['title']+'\n'+job['location']+'\nBack to all jobs'}
+    assert needs_details(item)
+    with pytest.raises(Blocked,match='posting_details_required'):eligible(item,store.settings(),store.facts())
+
+
+def test_top_apply_link_keeps_job_text_and_excludes_form_eligibility_questions(store,job):
+    from hireme.ats_adapters import SingleStepAdapter
+    with Browser(store) as browser:
+        browser.page.set_content(f'''<h1>{job['title']}</h1><a href="/apply">Apply for this job</a>
+            <p>{job['description']}</p><div style="display:none">PhD required</div>
+            <h2>Apply for this job</h2><form><p>You must graduate before September 2027.</p>
+            <label>Education<input></label></form>''')
+        text=SingleStepAdapter().posting_text(browser.page.inner_text('body'),page=browser.page)
+    assert job['description'] in text and 'graduate before' not in text and 'PhD required' not in text
+    assert eligible({**job,'description':text},store.settings(),store.facts())[0]>=45

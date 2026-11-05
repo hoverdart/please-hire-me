@@ -43,8 +43,30 @@ def lever_posting_text(data,*,required=False):
 class SingleStepAdapter:
     version=1
     def navigation(self,job,*,checkpoint=None,deadline=None):return job['url'],None
-    def posting_text(self,text,verified=None):
-        return verified if verified is not None else re.split(r'\bApply for this job\b',text,maxsplit=1,flags=re.I)[0]
+    def posting_text(self,text,verified=None,*,page=None):
+        if verified is not None:return verified
+        if page is not None:
+            from .browser_observation import retry_dom_read
+            return retry_dom_read(page,lambda:page.evaluate(r'''() => {
+              let stopped=false,seen=0;
+              const skipped=new Set(['FORM','LABEL','FIELDSET','INPUT','SELECT','TEXTAREA','BUTTON','SCRIPT','STYLE','NAV','FOOTER']);
+              const blocks=new Set(['P','DIV','SECTION','ARTICLE','LI','UL','OL','BR','TABLE','TR','H1','H2','H3','H4','H5','H6']);
+              const apply=/^apply(?:\s+for\s+this\s+(?:job|position)|\s+now)?(?:\s*[→›»])?$/i;
+              function read(node) {
+                if(stopped||++seen>15000)return '';
+                if(node.nodeType===Node.TEXT_NODE)return node.textContent||'';
+                if(node.nodeType!==Node.ELEMENT_NODE)return '';
+                if(skipped.has(node.tagName)||/\bform\b/i.test(node.getAttribute('role')||'')||node.hidden||node.getAttribute('aria-hidden')==='true')return '';
+                if(node!==document.body&&(!node.getClientRects().length||getComputedStyle(node).visibility==='hidden'))return '';
+                const label=(node.textContent||'').replace(/\s+/g,' ').trim();
+                if(node.tagName==='A'&&apply.test(label))return '';
+                if(/^H[1-6]$/.test(node.tagName)&&apply.test(label)){stopped=true;return '';}
+                const content=Array.from(node.childNodes).map(read).join('');
+                return blocks.has(node.tagName)?'\n'+content+'\n':content;
+              }
+              return read(document.body).trim().slice(0,100000);
+            }'''))
+        return re.split(r'\bApply for this job\b',text,maxsplit=1,flags=re.I)[0]
 
 class GreenhouseAdapter(SingleStepAdapter):
     version=4

@@ -1276,7 +1276,7 @@ def resolve(store, host, field, provider=None, context=None):
                     template=next((t for t in store.templates() if t['id']==tid),None)
                     if template and (not is_writing or category(label) not in (None, template['category'])):template=None
                     if template:pending_binding={'template_id':tid}
-            if not pending_binding:_abstain(store,match_abstention,'match_field',label)
+            if not pending_binding and (facts or templates):_abstain(store,match_abstention,'match_field',label)
         if template and (_foreign_targets(store,template,context) or not _fits_writing_limits(template['body'],field,context)):template=None
         if not template and not key and not derived and provider and is_writing:
             choices=_approved_sentences(store,context)

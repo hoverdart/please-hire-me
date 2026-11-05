@@ -9,7 +9,11 @@ from .util import Blocked,canonical_url,now
 
 def needs_details(job):
     text=job.get('description','').strip()
-    return not text or bool(re.fullmatch(r'Sponsorship:[^\n]*',text))
+    if not text or re.fullmatch(r'Sponsorship:[^\n]*',text):return True
+    tokens=lambda value:set(re.findall(r'[a-z0-9+#]+',value.casefold()))
+    metadata=tokens(' '.join(str(job.get(key,'')) for key in ('title','location','company')))
+    metadata.update({'back','to','all','jobs','apply','for','this','job','at','share'})
+    return bool(tokens(text)) and tokens(text)<=metadata
 
 
 def inspect(store,job):
@@ -54,7 +58,7 @@ def inspect(store,job):
                     view=observe(reader.page);normalize=lambda value:' '.join(value.casefold().split())
                     if normalize(job['title']) not in {normalize(title) for title in view['headings']}:
                         raise Blocked('posting_changed_review','The public employer page did not verify the saved title')
-                    text=adapter.posting_text(view['text'])
+                    text=adapter.posting_text(view['text'],page=reader.page)
     if not isinstance(text,str) or not text.strip():raise Blocked('posting_fetch_failed','The public posting body is unavailable')
     store.checkpoint()
     return {**job,'description':text,'_employer_posting_read':now()}
