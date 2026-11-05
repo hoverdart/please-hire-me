@@ -223,3 +223,70 @@ def test_recruiting_report_lists_only_reviewed_owner_bound_latest_stages(store,j
     assert 'Interviews — prepare or update status' in body and 'Assessments — check status' not in body
     assert 'Employer messages awaiting your review: 1' in body
     assert 'private subject' not in body and 'private excerpt' not in body
+
+
+def test_changed_search_excludes_old_question_holds_before_any_browser_read(store,job,monkeypatch):
+    winter={**job,'title':'Software Intern (2027 Start) - Winter'}
+    store.upsert_job(winter)
+    f=field('What is your available start date?')
+    store.ask(job['id'],job['host'],f['label'],[],'missing_fact',field=f,context=winter)
+    hold(store,winter,'missing_answers')
+    store.update_settings({'seniority':['summer-internship','part-time']})
+    class Forbidden:
+        def __init__(self,*args):pytest.fail('An old question hold bypassed the current season filter')
+    result=cycle(store,Path.cwd(),discover=False,browser_factory=Forbidden)
+    assert result['attempts']==0
+    assert store.db.execute('SELECT reason FROM job_holds').fetchone()[0]=='internship_out_of_scope'
+    assert store.db.execute('SELECT resolved FROM questions').fetchone()[0]==0
+
+
+def test_idle_report_keeps_outstanding_human_work_visible_once_per_day(store,job):
+    store.update_settings({'gmail_reports':True})
+    f=field('When did you graduate from High School?')
+    store.ask(job['id'],job['host'],f['label'],[],'missing_fact',field=f,context=job)
+    hold(store,job,'missing_answers')
+    for run_id in ('first-reminder','same-day-idle'):
+        store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(run_id,now(),now(),'finished',0,json.dumps({'attempts':0})))
+        queue_report(store,run_id)
+    rows=list(store.db.execute('SELECT state,body FROM report_outbox ORDER BY rowid'))
+    assert rows[0]['state']=='pending' and rows[1]['state']=='suppressed'
+    assert 'Human interventions: 1' in rows[0]['body']
+    assert 'Outstanding human interventions from earlier batches' in rows[0]['body']
+    assert job['url'] in rows[0]['body'] and f['label'] in rows[0]['body']
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+def test_earlier_unknown_submission_is_reported_without_reapplication(store,job,package):
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',('later-idle',now(),now(),'finished',0,json.dumps({'attempts':0})))
+    queue_report(store,'later-idle')
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'Confirmed submissions: 0' in body and 'Unconfirmed results to verify: 1' in body
+    assert 'Earlier unconfirmed submissions — verify before any retry' in body
+    assert 'do not apply again' in body and job['url'] in body
+    assert store.application_record(aid)['state']=='unknown'
+
+
+def test_higher_fit_threshold_quiets_previous_missing_answer_tasks(store,job):
+    f=field('When did you graduate from High School?')
+    store.ask(job['id'],job['host'],f['label'],[],'missing_fact',field=f,context=job)
+    hold(store,job,'missing_answers')
+    store.update_settings({'min_fit_score':95})
+    result=cycle(store,Path.cwd(),discover=False)
+    assert result['attempts']==0 and result['reasons']['low_fit']==1
+    assert store.db.execute('SELECT category,reason FROM job_holds').fetchone()[:]==('eligibility','low_fit')
+    assert store.db.execute('SELECT resolved FROM questions').fetchone()[0]==0
+
+
+def test_outstanding_reminder_resumes_on_a_new_local_day_without_retrying_old_mail(store,job):
+    from datetime import datetime,timedelta,timezone
+    store.update_settings({'gmail_reports':True})
+    hold(store,job,'account_blocked')
+    for run_id in ('old-day','new-day','same-new-day'):
+        if run_id=='new-day':
+            store.db.execute("UPDATE events SET timestamp=? WHERE kind='batch_attention_report'",((datetime.now(timezone.utc)-timedelta(days=2)).isoformat(),))
+            store.db.execute("UPDATE report_outbox SET state='uncertain' WHERE id='old-day'")
+        store.db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(run_id,now(),now(),'finished',0,json.dumps({'attempts':0})))
+        queue_report(store,run_id)
+    assert [(r['id'],r['state']) for r in store.db.execute('SELECT id,state FROM report_outbox ORDER BY rowid')]==[
+        ('old-day','uncertain'),('new-day','pending'),('same-new-day','suppressed')]

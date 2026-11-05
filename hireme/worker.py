@@ -64,6 +64,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             selected=tuple(job_ids or ())
             if selected:query+=' AND id IN ('+','.join('?' for _ in selected)+')'
             rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            from .application_quality import rescreen_scope
+            for reason,excluded in rescreen_scope(store,rows,s).items():reasons[reason]=reasons.get(reason,0)+excluded
             from .posting_inspection import refresh_candidates,needs_details
             # No browser/model work occurs inside the screening transactions.
             refresh_candidates(store,rows,s,0 if limit==0 else max_attempts)

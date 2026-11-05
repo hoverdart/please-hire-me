@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from datetime import datetime,time,timezone
+from zoneinfo import ZoneInfo
 
 from .gmail import GmailClient, owner_email
 from .store import worker_lock
@@ -77,6 +79,27 @@ def _recruiting_next_steps(store,email):
     return sections
 
 
+def _outstanding(store):
+    """Keep earlier unresolved work visible without replaying applications."""
+    manual={};uncertain={}
+    for row in store.db.execute('''SELECT h.*,j.company,j.title,j.url FROM job_holds h JOIN jobs j ON j.id=h.job_id
+        WHERE h.category IN ('information','mapping','documents','account','review','connection','unsupported')
+        AND NOT EXISTS (SELECT 1 FROM job_decisions d WHERE d.job_id=h.job_id)
+        AND NOT EXISTS (SELECT 1 FROM application_records a WHERE a.job_id=h.job_id AND a.state='confirmed')
+        ORDER BY j.score DESC,h.updated'''):
+        item=dict(row)
+        if item['reason']=='model_budget_exhausted':
+            evidence=json.loads(item['evidence'])
+            fields=evidence.get('information_fields',evidence.get('fields',[]))
+            if not any(field['reason']!='model_budget_exhausted' for field in fields):continue
+        manual[item['job_id']]=item
+    for row in store.db.execute('''SELECT a.job_id,a.state,a.updated,j.company,j.title,j.url FROM application_records a
+        JOIN jobs j ON j.id=a.job_id WHERE a.state IN ('unknown','submitting','awaiting_verification') ORDER BY a.updated DESC'''):
+        uncertain.setdefault(row['job_id'],dict(row))
+    for job_id in uncertain:manual.pop(job_id,None)
+    return manual,uncertain
+
+
 def queue_report(store, run_id):
     run = store.db.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
     if not run or not run['finished']:
@@ -119,14 +142,31 @@ def queue_report(store, run_id):
                                  + f"\n{job['url']}")
     outcomes = [heading + '\n\n' + '\n\n'.join(items) for heading, items in groups.items() if items]
     detail = json.loads(run['detail']) if run['detail'].startswith('{') else {'reason': run['detail']}
-    human=len(groups['Blocked — review or apply manually'])
-    unconfirmed=len(groups['Other outcomes — review before retrying'])
+    outstanding,held_outcomes=_outstanding(store)
+    human=len(groups['Blocked — review or apply manually'])+len(set(outstanding)-terminal.keys())
+    unconfirmed=len(groups['Other outcomes — review before retrying'])+len(set(held_outcomes)-terminal.keys())
     recruiting=_recruiting_next_steps(store,email)
+    earlier=[]
+    from .presentation import REASON_GUIDANCE
+    for records,heading,default in [(outstanding,'Outstanding human interventions from earlier batches','Review this application in the dashboard.'),
+                                    (held_outcomes,'Earlier unconfirmed submissions — verify before any retry','Check the existing employer record; do not apply again.')]:
+        items=[item for job_id,item in records.items() if job_id not in terminal]
+        if items:
+            lines=[]
+            for item in items[:20]:
+                action=REASON_GUIDANCE.get(item.get('reason'),('',default))[1]
+                lines.append(f"{item['company']} — {item['title']}\nNext action: {action}"
+                    + ''.join('\n  • '+question for question in _questions(store,item['job_id']))+f"\n{item['url']}")
+            earlier.append(heading+f' ({len(items)}; showing up to 20)\n\n'+'\n\n'.join(lines))
+    attention=bool(outstanding or held_outcomes or recruiting)
+    attention_signature=digest({'manual':[(key,item['dependency']) for key,item in sorted(outstanding.items())],
+        'uncertain':[(key,item['state'],item['updated']) for key,item in sorted(held_outcomes.items())],'recruiting':recruiting})
     body = (f"Confirmed submissions: {run['submitted']}\nHuman interventions: {human}\nUnconfirmed results to verify: {unconfirmed}\n\n"
             + ('\n\n'.join(recruiting)+'\n\n' if recruiting else '')
             + f"Application batch {run_id}\nStarted: {run['started']}\nFinished: {run['finished']}\n"
             f"Status: {run['status']}\nMode: {detail.get('mode', 'live')}\n"
-            + ('\n\n'.join(outcomes) or 'No application outcomes recorded.'))
+            + ('\n\n'.join(outcomes) or 'No application outcomes recorded.')
+            + ('\n\n'+'\n\n'.join(earlier) if earlier else ''))
     body+=f"\n\nDiagnostics\nBrowser sessions started: {detail.get('attempts',0)}. These are not completed applications."
     if detail.get('reason'):
         body += '\n\nStopped because: ' + detail['reason']
@@ -141,11 +181,22 @@ def queue_report(store, run_id):
     # with no attempts add no application update to email. Failures/setup stops,
     # legacy runs without an explicit count, and any actual outcome still report.
     idle=run['status'] in {'finished','paused'} and detail.get('attempts')==0 and not terminal and run['submitted']==0 and not mail_failures
+    # Unchanged outstanding tasks merit one reminder per local day, rather
+    # than disappearing when all new application work is held. A new task or
+    # reviewed recruiting stage can produce a fresh actionable update sooner.
+    day=datetime.now(ZoneInfo(store.settings()['timezone'])).date()
+    start=datetime.combine(day,time(),ZoneInfo(store.settings()['timezone'])).astimezone(timezone.utc).isoformat()
+    already_reported=any(json.loads(row[0]).get('signature')==attention_signature for row in store.db.execute('''
+        SELECT e.detail FROM events e JOIN report_outbox o ON o.id=e.subject
+        WHERE e.kind='batch_attention_report' AND e.timestamp>=? AND o.recipient=?
+        AND o.state IN ('pending','sending','sent','uncertain')''',(start,email)))
+    if idle and attention and not already_reported:idle=False
     state='suppressed' if idle else 'pending' if enabled else 'disabled'
     with store.transaction():
-        store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
+        inserted=store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
                          (run_id, email, f"Application update: {run['submitted']} confirmed; {human} need you; {unconfirmed} to verify",
                           body, f'<{uuid.uuid4().hex}@please-hire-me.local>', state, now()))
+        if inserted.rowcount and state=='pending' and attention:store.event('batch_attention_report',run_id,{'signature':attention_signature})
     return run_id
 
 

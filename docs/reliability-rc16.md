@@ -11,7 +11,7 @@ The objective is verified, eligible, relevant applications completed. Browser se
 
 ## Reports and limits
 
-Reports lead with confirmed submissions, human interventions and unconfirmed results. Reviewed owner-bound assessments and interviews include next actions; unreviewed employer messages remain suggestions awaiting review. Latest reviewed stages supersede older stages. Browser-session counts appear in diagnostics. Creating a report does not fetch or send messages; normal configured delivery remains separate.
+Reports lead with confirmed submissions, human interventions and unconfirmed results, including unresolved work from earlier batches. Reviewed owner-bound assessments and interviews include next actions; unreviewed employer messages remain suggestions awaiting review. Latest reviewed stages supersede older stages. Idle cycles can queue one reminder of unchanged outstanding work per local day; new actionable work can produce another update. Browser-session counts appear in diagnostics. Creating a report does not fetch or send messages; normal configured delivery remains separate.
 
 The worker no longer increases a batch's completion target to catch up with a daily trajectory. Existing submission ceilings and model limits remain enforced. An undersupplied search can finish below its target; it must not widen eligibility to compensate.
 
