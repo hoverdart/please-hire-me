@@ -89,6 +89,20 @@ def test_one_native_post_rebuilds_approved_pdf_and_requires_correlated_native_ht
     assert grant.acknowledged and grant.receipt_matches(req.url)
     assert not grant.receipt_matches(req.url+'?another=posting')
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='native_submission_write'").fetchone()[0]==1
+    store.finish(lever.aid,'confirmed','Synthetic employer receipt')
+    from hireme.application_evidence import snapshot
+    assert snapshot(store,lever.aid)['verification_method']=='native_ats_acknowledgement'
+
+
+def test_verification_rejection_retains_response_fingerprint_without_claiming_success(store,lever):
+    grant=LeverSubmission(lever.browser,lever.job,lever.package,lever.aid)
+    store.begin_submit(lever.aid);req=request(lever);assert grant.grant(req,key(req))
+    body='<html><p>There was an error verifying your application. Please try again.</p><form><input name="email"></form></html>'
+    grant.observe(response(req,body,status=400),key(req))
+    saved=json.loads(store.db.execute("SELECT detail FROM events WHERE kind='native_submission_response' ORDER BY seq DESC LIMIT 1").fetchone()[0])
+    assert saved['rejection_code']=='verification_rejected'
+    assert saved['response_sha256']==hashlib.sha256(body.encode()).hexdigest()
+    assert saved['acknowledged'] is False and not grant.receipt_matches(req.url)
 
 
 @pytest.mark.parametrize('change',['none','required','answered','extra_value','account','identity','choices','duplicate','wire_duplicate','wire_changed'])

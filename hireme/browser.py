@@ -30,7 +30,16 @@ SNAPSHOT=r"""selector => {
  function active(el) {
   if(el.disabled||el.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
   const native=el.matches('input[type=radio],input[type=checkbox]');
-  if(!el.checkVisibility({visibilityProperty:true,opacityProperty:!native}))return false;
+  // Greenhouse's react-select keeps the searchable input transparent after a
+  // selection. The visible, uniquely selected value remains the control's UI.
+  // Do not extend this exception to hidden containers or unselected widgets.
+  const selected=el.matches('input.select__input[role=combobox]') &&
+    Number(getComputedStyle(el).opacity)===0 && el.checkVisibility({visibilityProperty:true}) &&
+    el.closest('.select__control')?.checkVisibility({visibilityProperty:true,opacityProperty:true}) &&
+    el.closest('.select__control')?.querySelectorAll('input[role=combobox]').length===1 &&
+    el.closest('.select__control')?.querySelectorAll('.select__single-value').length===1 &&
+    el.closest('.select__control')?.querySelector('.select__single-value').checkVisibility({visibilityProperty:true,opacityProperty:true});
+  if(!selected&&!el.checkVisibility({visibilityProperty:true,opacityProperty:!native}))return false;
   if(native)for(let parent=el.parentElement;parent;parent=parent.parentElement)
     if(Number(getComputedStyle(parent).opacity)===0)return false;
   return true;
@@ -648,6 +657,15 @@ class Browser:
         if self.native_submission:return self.native_submission.receipt_matches(self.page.url)
         return bool(self.test_url)
 
+    def _record_native_receipt(self,job,text):
+        """Persist a verified fresh Ashby receipt without retaining its text."""
+        signature=getattr(self.ashby_submission,'request_signature',None)
+        if not signature:return
+        from .util import application_identity
+        self.store.event('submission_receipt_verified',self.aid,{
+            'platform':'ashby','posting_identity':list(application_identity(job['url'])),
+            'request_hash':signature[2],'receipt_sha256':digest(text),'fresh':True})
+
     @staticmethod
     def _request_key(request):
         return (request.url,request.method,hashlib.sha256(getattr(request,'post_data_buffer',None) or b'').hexdigest())
@@ -838,6 +856,7 @@ class Browser:
                         result='timed_out';raise Blocked('captcha_blocked') from None
                     if phase!='challenge':
                         announce('challenge',remaining);phase='challenge'
+                        with contextlib.suppress(Exception):self.page.bring_to_front()
                         if self.store.settings()['human_verification_handoff'] and handoff is None:
                             from .captcha_handoff import Handoff
                             handoff=Handoff(self,time.time()+remaining)
@@ -846,7 +865,16 @@ class Browser:
                     self.page.wait_for_timeout(250)
                     continue
                 if phase=='challenge':
-                    if not final_grant.used:self.store.checkpoint()
+                    if not final_grant.used:
+                        # A CAPTCHA iframe can disappear between challenges or
+                        # when dismissed. That is not a submission. Keep the
+                        # original human deadline until the native request is
+                        # dispatched instead of closing the browser after 45s.
+                        self.store.checkpoint()
+                        if time.monotonic()>=human_deadline:
+                            result='timed_out';raise Blocked('captcha_blocked')
+                        self.page.wait_for_timeout(250)
+                        continue
                     deadline=time.monotonic()+45
                     announce('checking_receipt',45);phase='checking_receipt'
                 if (REJECTED.search(text)
@@ -876,6 +904,19 @@ class Browser:
         except Exception as e:
             self.store.event('screenshot_failed',self.aid,{'type':type(e).__name__})
             return ''
+
+    def _close_undispatched_lever_submit(self):
+        """Prove a live controller never transported the final POST, then close it."""
+        from .lever_submission import LeverSubmission
+        grant=self.native_submission
+        if (not isinstance(grant,LeverSubmission) or grant.aid!=self.aid
+                or grant.used or grant.request_keys or grant.response_seen):return False
+        # Freeze the grant before any subsequent Playwright call can pump a
+        # late CAPTCHA callback. This proof applies only to this live process;
+        # historical unknown attempts cannot be cleared by missing log entries.
+        grant.deadline=0;grant.boundary.deadline=0
+        self.store.event('native_submission_not_dispatched',self.aid,{'platform':'lever'})
+        return True
 
     def _continue_email_verification(self,job,submit):
         if not self.store.settings()['gmail_verification']:
@@ -1120,6 +1161,19 @@ class Browser:
         # Reacquire anonymous controls by current semantic shape instead of stale indices.
         fresh=self._raw_snapshot()
         matches=[f for f in fresh if f['label']==field['label'] and f['type']==field['type']]
+        # Radio groups share a name across options. Repeated question wording
+        # in separate Lever cards is still distinct when its named group and
+        # section are unchanged; never fall back to a different named group.
+        if ref.get('name'):
+            matches=[f for f in matches if f.get('ref',{}).get('name')==ref['name']
+                     and f.get('ref',{}).get('tag')==ref.get('tag')]
+        if field.get('form_index',-1)>=0:
+            matches=[f for f in matches if f.get('form_index')==field['form_index']]
+        if field.get('section'):
+            matches=[f for f in matches if f.get('section')==field['section']]
+        if field['type'] in {'radio','checkbox-group','yesno'}:
+            matches=[f for f in matches if f['options']==field['options']
+                     and f.get('option_values')==field.get('option_values')]
         if len(matches)!=1:raise Blocked('form_changed',field['label'])
         index=matches[0]['indices'][option] if option is not None else matches[0]['index']
         return self.page.locator(CONTROLS).nth(index)
@@ -1447,7 +1501,7 @@ class Browser:
             dropdowns=[f for f in fields if f['type']=='combobox' and field_key(f['label']) not in ('school','location')]
             if len(dropdowns)>=2 and not any(f['options'] for f in dropdowns):
                 raise Blocked('posting_fetch_failed','No dropdown on the application loaded its choices; nothing was submitted')
-            answers=[]; documents=list(retained_docs); pending=[]; budget_error=None; asked=set()
+            answers=[]; documents=list(retained_docs); pending=[]; optional=[]; budget_error=None; asked=set()
             for f in fields:
                 self.store.checkpoint()
                 if not f['label']:
@@ -1472,7 +1526,9 @@ class Browser:
                         continue
                     documents.append({**dict(doc),'field':f});continue
                 try:
-                    provider=None if budget_error else answer_provider
+                    # Resolve known values locally first. The unresolved page is
+                    # planned together below, before any applicant value is filled.
+                    provider=None if budget_error or (self.store.settings()['tailored_writing'] and hasattr(answer_provider,'plan_form')) else answer_provider
                     answer_context={**job,'previous_answers':answers,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]}
                     a=resolve(self.store,job['answer_scope'],f,provider,context=answer_context)
                     if a:
@@ -1481,6 +1537,8 @@ class Browser:
                         answers.append(a)
                         self.store.event('field_answered',job['id'],{'label':f['label'],'value':a['value'],'provenance':a['provenance']})
                     elif _prefilled(f):raise Blocked('unknown_prefilled_value',f['label'])
+                    elif f['type'] in {'text','textarea','url'} and re.search(r'project|portfolio|look at|describe|tell us|share|experience|why',f['label'],re.I):
+                        optional.append((f,'missing_fact'))
                 except Blocked as e:
                     if e.reason in ('human_work_sample','paused','cycle_timeout','provider_rate_limited','graduation_mismatch'):raise
                     reason=e.reason
@@ -1491,9 +1549,28 @@ class Browser:
                     self.store.event('field_blocked',job['id'],{'label':f['label'],'options':f['options'],'required':f['required'],'reason':reason})
                     if not f['required'] and not _prefilled(f):
                         self.store.resolve_known_question(job['answer_scope'],f['label'],f['options'],field=f,context=job);continue
-                    asked.add(self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],reason,field=f,context=answer_context))
                     pending.append((f,reason))
+            if (pending or optional) and not budget_error:
+                from .page_answers import plan as plan_page
+                try:
+                    planned,remaining=plan_page(self.store,job['answer_scope'],fields,answers,pending+optional,answer_provider,job)
+                    pending=[(f,r) for f,r in remaining if f['required'] or _prefilled(f)]
+                    answers.extend(planned)
+                    answers.sort(key=lambda a:fields.index(a['field']))
+                    for a in planned:self.store.event('field_answered',job['id'],{'label':a['field']['label'],'value':a['value'],'provenance':a['provenance']})
+                except Blocked as error:
+                    if error.reason in ('paused','cycle_timeout','provider_rate_limited'):raise
+                    if error.reason=='model_budget_exhausted':budget_error=error
+                    if error.reason in PROVIDER_FAILURES or error.reason=='model_budget_exhausted':
+                        from .page_answers import RECOVERABLE
+                        pending=[(f,error.reason if reason in RECOVERABLE else reason) for f,reason in pending]
+                    else:raise
             if pending:
+                # Only genuine remaining gaps reach the user. Do not flash
+                # questions in the portal while the page planner is answering.
+                for f,reason in pending:
+                    question_context={**job,'previous_answers':[a for a in answers if fields.index(a['field'])<fields.index(f)]}
+                    asked.add(self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],reason,field=f,context=question_context))
                 # This attempt's questions supersede earlier attempts' wording and widgets.
                 self.store.retire_questions(job['id'],asked)
                 labels='; '.join(f['label'] for f,_ in pending)
@@ -1672,6 +1749,9 @@ class Browser:
                 confirmed=(submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
                            and self._native_submission_acknowledged())
                 outcome='not_submitted' if REJECTED.search(text) else 'confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
+                if outcome=='confirmed':self._record_native_receipt(job,text)
+                if outcome=='unknown' and self._close_undispatched_lever_submit():
+                    outcome='not_submitted';text='No final Lever application request was dispatched; the native submission grant has been closed.'
                 # Employer errors/receipts often appear below a long posting.
                 evidence=text if outcome=='awaiting_verification' or len(text)<=4000 else text[:2000]+'\n…\n'+text[-2000:]
                 if outcome=='awaiting_verification':
@@ -1688,16 +1768,21 @@ class Browser:
                 reason=e.reason if isinstance(e,Blocked) else None
                 self.store.event('submission_error',self.aid,{'stage':stage,'type':type(e).__name__,
                                                             **({'reason':reason} if reason else {})})
+                undispatched=False
                 outcome=self.store.db.execute('SELECT state FROM applications WHERE id=?',(self.aid,)).fetchone()
                 if outcome and outcome[0]=='submitting':
                     # Persist uncertainty before attempting optional evidence:
                     # a dead page or failed capture must never lose the intent.
-                    self.store.finish(self.aid,'unknown',f'{type(e).__name__}'+(f' ({reason})' if reason else '')+': outcome requires verification')
+                    undispatched=self._close_undispatched_lever_submit()
+                    self.store.finish(self.aid,'not_submitted' if undispatched else 'unknown',
+                        'No final Lever application request was dispatched; the native submission grant has been closed.' if undispatched
+                        else f'{type(e).__name__}'+(f' ({reason})' if reason else '')+': outcome requires verification')
                     screenshot=self.store.root/'screenshots'/(self.aid+'-after.jpg')
                     screenshot_name=self._outcome_screenshot(screenshot)
                     if screenshot_name:
-                        self.store.db.execute("UPDATE applications SET screenshot=? WHERE id=? AND state='unknown'",(screenshot_name,self.aid))
+                        self.store.db.execute("UPDATE applications SET screenshot=? WHERE id=? AND state IN ('unknown','not_submitted')",(screenshot_name,self.aid))
                 if isinstance(e,Blocked) and e.reason=='paused':raise
+                if undispatched:return 'not_submitted'
                 detail=('A CAPTCHA appeared after the final click. Verify the outcome with the employer before applying again.'
                         if reason=='captcha_blocked' else
                         'The final click was recorded, but its outcome could not be verified. Check with the employer before applying again.')

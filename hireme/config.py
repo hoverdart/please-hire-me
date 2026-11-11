@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from zoneinfo import ZoneInfo
 
 DEFAULTS = {
@@ -11,6 +12,10 @@ DEFAULTS = {
     "model_escalation": False,
     "remote_drafts": False,
     "adaptive_browser": True,
+    "allowed_application_ats": [],
+    "uncertain_application_scope": "company",
+    "rollout_stage": "manual",
+    "stop_on_uncertain_outcome": False,
     "deployment": "local",
     "max_attempts_per_cycle": 10,
     "max_model_requests_per_cycle": 40,
@@ -18,6 +23,7 @@ DEFAULTS = {
     "max_output_tokens": 2000,
     "tailored_writing": False,
     "tailored_resumes": False,
+    "resume_style": {"template": "ats"},
     "contextual_preferences": False,
     "gmail_reports": False,
     "gmail_prior_applications": False,
@@ -69,6 +75,18 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
     s.update(copy.deepcopy(current or {}))
     s.update(changes)
     if type(s['adaptive_browser']) is not bool:raise ValueError('Invalid adaptive_browser')
+    from .resume_styles import validate_style
+    # Stored as the applicant chose it; readers expand template defaults.
+    validate_style(s['resume_style'])
+    if s['rollout_stage'] not in ('manual','dry_run','controlled','restricted'):raise ValueError('Invalid rollout stage')
+    if type(s['stop_on_uncertain_outcome']) is not bool:raise ValueError('Invalid uncertainty stop setting')
+    if s['uncertain_application_scope'] not in ('posting','company'):
+        raise ValueError('Uncertain applications must hold their posting or company')
+    if (not isinstance(s['allowed_application_ats'],list) or len(s['allowed_application_ats'])>6
+            or any(a not in ('lever','ashby','greenhouse','workday','icims','other') for a in s['allowed_application_ats'])):
+        raise ValueError('Choose supported ATS names for the application scope')
+    if len(set(s['allowed_application_ats']))!=len(s['allowed_application_ats']):
+        raise ValueError('Choose each ATS only once')
     import re
     aliases=s['gmail_confirmed_aliases']
     if (not isinstance(aliases,list) or len(aliases)>30 or any(not isinstance(a,str)
@@ -126,6 +144,19 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
     return s
 
 
+def read_settings(db):
+    """Read the complete configuration without initialization or expiry writes."""
+    row = db.execute('SELECT value FROM config WHERE id=1').fetchone()
+    if not row:
+        raise ValueError('settings_unavailable')
+    saved = json.loads(row[0])
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings_extension'").fetchone():
+        extension = db.execute('SELECT value FROM settings_extension WHERE id=1').fetchone()
+        if extension:
+            saved.update(json.loads(extension[0]))
+    return validate_settings(saved)
+
+
 # No citizenship, authorization, GPA, experience or preference defaults.
 FACTS = {
     "full_name": "Full legal name", "first_name": "First name", "last_name": "Last name",
@@ -136,6 +167,8 @@ FACTS = {
     "state": "State", "postal_code": "Postal code", "country": "Country of residence",
     "linkedin": "LinkedIn URL", "github": "GitHub URL", "website": "Website",
     "high_school": "High school attended", "high_school_graduation_year": "High school graduation year (YYYY)", "school": "University", "degree": "Degree in progress", "major": "Major",
+    "high_school_graduation": "High school graduation (YYYY-MM)",
+    "sat_score": "SAT total score (single sitting)", "sat_superscore": "SAT superscore",
     "graduation": "Expected graduation (YYYY-MM)", "college_start": "College start (YYYY-MM)",
     "highest_completed_degree": "Highest completed degree", "gpa": "GPA",
     "work_authorized_us": "Currently authorized to work in the US (Yes / No)",
@@ -143,6 +176,9 @@ FACTS = {
     "citizenship": "Country of citizenship", "us_person": "US person for export controls (Yes / No)",
     "unrestricted_authorization": "Unrestricted work authorization (Yes / No)",
     "earliest_start": "Earliest start (YYYY-MM)", "latest_start": "Latest start (YYYY-MM)",
+    "internship_start": "Available internship start (YYYY-MM-DD)",
+    "internship_end": "Available internship end (YYYY-MM-DD)",
+    "active_top_secret": "Currently hold active US Top Secret clearance (Yes / No)",
     "professional_years": "Years of qualifying professional experience",
     "skills": "Verified skills (comma separated)", "race": "Race / ethnicity answer",
     "gender": "Gender answer", "pronouns": "Pronouns answer", "veteran": "Veteran status answer", "disability": "Disability answer",
@@ -178,6 +214,7 @@ BOOLEANS = {"work_authorized_us", "needs_sponsorship", "us_person", "unrestricte
             "relocate", "onsite", "recording", "background_check", "sms", "worked_outside_resume", "contacts_outside_resume", "summer_2027_relocate", "summer_2027_available", "outside_business_activity", "recruitment_data_consent", "temporary_work_authorization", "conflict_disclosures", "government_official", "demographic_data_consent"}
 BOOLEANS |= {'over_18','nights_weekends','robots_experience','humanoids_experience','decline_unanswered_demographics'}
 BOOLEANS |= {'finra_registered','securities_licenses'}
+BOOLEANS |= {'active_top_secret'}
 
 
 def validate_fact(key: str, value: str) -> str:
@@ -193,14 +230,16 @@ def validate_fact(key: str, value: str) -> str:
         raise ValueError('Answer exactly Mobile or Landline')
     if key=='high_school_graduation_year' and not re.fullmatch(r'(?:19|20)\d{2}',value):
         raise ValueError('Use a four-digit high school graduation year')
-    if key in {"graduation", "college_start", "earliest_start", "latest_start"} and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):
+    if key in {"graduation", "college_start", "earliest_start", "latest_start", "high_school_graduation"} and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):
         raise ValueError("Use YYYY-MM")
-    if key=='fulltime_start':
+    if key in {'fulltime_start','internship_start','internship_end'}:
         from datetime import date
         try:
             if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):raise ValueError
             date.fromisoformat(value)
         except ValueError:raise ValueError('Use a valid YYYY-MM-DD date') from None
+    if key in {'sat_score','sat_superscore'} and (not re.fullmatch(r'\d{3,4}',value) or not 400<=int(value)<=1600 or int(value)%10):
+        raise ValueError('Use a SAT total from 400 to 1600, in increments of 10')
     if key in {"email", "alternate_email"} and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
         raise ValueError("Invalid email")
     if key == "professional_years" and (not re.fullmatch(r"\d+(?:\.\d+)?", value) or float(value) > 80):

@@ -12,37 +12,38 @@ from .answers import _validate_writing, resolve
 from .materials import writing_context_hash
 from .util import Blocked, digest, now, private_dir, safe_document, write_private_blob
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
-def render_letter(name, contact, company, title, body):
-    from reportlab import __file__ as reportlab_file
-    from reportlab.lib import colors
-    from reportlab.lib.enums import TA_LEFT
+def render_letter(name, contact, company, title, body, style=None):
+    """One page in the applicant's chosen resume style, so both documents read as a set."""
     from reportlab.lib.styles import ParagraphStyle
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.platypus import HRFlowable, SimpleDocTemplate, Paragraph, Spacer
     from pypdf import PdfReader
+    from .resume_styles import _fonts, _styles, link_target, require_glyphs, validate_style
 
-    font_dir = Path(reportlab_file).parent / 'fonts'
-    if 'HiremeVera' not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont('HiremeVera', str(font_dir / 'Vera.ttf')))
-        pdfmetrics.registerFont(TTFont('HiremeVeraBold', str(font_dir / 'VeraBd.ttf')))
-    supported=pdfmetrics.getFont('HiremeVera').face.charToGlyph
-    if any(ord(c) not in supported for c in name+contact+company+title+body if not c.isspace()):
-        raise Blocked('cover_letter_font_unsupported','This letter contains characters unsupported by the installed PDF font')
-    normal = ParagraphStyle('body', fontName='HiremeVera', fontSize=10.5, leading=15,
-                            spaceAfter=11, textColor=colors.HexColor('#182839'), alignment=TA_LEFT)
-    heading = ParagraphStyle('heading', parent=normal, fontName='HiremeVeraBold', fontSize=14, leading=19)
-    small = ParagraphStyle('contact', parent=normal, fontSize=9, leading=13)
+    style = validate_style(style)
+    styles = _styles(style)
+    require_glyphs([name, contact, company, title, body, 'Dear Hiring Team, Sincerely,|'], style['font'], 'cover_letter_font_unsupported')
+    # Letters are prose: never smaller than 10 pt, with a comfortable measure.
+    size = max(10.0, float(style['body_size']))
+    normal = ParagraphStyle('letter-body', parent=styles['body'], fontSize=size, leading=size * max(1.4, float(style['line_spacing'])),
+                            spaceAfter=size * 1.0)
+    margin = max(54.0, float(style['margin']))
     stream = io.BytesIO()
-    doc = SimpleDocTemplate(stream, pagesize=(612, 792), leftMargin=54, rightMargin=54,
-                            topMargin=48, bottomMargin=48, title=f'Cover letter — {company}', author=name)
-    story = [Paragraph(escape(name), heading)]
+    doc = SimpleDocTemplate(stream, pagesize=(612, 792), leftMargin=margin - 6, rightMargin=margin - 6,
+                            topMargin=margin - 6, bottomMargin=margin - 6, title=f'Cover letter — {company}', author=name,
+                            creator='HireMeMaybe', initialFontName=_fonts(style['font'])[0])
+    story = [Paragraph(escape(name), styles['name'])]
     if contact:
-        story.append(Paragraph(escape(contact), small))
-    story.extend([Spacer(1, 12), Paragraph(escape(company), normal),
+        parts = []
+        for value in contact.split(' | '):
+            target = link_target(value) if '@' in value and ' ' not in value else None
+            parts.append(f'<link href="{escape(target, quote=True)}">{escape(value)}</link>' if target else escape(value))
+        story.append(Paragraph(' | '.join(parts), styles['contact']))
+    if style['rule']:
+        story.append(HRFlowable(width=612 - 2 * margin, thickness=0.6, color=styles['accent'], spaceBefore=2, spaceAfter=2, hAlign='LEFT'))
+    story.extend([Spacer(1, 14), Paragraph(escape(company), normal),
                   Paragraph(escape(title), normal), Spacer(1, 5), Paragraph('Dear Hiring Team,', normal)])
     for paragraph in re.split(r'\n\s*\n', body.strip()):
         story.append(Paragraph(escape(paragraph).replace('\n', ' '), normal))
@@ -53,10 +54,10 @@ def render_letter(name, contact, company, title, body):
     if len(reader.pages) != 1:
         raise Blocked('cover_letter_too_long', 'Generated letter must fit on one page')
     text = reader.pages[0].extract_text()
-    if name not in text or company not in text or title not in text:
+    words = lambda s: re.sub(r'\s+', ' ', s).strip()
+    if any(words(value) not in words(text) for value in (name, company, title)):
         raise Blocked('cover_letter_render_failed')
     # Verify body words survived layout/font encoding before any upload.
-    words = lambda s: re.sub(r'\s+', ' ', s).strip()
     if words(body) not in words(text):
         raise Blocked('cover_letter_render_failed', 'PDF text differs from the reviewed draft')
     return data
@@ -65,7 +66,8 @@ def render_letter(name, contact, company, title, body):
 def _fingerprint(store, job):
     return digest({'context': writing_context_hash(store, job), 'facts': store.facts(),
                    'words': store.settings()['cover_letter_words'], 'enabled':store.settings()['cover_letters'],
-                   'templates': sorted((t['id'],t['revision']) for t in store.templates()),'format': FORMAT_VERSION})
+                   'templates': sorted((t['id'],t['revision']) for t in store.templates()),'format': FORMAT_VERSION,
+                   'style': store.settings()['resume_style']})
 
 
 def generate_cover_letter(store, job, provider):
@@ -94,7 +96,7 @@ def generate_cover_letter(store, job, provider):
     answer = resolve(store, job.get('answer_scope', job['host']), field, provider, context=job)
     if not answer['provenance'].get('tailored'):
         raise Blocked('cover_letter_draft_failed', 'No grounded tailored draft was produced')
-    data = render_letter(name, contact, job['company'], job['title'], answer['value'])
+    data = render_letter(name, contact, job['company'], job['title'], answer['value'], store.settings()['resume_style'])
     store.checkpoint()
     if fingerprint != _fingerprint(store, job):
         raise Blocked('cover_letter_sources_changed')

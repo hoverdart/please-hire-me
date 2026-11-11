@@ -90,8 +90,13 @@ def test_paused_revision_and_scheduler_are_explicit_gates(store, local_checks):
 
 
 def test_readonly_view_cannot_write_and_includes_committed_wal(store):
+    store.update_settings({'allowed_application_ats':['ashby','icims'], 'resume_style':{'template':'modern'},
+                           'rollout_stage':'controlled','stop_on_uncertain_outcome':True})
+    expected=store.settings()
+    changes=store.db.total_changes
     view = release_check.ReadOnlyLedger(store.root)
     try:
+        assert view.settings()==expected
         assert view.facts()['full_name']['value'] == 'Test Person'
         import sqlite3
         with pytest.raises(sqlite3.OperationalError):
@@ -99,6 +104,7 @@ def test_readonly_view_cannot_write_and_includes_committed_wal(store):
     finally:
         view.close()
     assert store.facts()['full_name']['value'] == 'Test Person'
+    assert store.db.total_changes==changes
 
 
 def test_snapshot_racing_with_writer_fails_and_removes_temporary_copy(store, monkeypatch):

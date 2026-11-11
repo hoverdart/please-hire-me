@@ -704,14 +704,14 @@ def test_custom_combobox_verifies_selected_option_not_empty_search_input(store,a
     store.put_facts({'country':'United States'})
     original=(Path(__file__).parent/'fixtures/application.html').read_text()
     html=original.replace('</form>','''<label for="country-picker">Country</label><div class="select__control">
-    <span class="select__single-value">+1</span><input id="country-picker" role="combobox">
+    <span class="select__single-value">+1</span><input class="select__input" id="country-picker" role="combobox">
     <input type="hidden" name="country" value="Canada +1"></div>
     <div id="menu" role="listbox" hidden><div role="option" aria-selected="false">United States +1</div><div role="option" aria-selected="true">Canada +1</div></div></form>''').replace('</body>','''<script>
     const picker=document.querySelector('#country-picker'),menu=document.querySelector('#menu');
     picker.onclick=()=>{menu.hidden=false};picker.onkeydown=e=>{if(e.key==='Escape')menu.hidden=true};
     menu.querySelectorAll('[role=option]').forEach(option=>option.onclick=()=>{
       menu.querySelectorAll('[role=option]').forEach(x=>x.setAttribute('aria-selected',x===option?'true':'false'));
-      document.querySelector('[name=country]').value=option.textContent;picker.value='';menu.hidden=true;
+      document.querySelector('[name=country]').value=option.textContent;picker.value='';picker.style.opacity='0';menu.hidden=true;
     });</script></body>''')
     with Browser(store,test_url=ats[0]) as b:
         def form(route):
@@ -720,6 +720,18 @@ def test_custom_combobox_verifies_selected_option_not_empty_search_input(store,a
         b.page.route(ats[0]+'/**',form)
         assert b.apply(local_job(store,ats))=='confirmed'
     assert b'United States +1' in ats[1][0]
+
+
+def test_transparent_selected_combobox_requires_visible_container(store,ats):
+    with Browser(store,test_url=ats[0]) as b:
+        b.page.set_content('''<div class="select__control"><span class="select__single-value">United States</span>
+            <input class="select__input" id="country" role="combobox" aria-label="Country" style="opacity:0"></div>''')
+        assert [f['label'] for f in b._raw_snapshot()] == ['Country']
+        b.page.locator('.select__control').evaluate("e => e.style.opacity = '0'")
+        assert b._raw_snapshot() == []
+        b.page.locator('.select__control').evaluate("e => e.style.opacity = '1'")
+        b.page.locator('.select__single-value').evaluate("e => e.remove()")
+        assert b._raw_snapshot() == []
 
 
 def test_acknowledged_upload_can_remove_original_file_input(store,ats):

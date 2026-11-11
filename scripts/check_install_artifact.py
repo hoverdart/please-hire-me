@@ -14,8 +14,18 @@ from hireme.discovery import board_sources
 from hireme.store import Store
 from importlib.resources import files
 assert board_sources(Path.cwd(),limit=2)
-for name in ('index.html','app.js','notes.js','workspace.js','recruiting.js','insights.js','history-import.js','style.css'):
+for name in ('index.html','app.js','notes.js','workspace.js','recruiting.js','insights.js','history-import.js','resume-style.js','style.css'):
     assert files('hireme').joinpath('static',name).is_file(), name
+# Bundled fonts: every template and a styled letter render from the installed package alone.
+from hireme.resume_styles import TEMPLATES,render_resume
+from hireme.tailored_resumes import sample_content
+from hireme.letters import render_letter
+for template in TEMPLATES:
+    data,text,measured=render_resume(sample_content(),{'template':template})
+    assert data.startswith(b'%PDF-') and measured['pages']==1 and 'Sample Applicant' in text, template
+    assert render_letter('Sample Applicant','sample@example.invalid','Sample Employer','Sample Role','A sample paragraph.',{'template':template}).startswith(b'%PDF-')
+from hireme.report_email import render_html
+assert render_html([{'summary':{'confirmed':0,'human':0,'unconfirmed':0},'run':{'id':'sample'},'groups':[]}],'Sample').startswith('<!DOCTYPE html>')
 from hireme.platform_connections import list_connections
 from hireme.application_artifacts import library
 from hireme.backup import create_backup,restore_backup

@@ -210,7 +210,11 @@ Bordered settings and facts fieldsets keep their native fieldset/legend semantic
 
 ### Navigation
 
-The main workspace group contains Home, Jobs, Applications, Needs you and Profile; Settings follows a separator. Profile exposes Your facts and Materials through contextual navigation. Settings exposes Connections, Search & automation and Setup. Active locations use cobalt text on pale blue with weight (600). Authored SVG icons use stroke width (1.5), rounded joins and caps, and size (18px); labels remain visible. On mobile, the main group wraps rather than overflowing offscreen.
+The main workspace group contains Home, Jobs, Applications, Needs you, Your context and Connections; Settings follows a separator. Your context exposes Facts & notes and Documents & writing, with reusable notes first. Connections is directly reachable and keeps Gmail setup in a disclosure; terminal commands bind to the open private workspace. Settings retains contextual access to Connections, Search & automation and Setup. Active locations use cobalt text on pale blue with weight (600). Authored SVG icons use stroke width (1.5), rounded joins and caps, and size (18px); labels remain visible. On mobile, the main group wraps rather than overflowing offscreen.
+
+### Documents and reports
+
+Resume and letter style lives under Documents & writing as one bordered form: template and wording first, numeric settings in the two-column grid, section order as separator rows with Move up and Move down buttons, then the reference upload. The preview frame uses the paper ground and rule border. Batch report delivery uses one separator row per report: delivery state in ink weight (600), time in muted metadata, one explanatory line, then secondary buttons. Report email reuses the palette with inline values: white panel on paper, cobalt wordmark with the apricot dot, confirmed, attention and danger grounds for the three summary counts and section chips.
 
 ### Worker Controls and Connections
 

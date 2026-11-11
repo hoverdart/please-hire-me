@@ -554,9 +554,16 @@ const frame=document.getElementById('fixture-challenge');document.body.innerHTML
     if mode=='bad_ack':
         assert b.ashby_submission.used and not b.ashby_submission.acknowledged
         responses=store.db.execute("SELECT detail FROM events WHERE kind='ashby_submission_response'").fetchall()
-        assert len(responses)==1 and json.loads(responses[0][0])=={'acknowledged':False}
+        assert len(responses)==1 and json.loads(responses[0][0])['acknowledged'] is False
     assert store.db.execute('SELECT state FROM applications').fetchone()[0]==('confirmed' if mode in {'complete','lingering_frame'} else 'unknown')
     assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='submit_intent'").fetchone()[0]==1
+    from hireme.application_evidence import snapshot
+    evidence=snapshot(store,b.aid)
+    if mode in {'complete','lingering_frame'}:
+        assert evidence['verification_method']=='native_ats_acknowledgement'
+        assert any(event['kind']=='submission_receipt_verified' for event in evidence['evidence']['events'])
+    else:
+        assert not store.db.execute("SELECT 1 FROM events WHERE kind='submission_receipt_verified' AND subject=?",(b.aid,)).fetchone()
 
 
 def composite_definition(**changes):

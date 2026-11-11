@@ -4,29 +4,35 @@ from .util import Blocked
 
 MONTHS={name.lower():i for i,name in enumerate(('January','February','March','April','May','June','July','August','September','October','November','December'),1)}
 MONTHS.update({k[:3]:v for k,v in list(MONTHS.items())})
+SEASONS={'spring':(3,5),'summer':(6,8),'fall':(9,12),'autumn':(9,12)}
 DATE=r'(?:[A-Za-z]+\.?\s+)?(?:20\d{2})'
+GRADUATION=r'\bgraduat\w*'
 
 def endpoint(text):
     match=re.fullmatch(r'(?:(\w+)\.?\s+)?(20\d{2})',text.strip())
     if not match:return None
-    month=MONTHS.get((match[1] or '').lower())
+    term=(match[1] or '').lower()
+    if term in SEASONS:
+        lo,hi=SEASONS[term];year=int(match[2])*12
+        return year+lo-1,year+hi-1
+    month=MONTHS.get(term)
     if match[1] and not month:return None
     year=int(match[2])*12
     return (year+(month or 1)-1,year+(month or 12)-1)
 
 def window(text):
     """Return inclusive month bounds or None for unsupported/ambiguous wording."""
-    if not re.search(r'graduat',text,re.I):return None
+    if not re.search(GRADUATION,text,re.I):return None
     text=re.sub(r'\s+',' ',text)
-    match=re.search(r'graduat\w*.{0,60}?(?:between|from)\s+('+DATE+r')\s*(?:and|to|[-–])\s*('+DATE+r')',text,re.I)
+    match=re.search(GRADUATION+r'.{0,60}?(?:between|from)\s+('+DATE+r')\s*(?:and|to|[-–])\s*('+DATE+r')',text,re.I)
     if match:
         first,last=endpoint(match[1]),endpoint(match[2])
         return (first[0],last[1]) if first and last and first[0]<=last[1] else None
-    match=re.search(r'graduat\w*.{0,60}?\b(20\d{2})\s+or\s+(later|earlier)\b',text,re.I)
+    match=re.search(GRADUATION+r'.{0,60}?\b(20\d{2})\s+or\s+(later|earlier)\b',text,re.I)
     if match:
         point=endpoint(match[1])
         return (point[0],None) if match[2].lower()=='later' else (None,point[1])
-    match=re.search(r'graduat\w*.{0,40}?\b(before|after|by|on or before|on or after)\s+('+DATE+r')',text,re.I)
+    match=re.search(GRADUATION+r'.{0,40}?\b(before|after|by|on or before|on or after)\s+('+DATE+r')',text,re.I)
     if not match:return None
     point=endpoint(match[2])
     if not point:return None
@@ -43,12 +49,11 @@ def matches(value,bounds):
 
 def qualifies(value, text):
     """Compare discrete named graduation seasons without filling their gaps."""
-    seasonal=re.search(r'graduat\w*.{0,80}?\b(?:either\s+)?(Spring|Summer|Fall|Autumn)\s+(20\d{2})\s+or\s+(Spring|Summer|Fall|Autumn)\s+(20\d{2})\b',text,re.I)
+    seasonal=re.search(GRADUATION+r'.{0,80}?\b(?:either\s+)?(Spring|Summer|Fall|Autumn)\s+(20\d{2})\s+or\s+(Spring|Summer|Fall|Autumn)\s+(20\d{2})\b',text,re.I)
     if seasonal:
-        seasons={'spring':(3,5),'summer':(6,8),'fall':(9,12),'autumn':(9,12)}
         outcomes=[]
         for season,year in ((seasonal[1],seasonal[2]),(seasonal[3],seasonal[4])):
-            lo,hi=seasons[season.casefold()]
+            lo,hi=SEASONS[season.casefold()]
             outcomes.append(matches(value,(int(year)*12+lo-1,int(year)*12+hi-1)))
         return any(outcomes)
     bounds=window(text)
@@ -58,7 +63,7 @@ def required(text,value):
     for sentence in re.split(r'[\n.!?]+',text):
         if re.search(r'graduation date.{0,60}(?:indicated|included|listed|stated).{0,30}(?:resume|cv)',sentence,re.I):
             continue # Document-content requirement, not a graduation cutoff.
-        if not re.search(r'(?:must|required|eligible|between|before|after|by).{0,60}graduat|graduat.{0,60}(?:must|between|before|after|by|either)',sentence,re.I):continue
+        if not re.search(r'\b(?:must|required|eligible|between|before|after|by)\b.{0,60}'+GRADUATION+'|'+GRADUATION+r'.{0,60}\b(?:must|between|before|after|by|either)\b',sentence,re.I):continue
         result=qualifies(value,sentence)
         if result is None:raise Blocked('graduation_window_review','An unparsed graduation requirement needs review')
         if not result:raise Blocked('graduation_mismatch')

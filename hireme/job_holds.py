@@ -22,7 +22,7 @@ def pending_write_jobs(store):
     """Local exclusions must never hide an interrupted employer write."""
     return {row[0] for row in store.db.execute("SELECT job_id FROM draft_operations WHERE state IN ('intent','unknown') UNION SELECT job_id FROM remote_draft_steps WHERE state IN ('intent','unknown') UNION SELECT job_id FROM workday_drafts WHERE state='unknown'")}
 
-ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review','technical_requirement_review'}
+ELIGIBILITY_REVIEWS={'citizenship_or_clearance_review','degree_requirement_review','technical_requirement_review','graduation_window_review'}
 LEGACY_MAIL_FAILURES={'gmail_reconnect_required','gmail_not_connected','gmail_account_mismatch','gmail_owner_missing','worker_busy'}
 
 
@@ -34,7 +34,8 @@ def mail_screening_hold(row):
 
 
 def mail_check_failed(row):
-    return (row['reason'] in {'prior_application_mail_unavailable','prior_application_company_review'}
+    return (row['reason'] in {'prior_application_mail_unavailable','prior_application_company_review',
+                                      'prior_application_mail_access_denied','prior_application_mail_rate_limited'}
             or row['reason'] in LEGACY_MAIL_FAILURES and mail_screening_hold(row))
 
 # Each exclusion is already a proven blocker. Other profile/preferences edits
@@ -53,6 +54,7 @@ ELIGIBILITY_INPUTS = {
     'citizenship_mismatch': ({'us_person'},set()),
     'citizenship_or_clearance_review': ({'citizenship','us_person'},set()),
     'graduation_mismatch': ({'graduation'},set()),
+    'graduation_window_review': ({'graduation'},set()),
     'start_window_mismatch': ({'earliest_start','latest_start','fulltime_start'},set()),
     'compensation_mismatch': (set(),{'min_annual_usd','min_hourly_usd'}),
     'company_blocked': (set(),{'skip_companies','interview_companies','company_aliases'}),
@@ -124,6 +126,9 @@ def information_dependency(store,job,reason,fields=None):
     return digest(data)
 
 def dependency(store, job, kind, reason=None, *, legacy_information=False, information_fields=None):
+    if reason=='company_uncertain':
+        return digest({'scope':store.settings()['uncertain_application_scope'],
+                       'history':[(r['id'],r['state'],sorted(r['company_keys'])) for r in store.application_history(store.settings(),('submitting','unknown'))]})
     if kind=='information' and not legacy_information:return information_dependency(store,job,reason,information_fields)
     if kind=='mail':
         from .prior_applications import matches
@@ -178,6 +183,11 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
         return digest(data)
     data={'posting':posting.get('_listing_hash') or digest({k:posting.get(k,'') for k in ('url','company','title','location','description')}),'mapping':MAPPING_VERSION,'adapter':ADAPTER_VERSION,
           'adaptive_browser':store.settings()['adaptive_browser']}
+    if reason=='form_changed':
+        # A repaired snapshot can reassess previously changed forms. Existing
+        # uncertain submissions and draft writes remain excluded by ready().
+        data['transparent_selected_combobox']=1
+        data['named_repeated_groups']=1
     if reason and reason.startswith('browser_'):data['remote_drafts']=store.settings()['remote_drafts']
     if kind in {'mapping','transient','unsupported'}:
         data['browser_channel']=store.settings()['browser_channel']
@@ -287,6 +297,20 @@ def ready(store, job, at=None, ashby_snapshot=None):
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':
+        if row['reason']=='graduation_window_review':
+            # Older releases misread "undergraduate" as a graduation cutoff.
+            # Recheck only screening evidence; an application-stage review or
+            # uncertain write never gains retry authority from this repair.
+            try:evidence=json.loads(row['evidence'])
+            except (ValueError,TypeError):return False
+            if not isinstance(evidence,dict) or evidence.get('stage')!='screening':return False
+            saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
+            if not saved:return False
+            try:
+                from .policy import eligible
+                eligible(json.loads(saved['payload']),store.settings(),store.facts())
+            except (Blocked,ValueError,TypeError,KeyError):return False
+            return True
         if row['reason'] in {'provider_unavailable','provider_cli_incompatible'}:
             return row['dependency']!=dependency(store,job,'review',row['reason'])
         if row['reason']=='ambiguous_experience':

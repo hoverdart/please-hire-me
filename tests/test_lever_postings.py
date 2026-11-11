@@ -98,3 +98,14 @@ def test_rendered_lever_text_preserves_inline_words_and_block_boundaries():
     from hireme.ats_adapters import lever_posting_text
     text=lever_posting_text({'description':'<p>Build soft<b>ware</b> &amp; tools.</p><p>Current MS student.</p><script>Stale requirement</script>'},required=True)
     assert text=='Build software & tools.\n\nCurrent MS student.'
+
+
+@pytest.mark.parametrize('host',['jobs.lever.co','jobs.eu.lever.co'])
+def test_posting_opens_verified_application_without_apply_link_text(monkeypatch,host):
+    job,data=posting(host)
+    job['url']=data['hostedUrl']+'?source=jobboard'
+    data['applyUrl']+='?lever-source=jobboard'
+    monkeypatch.setattr('hireme.net.Network.json',lambda *a:data)
+    url,text=adapter_for(job).navigation(job)
+    assert url==data['hostedUrl']+'/apply'
+    assert 'Currently pursuing a degree' in text

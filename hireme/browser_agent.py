@@ -27,7 +27,7 @@ FINAL=re.compile(r'^(?:submit(?: (?:your |my |the )?application)?|send (?:applic
                  r'finish(?: application)?|complete application|quick apply|apply(?: now| for this job)?)\s*[.!→]*$',re.I)
 NEXT=re.compile(r'^(?:next(?: step)?|continue(?: application)?|save\s*(?:and|&)\s*continue|'
                 r'review(?: application| and submit)?|proceed|continue to .+)\s*[.!→]*$',re.I)
-ENTRY=re.compile(r'^(?:apply(?: now| for this job)?|apply manually|continue (?:my |your )?application|'
+ENTRY=re.compile(r'^(?:apply(?: now| online| for this job(?: online)?)?|apply manually|continue (?:my |your )?application|'
                  r'start(?: application)?|get started|begin application|application)\s*[.!→]*$',re.I)
 UNSAFE=re.compile(r'\b(?:delete|withdraw|unsubscribe|logout|log out|sign out|remove|discard|'
                   r'share|follow|save job|edit profile|update profile|create account|sign up|register)\b',re.I)
@@ -176,10 +176,40 @@ class AdaptiveBrowser(Browser):
         return bool(any(field['label'] or field['required'] for field in view['fields']) or view['errors'] or any(
             ENTRY.fullmatch(a['label']) or NEXT.fullmatch(a['label']) or FINAL.fullmatch(a['label']) for a in view['actions']))
 
+    def _enter_frame(self):
+        from .icims import enter_content
+        from .browser_observation import retry_dom_read
+        # Navigation can replace the DOM between the click and frame lookup.
+        # Retry only this read, never the action or the following navigation.
+        content=retry_dom_read(self.page,
+            lambda:enter_content(self.page,limit_reached=getattr(self,'frame_entries',0)>=8),
+            checkpoint=self.store.checkpoint)
+        if not content:return False
+        self.frame_entries=getattr(self,'frame_entries',0)+1
+        self.page.goto(content,wait_until='domcontentloaded',timeout=45000)
+        self.page.wait_for_function('()=>document.body&&document.body.innerText.trim().length>0',timeout=20000)
+        return True
+
+    def _outcome_text(self):
+        """Visible page text, including an approved same-requisition content frame. Reads only."""
+        text=self.page.locator('body').inner_text()
+        from .icims import WRAPPER,enter_content
+        try:
+            if enter_content(self.page):
+                text+='\n'+self.page.frame_locator(WRAPPER).locator('body').inner_text(timeout=2000)
+        except Exception:
+            # An unapproved or unreadable frame contributes no receipt evidence.
+            pass
+        return text
+
     def _wait_ready(self):
         deadline=time.monotonic()+getattr(self,'operation_timeout',20)
         while time.monotonic()<deadline:
-            self._check();view=observe(self.page)
+            self._check()
+            # An iCIMS step can land on its frame wrapper. Open the same
+            # requisition's content document; any other frame is a boundary.
+            if self._enter_frame():continue
+            view=observe(self.page)
             if self._view_ready(view):return view
             if re.search(r'the page you are looking for doesn.t exist',view['text'],re.I):raise Blocked('expired_posting')
             self.page.wait_for_timeout(200)
@@ -648,6 +678,8 @@ class AdaptiveBrowser(Browser):
             changed=False
             while time.monotonic()<deadline:
                 self._check()
+                # A completed step can return to the hosted frame wrapper.
+                if kind in {'entry','next'} and self._enter_frame():continue
                 fresh=observe(self.page)
                 changed=fresh['signature']!=view['signature']
                 if operation.denied:
@@ -742,7 +774,7 @@ class AdaptiveBrowser(Browser):
             self._click(choice['action'])
             deadline=time.monotonic()+getattr(self,'receipt_timeout',45)
             while time.monotonic()<deadline:
-                self._check();text=self.page.locator('body').inner_text()
+                self._check();text=self._outcome_text()
                 receipt=self._receipt(text,before)
                 if operation.requests and operation.complete and receipt and not operation.accepted:
                     from .workday_browser_receipt import verify_submission
@@ -862,7 +894,7 @@ class AdaptiveBrowser(Browser):
                 raise Blocked('unapproved_destination')
         self.allowed_origin=origin(self.test_url or job['url']);self.current_host=urlsplit(self.allowed_origin).hostname
         self.stopped_reason=None;self.completed_steps=[];self.uploads={};self.staged_documents={};self.memory=[];self.opened=set();self.searched=set();self.search_queries={};self.option_cache={}
-        self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={}
+        self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={};self.frame_entries=0
         self.job['answer_scope']=job.get('answer_scope') or job['host']+'|'+self.store.company(job['company'])
         self.store.check_job_decision(job['id']);guard_pending(self.store,job)
         if (self.store.db.execute("SELECT 1 FROM draft_operations WHERE job_id=? AND operation NOT LIKE 'ui:%'",(job['id'],)).fetchone()
@@ -906,7 +938,9 @@ class AdaptiveBrowser(Browser):
             self.owner_verified=bool(self.test_url) or not (workday or self.connection_id)
             self.page.goto(navigation,wait_until='domcontentloaded',timeout=45000)
             self.page.wait_for_function('()=>document.body&&document.body.innerText.trim().length>0',timeout=20000)
-            self._check();initial=observe(self.page)
+            self._check()
+            if self._enter_frame():self._check()
+            initial=observe(self.page)
             if workday and not self.test_url:
                 from .workday_browser_posting import inspect_posting
                 posting_text=inspect_posting(self.page,self.job,self.store.checkpoint)

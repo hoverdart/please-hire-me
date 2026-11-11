@@ -281,27 +281,35 @@ class LeverSubmission:
         except (ValueError,TypeError,UnicodeError,AttributeError):return False
         self.boundary.check()
         self.used=True;self.request_keys={key,(request.url,request.method,hashlib.sha256(transport).hexdigest())}
-        self.store.event('native_submission_write',self.aid,{'platform':'lever'})
+        self.transport_hash=hashlib.sha256(transport).hexdigest()
+        self.store.event('native_submission_write',self.aid,{'platform':'lever','request_hash':hashlib.sha256(transport).hexdigest()})
         return {'post_data':transport}
 
     def observe(self,response,key):
         if not self.used or self.response_seen or key not in self.request_keys:return
         # Body reads can reenter the outcome poller; pending is not failure.
         self.response_seen=True
+        content='';rejection=None
         try:
-            if not 200<=response.status<300:return
             content_type=response.headers.get('content-type','').split(';')[0].strip().casefold()
-            if content_type!='text/html':return
             content=response.text()
             if len(content)>2000000:return
+            if content_type!='text/html':return
             parsed=ReceiptHTML();parsed.feed(content)
+            if response.status==400 and parsed.form and 'There was an error verifying your application. Please try again.' in ''.join(parsed.text):
+                rejection='verification_rejected'
+            if not 200<=response.status<300:return
             from .browser import submission_receipt
             self.acknowledged=not parsed.form and not parsed.email and submission_receipt(''.join(parsed.text),self.baseline)
             self.failed=not self.acknowledged
         except (ValueError,TypeError,AttributeError):pass
         finally:
             self.failed=not self.acknowledged
-            self.store.event('native_submission_response',self.aid,{'platform':'lever','acknowledged':self.acknowledged})
+            from .util import application_identity
+            self.store.event('native_submission_response',self.aid,{'platform':'lever','acknowledged':self.acknowledged,
+                'evidence_version':1,'posting_identity':list(application_identity(self.url)),
+                'http_status':response.status,'request_hash':self.transport_hash,
+                'response_sha256':hashlib.sha256(content.encode()).hexdigest(),'rejection_code':rejection})
 
     def receipt_matches(self,page_url):
         return self.acknowledged and page_url==self.url

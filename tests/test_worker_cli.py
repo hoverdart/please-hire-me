@@ -19,3 +19,16 @@ def test_paused_run_still_fails_for_incomplete_setup(store, capsys):
     assert main(['--data-dir', str(store.root), 'run', '--no-discovery']) == 2
     assert 'setup_incomplete' in capsys.readouterr().err
     assert store.db.execute('SELECT status FROM runs').fetchone()[0] == 'blocked'
+
+
+def test_held_review_saves_progress_when_preparation_is_interrupted(store,monkeypatch,tmp_path):
+    from hireme.util import Blocked
+    report={'counts':{},'jobs':[],'forms_pending':2}
+    monkeypatch.setattr('hireme.queue_review.revalidate',lambda *args,**kwargs:report)
+    def prepare(*args):
+        report.update(forms_pending=1,forms_prepared=1)
+        raise Blocked('rollout_stale')
+    monkeypatch.setattr('hireme.queue_review.prepare_review',prepare)
+    output=tmp_path/'review.json'
+    assert main(['--data-dir',str(store.root),'revalidate-holds','--prepare','--output',str(output)])==2
+    assert json.loads(output.read_text())['forms_prepared']==1

@@ -90,6 +90,7 @@ def flows(store, connection_id, capability):
 
 
 def status(store, connection_id):
+    from .local_commands import command
     spec = platform(connection_id)
     config = configuration(store, connection_id)
     capabilities = {}
@@ -104,7 +105,7 @@ def status(store, connection_id):
             'version': VERSION, 'verified_flows': len(verified)}
     return {**config, 'enabled': bool(config['enabled']), 'discovery_enabled': bool(config['discovery_enabled']),
         'native_apply_enabled': bool(config['native_apply_enabled']), 'name': spec['name'],
-        'login_url': spec['login_url'], 'connect_command': f'.venv/bin/python -m hireme connection {connection_id} connect',
+        'login_url': spec['login_url'], 'connect_command': command(store, 'connection', connection_id, 'connect'),
         'capabilities': capabilities, 'session_ready': config['session_state'] == 'ready',
         'ui_application':{'available':store.settings()['adaptive_browser'],
             'message':'Adaptive browser applications are available for saved listings when this connection and automatic applications are enabled. Confirmed answers and exact resume contents are required; some existing profile documents still need review.' if store.settings()['adaptive_browser'] else 'Adaptive application browser is disabled in Search & automation.'},

@@ -60,7 +60,11 @@ def main(argv=None):
     p=sub.add_parser('restore');p.add_argument('path',type=Path)
     p=sub.add_parser('account-vault');p.add_argument('action',choices=['export','import']);p.add_argument('path',type=Path)
     p=sub.add_parser('pi');p.add_argument('action',choices=['configure','preflight','units','install']);p.add_argument('--directory',type=Path)
-    p=sub.add_parser('reports');p.add_argument('action',choices=['status','flush'])
+    p=sub.add_parser('resume-style',help='Show, preview or measure the resume and letter style')
+    p.add_argument('action',choices=['show','preview','measure']);p.add_argument('--template',choices=['ats','modern','compact'])
+    p.add_argument('--reference',type=Path);p.add_argument('--output',type=Path)
+    p=sub.add_parser('capabilities',help='Show the evidence-backed ATS capability matrix');p.add_argument('--markdown',action='store_true')
+    p=sub.add_parser('reports');p.add_argument('action',choices=['status','flush','preview','requeue']);p.add_argument('--id');p.add_argument('--output',type=Path)
     sub.add_parser('resume-candidates')
     p=sub.add_parser('run');p.add_argument('--no-discovery',action='store_true');p.add_argument('--prepare-only',action='store_true');p.add_argument('--limit',type=int);p.add_argument('--max-attempts',type=int);p.add_argument('--job-id',action='append',default=[])
     sub.add_parser('daemon')
@@ -72,6 +76,14 @@ def main(argv=None):
     sub.add_parser('status')
     sub.add_parser('pause');sub.add_parser('resume')
     sub.add_parser('recover',help='Recover interrupted worker records and remain paused')
+    p=sub.add_parser('reconcile-attempts',help='Audit retained unknown outcomes without retrying applications')
+    p.add_argument('--ats',action='append',choices=['lever','ashby','greenhouse','workday','other'])
+    p.add_argument('--scan-mail',action='store_true');p.add_argument('--output',type=Path)
+    p=sub.add_parser('revalidate-holds',help='Refresh held postings without submitting or replaying uncertain drafts')
+    p.add_argument('--ats',action='append',choices=['lever','ashby']);p.add_argument('--output',type=Path)
+    p.add_argument('--prepare',action='store_true',help='Re-extract and verify current forms without final submission')
+    p=sub.add_parser('rollout',help='Commission a staged Lever/Ashby rollout against this installed code')
+    p.add_argument('stage',choices=['dry_run','controlled','restricted'])
     p=sub.add_parser('retry-not-submitted');p.add_argument('application_id');p.add_argument('--note',required=True);p.add_argument('--approved-package',type=Path)
     p=sub.add_parser('renew-retry');p.add_argument('application_id');p.add_argument('--note',required=True);p.add_argument('--approved-package',type=Path,required=True)
     p=sub.add_parser('login');p.add_argument('url')
@@ -197,6 +209,30 @@ def main(argv=None):
                 result=export_accounts(store,args.path.expanduser(),phrase)
             else:result=import_accounts(store,args.path.expanduser(),phrase)
             print(json.dumps(result))
+        elif args.command=='rollout':
+            from .rollout import commission
+            with worker_lock(store.root),worker_lock(store.root,'browser'):
+                print(json.dumps(commission(store,args.stage)))
+        elif args.command=='revalidate-holds':
+            from .queue_review import revalidate
+            from .util import atomic_json
+            with worker_lock(store.root),worker_lock(store.root,'browser'):
+                report=revalidate(store,ats=args.ats or ('lever','ashby'))
+                if args.output:atomic_json(args.output,report)
+            if args.prepare:
+                from .queue_review import prepare_review
+                try:prepare_review(store,REPO,report)
+                finally:
+                    if args.output:atomic_json(args.output,report)
+            print(json.dumps({'counts':report['counts'],'forms_pending':report['forms_pending'],'forms_prepared':report.get('forms_prepared',0)}))
+        elif args.command=='reconcile-attempts':
+            from .application_evidence import reconcile_unknowns
+            from .util import atomic_json
+            with worker_lock(store.root),worker_lock(store.root,'browser'):
+                report=reconcile_unknowns(store,ats=args.ats,scan_mail=args.scan_mail)
+                if args.output:atomic_json(args.output,report)
+            print(json.dumps({'counts':report['counts'],'output':str(args.output) if args.output else None,
+                             'attempts':[{'attempt_id':a['attempt_id'],'ats':a['ats'],'status':a['status'],'reason':a['reason']} for a in report['attempts']]}))
         elif args.command=='open-dashboard':
             import webbrowser
             from .server import dashboard_url
@@ -211,9 +247,38 @@ def main(argv=None):
             elif args.action=='preflight':result=pi.preflight(store)
             else:result=pi.install(store,REPO,args.directory,enable=args.action=='install')
             print(json.dumps(result,indent=2))
+        elif args.command=='resume-style':
+            from .resume_styles import style_from_reference,validate_style
+            if args.action=='show':print(json.dumps(validate_style(store.settings()['resume_style']),indent=2))
+            elif args.action=='measure':
+                # Prints measurements only. Save them from the dashboard after previewing.
+                if not args.reference or args.reference.is_symlink() or not args.reference.is_file():parser.error('resume-style measure needs --reference FILE.pdf')
+                style,notes=style_from_reference(args.reference.read_bytes())
+                print(json.dumps({'style':style,'notes':notes},indent=2))
+            else:
+                from .tailored_resumes import preview
+                from .util import write_private_blob
+                if not args.output or args.output.exists() or args.output.is_symlink():parser.error('resume-style preview needs a new --output FILE.pdf')
+                rendered=preview(store,{'template':args.template} if args.template else None)
+                write_private_blob(args.output,rendered['data'])
+                print(json.dumps({'output':str(args.output),'sample_text':rendered['sample'],'pages':rendered['pages']}))
+        elif args.command=='capabilities':
+            from .capabilities import matrix,markdown
+            print(markdown() if args.markdown else json.dumps(matrix(store),indent=2))
         elif args.command=='reports':
-            from .reports import report_status,flush_reports
-            print(json.dumps(report_status(store) if args.action=='status' else flush_reports(store)))
+            from .reports import report_status,flush_reports,preview_report,requeue_report
+            if args.action=='preview':
+                # Renders the saved report locally. Nothing is sent.
+                preview=preview_report(store,args.id)
+                if not args.output:parser.error('reports preview needs --output FILE.html')
+                if args.output.exists() or args.output.is_symlink():parser.error('Choose a new output file')
+                from .util import write_private_blob
+                write_private_blob(args.output,(preview['html'] or '<pre>'+__import__('html').escape(preview['text'])+'</pre>').encode())
+                print(json.dumps({'id':preview['id'],'subject':preview['subject'],'output':str(args.output),'html':bool(preview['html'])}))
+            elif args.action=='requeue':
+                if not args.id:parser.error('reports requeue needs --id REPORT_ID')
+                print(json.dumps(requeue_report(store,args.id)))
+            else:print(json.dumps(report_status(store) if args.action=='status' else flush_reports(store)))
         elif args.command=='gmail':
             from . import gmail
             if args.action=='import-client':

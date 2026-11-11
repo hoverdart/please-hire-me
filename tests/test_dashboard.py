@@ -1329,6 +1329,7 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
             page.screenshot(path=str(captures / 'overview-mobile.png'), full_page=True)
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             open_view(page, 'today')
+            page.locator('.portal-totals summary').click()
             page.locator('#review-queue').click()
             expect(page.locator('#heading')).to_have_text('A few things need you')
             expect(page.locator('#question-list')).to_contain_text('Which work location')
@@ -1342,7 +1343,8 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
             handshake=page.locator('[data-connection-id=handshake]')
             expect(handshake.locator('.state')).to_have_text('Could not check sign-in')
             handshake.get_by_text('Connect from the Pi or terminal',exact=True).click()
-            expect(handshake.locator('pre code')).to_have_text('.venv/bin/python -m hireme connection handshake connect')
+            from hireme.local_commands import command
+            expect(handshake.locator('pre code')).to_have_text(command(store,'connection','handshake','connect'))
             expect(handshake.locator('details')).to_contain_text('press Enter in that terminal')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             page.screenshot(path=str(captures / 'connections-mobile.png'), full_page=True)

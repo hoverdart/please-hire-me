@@ -53,6 +53,10 @@ def cycle_funnel(store):
         'not_submitted':sum(value=='not_submitted' for value in outcomes.values()),
         'reconciled':len(reconciled),'recorded_outcomes':{kind:sum(value==kind for value in recorded.values()) for kind in ('prepared','confirmed','unknown','blocked','error')}}
 
+def _matrix(store):
+    from .capabilities import matrix
+    return matrix(store)
+
 def coverage(store):
     groups={}
     def group(platform,source):
@@ -61,7 +65,7 @@ def coverage(store):
             groups[key]={'ats':platform,'source':source,'discovered':0,'eligible':0,'attempted':0,'confirmed':0,'blocked':0,'uncertain':0,
                 'configured':False,
                 'discovery_supported':True,'application_capability':('native forms with adaptive UI fallback' if platform in {'Greenhouse','Ashby','Lever'} else 'adaptive application browser') if store.settings()['adaptive_browser'] else ('single-step forms' if platform in {'Greenhouse','Ashby','Lever'} else 'manual completion'),
-                'account_required':platform=='Workday','limitations':'Verified employer sign-in and remote draft permission required; unknown questions and CAPTCHA need help.' if platform=='Workday' else 'CAPTCHA and unsupported widgets may require review.',
+                'account_required':platform in {'Workday','iCIMS'},'limitations':'Verified employer sign-in and remote draft permission required; unknown questions and CAPTCHA need help.' if platform=='Workday' else 'CAPTCHA and unsupported widgets may require review.',
                 'health':'not_checked','checked_at':None}
         return groups[key]
     from .discovery import board_sources
@@ -99,4 +103,4 @@ def coverage(store):
             g['health']=row['status'];g['checked_at']=row['checked']
     return {'checked_at':now(),'groups':sorted(groups.values(),key=lambda g:(g['ats'],g['source'])),
         'eligible_definition':'Current prepared/submission states; screening failures and unreviewed discoveries excluded.',
-        'funnel':cycle_funnel(store)}
+        'funnel':cycle_funnel(store),'capability_matrix':_matrix(store)}

@@ -7,10 +7,22 @@
   const strip = document.getElementById('worker-strip');
   strip.append(document.querySelector('.page-head .actions'));
 
+  // Keep the existing forms mounted: changing views must preserve unsaved work.
+  const profile = document.getElementById('profile');
+  const contextInbox = document.getElementById('context-inbox');
+  const basicContext = document.getElementById('basic-context-form').closest('.section');
+  const suggestions = profile.firstElementChild;
+  profile.prepend(contextInbox, basicContext);
+  profile.append(suggestions);
+  const totals = el('details', undefined, 'portal-totals');
+  totals.append(el('summary', 'Search totals'), document.querySelector('.overview-grid'));
+  document.getElementById('today').append(totals);
+
   const model = document.getElementById('providers');
   model.classList.remove('view'); model.hidden = false;
   const connections = document.getElementById('connections');
-  connections.querySelector('.section').after(model);
+  document.getElementById('gmail-connection').after(model);
+  connections.append(document.getElementById('workspace-terminal'));
   const optional = el('details', undefined, 'section');
   optional.id = 'optional-connections';
   optional.append(el('summary', 'Optional job platforms'), el('p', 'Add a platform only if you use it. Each has its own sign-in and verified capabilities.', 'help'));
@@ -119,6 +131,14 @@
   }
   function render(snapshot) {
     renderConnections(snapshot);
+    const missing = snapshot.missing_setup || [];
+    document.getElementById('portal-context-state').textContent = missing.length
+      ? `${missing.length} setup ${missing.length === 1 ? 'item' : 'items'} to complete`
+      : snapshot.basic_context?.text ? 'Facts, resume and notes saved' : 'Facts and resume saved · Add your notes';
+    const provider = snapshot.readiness?.provider;
+    const modelName = {'claude-cli':'Claude CLI','codex-cli':'Codex CLI','openai-api':'OpenAI API','anthropic-api':'Anthropic API'}[provider?.provider] || 'Model';
+    document.getElementById('portal-connection-state').textContent = `${modelName}${provider?.installed ? ' installed' : provider?.ready ? ' configured' : ' needs setup'} · ${snapshot.gmail?.connected ? 'Gmail authorized' : 'Connect Gmail'}`;
+    strip.hidden = !['today','opportunities','setup'].includes(view) && !snapshot.worker_running;
     const parent=document.getElementById('today-attention');
     const jobs=snapshot.jobs.filter(j=>j.requires_attention).sort((a,b)=>Number(['unknown','awaiting_verification'].includes(b.status))-Number(['unknown','awaiting_verification'].includes(a.status))).slice(0,5);
     const human=snapshot.human_verification?.phase==='challenge'?snapshot.human_verification:null;
@@ -146,6 +166,7 @@
         const url=URL.createObjectURL(await response.blob());const link=el('a');link.href=url;link.download=names[artifact.kind][1];link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
       }catch(error){note(error.message,true);}finally{download.disabled=false;}
     };actions.append(download);}
+    if(artifact.kind==='resume'&&window.resumeStyle){const why=el('button','Why these lines','secondary');why.type='button';why.onclick=()=>window.resumeStyle.explain(artifact,card);actions.append(why);}
     card.append(actions);return card;
   }
   async function loadArtifacts() {

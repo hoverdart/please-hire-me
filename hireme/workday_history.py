@@ -11,12 +11,15 @@ from .util import Blocked, digest, now
 FIELDS = {
     'employment': {'organization', 'title', 'location', 'start', 'end', 'current', 'description'},
     'education': {'institution', 'degree', 'field_of_study', 'location', 'start', 'end', 'expected_end', 'current', 'gpa'},
+    # Personal, course and research projects for resumes and writing. Application
+    # forms' employment and education sections never read this kind.
+    'project': {'name', 'role', 'url', 'start', 'end', 'current', 'description'},
 }
 
 
 def _validate(kind, values):
     if kind not in FIELDS or not isinstance(values, dict) or not values or set(values)-FIELDS[kind]:
-        raise ValueError('Choose education or employment and known history fields')
+        raise ValueError('Choose education, employment or project and known history fields')
     result = {}
     for key, value in values.items():
         if key == 'current':
@@ -29,9 +32,11 @@ def _validate(kind, values):
         if key in {'start', 'end', 'expected_end'} and not re.fullmatch(r'\d{4}-(?:0[1-9]|1[0-2])', value):
             raise ValueError('History dates must use an exact YYYY-MM month')
         result[key] = value
-    required = {'organization', 'title'} if kind == 'employment' else {'institution'}
+    required = {'employment': {'organization', 'title'}, 'education': {'institution'}, 'project': {'name', 'description'}}[kind]
     if not required <= set(result):
-        raise ValueError('History needs an employer and title, or an institution')
+        raise ValueError('History needs an employer and title, an institution, or a project name and description')
+    if 'url' in result and not re.fullmatch(r'https://[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s<>"\']*)?', result['url']):
+        raise ValueError('Project links must be complete https addresses')
     if result.get('current') is True and 'end' in result:
         raise ValueError('A current entry cannot also have an end date')
     if 'end' in result and 'expected_end' in result:
@@ -44,7 +49,7 @@ def _validate(kind, values):
 
 def entries(store, kind=None, confirmed_only=True):
     if kind is not None and kind not in FIELDS:
-        raise ValueError('Choose education or employment')
+        raise ValueError('Choose education, employment or project')
     terms, parameters = [], []
     if kind is not None:
         terms.append('kind=?'); parameters.append(kind)

@@ -11,6 +11,19 @@ def test_all_eligibility_reasons_declare_dependencies():
     assert set(ELIGIBILITY_INPUTS)==NOT_MATCH_REASONS|ELIGIBILITY_REVIEWS
 
 
+@pytest.mark.parametrize('stage,description,expected',[
+    ('screening','You must be a current undergraduate. Build Python software.',True),
+    ('application','You must be a current undergraduate. Build Python software.',False),
+    ('screening','You must graduate before May 2028. Build Python software.',False),
+    ('screening','You must graduate within six months. Build Python software.',False),
+])
+def test_legacy_graduation_review_only_releases_proven_screening_false_positive(store,job,stage,description,expected):
+    job={**job,'description':description};store.upsert_job(job)
+    hold(store,job,'graduation_window_review',stage=stage)
+    store.db.execute("UPDATE job_holds SET category='review' WHERE job_id=?",(job['id'],))
+    assert ready(store,job) is expected
+
+
 @pytest.mark.parametrize('reason',sorted(NOT_MATCH_REASONS))
 def test_unrelated_phone_edit_does_not_release_eligibility_hold(store,job,reason):
     hold(store,job,reason)

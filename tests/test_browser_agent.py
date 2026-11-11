@@ -304,11 +304,21 @@ def test_acknowledged_unsaved_entry_reenters_without_repeating_saved_steps(store
     assert store.db.execute("SELECT operation,state FROM draft_operations").fetchone()[:]==('ui:entry','acknowledged')
     with browser_for(store,employer) as browser:
         restore=browser._restore_package;targets=[]
+        from hireme import icims
+        from playwright.sync_api import Error
+        enter_content=icims.enter_content;navigation_races=[]
+        def frame_read(page,**kwargs):
+            if browser.operation is not None and not navigation_races:
+                navigation_races.append(True)
+                raise Error('Locator.evaluate_all: Execution context was destroyed, most likely because of a navigation')
+            return enter_content(page,**kwargs)
+        monkeypatch.setattr(icims,'enter_content',frame_read)
         def restored():
             result=restore();targets.append(result);return result
         monkeypatch.setattr(browser,'_restore_package',restored)
         assert browser.apply(employer[1])=='confirmed'
     assert targets==[None]
+    assert navigation_races==[True]
     assert len([r for r in employer[2]['records'] if r['path']=='/save/info'])==1
     assert employer[2]['finals']==1
 

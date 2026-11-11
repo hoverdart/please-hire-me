@@ -107,7 +107,7 @@ class GreenhouseAdapter(SingleStepAdapter):
 
 class LeverPostingAdapter(SingleStepAdapter):
     """The /apply page omits the posting body; verify the public read before writing."""
-    version=2
+    version=3
 
     def navigation(self,job,*,checkpoint=None,deadline=None):
         from urllib.parse import urlsplit
@@ -138,7 +138,10 @@ class LeverPostingAdapter(SingleStepAdapter):
                 raise Blocked('posting_changed_review','Lever response refers to a different posting')
         text=lever_posting_text(data,required=True)
         if checkpoint:checkpoint()
-        return job['url'],text
+        # The official read binds this route to the exact requisition. Lever
+        # sometimes renders Apply links without text when localization fails;
+        # opening the verified route avoids depending on those link labels.
+        return f'https://{parsed.hostname}/{site}/{req}/apply',text
 
 
 class WorkdayPostingAdapter(SingleStepAdapter):
@@ -206,7 +209,17 @@ class WorkdayPostingAdapter(SingleStepAdapter):
         if checkpoint:checkpoint()
         return job['url'],content
 
+class ICIMSPostingAdapter(SingleStepAdapter):
+    """Open the requisition's own content document instead of its frame wrapper."""
+    def navigation(self,job,*,checkpoint=None,deadline=None):
+        from .icims import frame_url,identity
+        if not identity(job['url']):
+            raise Blocked('icims_posting_unrecognized','This iCIMS link is not a recognized job posting address. Open it and apply manually.')
+        return frame_url(job['url']),None
+
+
 def adapter_for(job):
+    if job['host'].casefold().endswith('.icims.com'):return ICIMSPostingAdapter()
     if 'greenhouse.io' in job['host']:return GreenhouseAdapter()
     if job['host'] in {'jobs.lever.co','jobs.eu.lever.co'}:return LeverPostingAdapter()
     if job['host'].endswith('.myworkdayjobs.com'):return WorkdayPostingAdapter()
