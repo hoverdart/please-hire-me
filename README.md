@@ -75,7 +75,7 @@ Set it up for the jobs you want and the way you want to apply:
 - **Your search:** choose roles, seniority, locations, compensation requirements and companies to skip in **Settings → Search & automation**. The current defaults focus on internships and new-grad software, ML and research roles; review the season and location settings too.
 - **Your information:** upload your own resume, confirm extracted facts and save answers you're comfortable reusing. Missing personal details stay unanswered until you supply them.
 - **Your writing:** add project context and writing samples in **Profile → Materials**, then approve how each source can be used. Style examples help with wording; they don't establish qualifications.
-- **Your resumes:** confirm education and employment in **Your facts**, including complete experience lines under each role. Enable **Tailored resumes** to select relevant lines for each posting and generate a versioned PDF for supported browser applications. Your original stays available.
+- **Your resumes:** confirm education, employment or projects in **Your facts**, including complete experience lines under each entry. Enable **Tailored resumes** to select relevant lines for each posting and generate a versioned PDF for supported browser applications. Choose a layout or measure a reference under **Documents & writing → Resume and letter style**. Your original stays available.
 - **Education forms:** confirmed education records can fill supported Ashby history sections, including degree, major, month/year dates and current-study status. Unknown required details stay queued for review.
 - **Your experience:** use **Import history from your resume** in Your facts to review exact PDF excerpts and proposed employment or education fields. Correct them and explicitly confirm each entry; previews do not become facts automatically.
 - **Your pace and budget:** choose the model connection, batch interval, company limits and attempt/request ceilings. Start paused and review prepared drafts before enabling submissions.
@@ -91,11 +91,13 @@ Use **Find a tool** or **Ctrl/⌘ K** to locate tasks in the workspace.
 | Find jobs, prepare drafts or review progress | **Jobs** |
 | Review submission outcomes, recruiting progress or batch history | **Applications** |
 | Answer held questions or check uncertain outcomes | **Needs you** |
-| Update a resume or confirmed information | Profile → **Your facts** |
-| Add writing examples or project context | **Profile → Materials** |
+| Update a resume, confirmed facts or project notes | **Your context → Facts & notes** |
+| Add writing examples or documents | **Your context → Documents & writing** |
 | Change search targets, limits, timing or model settings | **Settings → Search & automation** / **Connections** |
 | Back up history | Settings → Search & automation → **Your data and backups** |
 | Find applications made outside the app | Connections → **Past applications from email** |
+
+**Connections** is available directly in the navigation. Its terminal commands include the private workspace path, so reconnecting Gmail uses the same applicant history you are viewing. Home keeps search totals in a disclosure and puts context, connections and unresolved work first.
 
 **Pause** stops work at cancellation checkpoints; a request already sent to an employer cannot be undone. Unknown outcomes and email-verification challenges stay held for review. Verify them with the employer before recording a result.
 
@@ -136,7 +138,7 @@ Use **Past applications from email** to scan an employer or build a broader hist
 ## What to expect
 
 - Supported submission flows send the final application and look for a fresh receipt and matching acknowledgement. The ledger keeps prepared, confirmed, not-submitted and uncertain outcomes separate; stable-release employer validation is still outstanding.
-- Optional tailored resumes use confirmed education, employment and skills, preserving the wording and employer context of selected experience. They require no extra model calls. Generated PDFs and earlier revisions remain downloadable per job.
+- Optional tailored resumes use confirmed education, employment, projects and skills. Exact selection preserves the wording and employer context without model calls; optional grounded rewriting uses the selected model and checks each proposed change. Generated PDFs and earlier revisions remain downloadable per job.
 - Answers use confirmed facts, scoped saved responses and approved personal sources. Missing legal, identity or demographic facts require your input.
 - Model inference uses your selected remote provider. Claude Code and Codex subscription modes reject API-only authentication; paid API usage must be selected explicitly. Request counters measure this worker's usage, not your vendor balance.
 - Submission budgets, durable intents and local locks limit work and preserve uncertain outcomes across restarts.
@@ -148,7 +150,7 @@ Use **Past applications from email** to scan an employer or build a broader hist
 - **Answers & evidence** joins an attempt's posting identity, exact document references, submission outcome, reviewed recruiting feedback and next action. Export its private JSON record or download the original recorded PDFs. New attempts capture posting identity; older records clearly label unavailable historical context.
 - **Recruiting Insights** in Applications compares reviewed responses by company, exact role title, source and resume PDF. Choose a response window and inspect the attempts behind each metric. Recent or uncertain submissions do not enter mature-response denominators; missing feedback is not a rejection.
 
-The configured release-candidate version is **0.5.0rc16**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). This candidate prioritizes verified, relevant completions, preserves missing-information holds across unrelated edits and emphasizes human next actions in reports; see the [candidate notes](docs/reliability-rc16.md) and [release status](docs/public-release.md) for tested scope and remaining limits. Each applicant runs a private local instance.
+The configured release-candidate version is **0.5.0rc17**. Download published candidates from [GitHub Releases](https://github.com/hoverdart/please-hire-me/releases). This candidate adds resume and letter templates with bounded style settings, a measured writing-voice profile, HTML batch reports with delivery reconciliation and a fixture-tested iCIMS entry path; see the [candidate notes](docs/reliability-rc17.md), the [capability matrix](docs/capability-matrix.md) and [release status](docs/public-release.md) for tested scope and remaining limits. Each applicant runs a private local instance.
 
 ## Guides and development
 

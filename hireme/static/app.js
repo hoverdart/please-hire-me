@@ -668,8 +668,8 @@ function show(name) {
     applications: "Applications",
     opportunities: "Jobs",
     questions: "A few things need you",
-    profile: "Your verified facts",
-    materials: "Materials",
+    profile: "Your context",
+    materials: "Documents & writing",
     connections: "Connections",
     settings: "Settings",
   }[name];
@@ -679,7 +679,7 @@ function show(name) {
     today: "Here is what needs you today.",
     applications: "Your application history and outcomes.",
     questions: "Resolve the exception. Let the next cycle do the rest.",
-    profile: "Saved once, reused across applications. Unknown means unknown.",
+    profile: "Everything your applications should know about you, in one place.",
     materials:
       "Reviewed sources guide the voice and facts in your applications.",
     opportunities: "",
@@ -689,8 +689,9 @@ function show(name) {
   $("#finish-setup-panel").hidden = !!state?.settings.onboarding_complete && setupStep !== 6;
   $("#profile-navigation").hidden = !["profile", "materials"].includes(name);
   $("#settings-navigation").hidden = !["settings", "connections", "setup"].includes(name);
-  const group = ["materials"].includes(name) ? "profile" : ["connections", "setup"].includes(name) ? "settings" : name;
+  const group = name === "materials" ? "profile" : name === "setup" ? "settings" : name;
   document.querySelectorAll(".rail [data-view]").forEach(button => button.setAttribute("aria-current", button.dataset.view === group ? "page" : "false"));
+  $("#worker-strip").hidden = !["today", "opportunities", "setup"].includes(name) && !state?.worker_running;
   if(modelRoute) { $("#model-connection-title").scrollIntoView({block:"start"}); $("#model-connection-title").focus({preventScroll:true}); }
 }
 const toolDestinations = [
@@ -2146,30 +2147,36 @@ function editHistory(kind, entry = null) {
   form.dataset.kind = kind;
   form.dataset.entryId = entry?.id || "";
   form.dataset.revision = entry?.revision || 0;
-  for (const [key, value] of Object.entries(entry?.values || {}))
-    if (form.elements[key]) form.elements[key].value = String(value);
+  for (const [key, value] of Object.entries(entry?.values || {})) {
+    // Projects keep their own description control; the name is shared with employment.
+    const control = form.elements[kind === "project" && key === "description" ? "project_description" : key];
+    if (control) control.value = String(value);
+  }
   form.elements.source.value = entry?.source || "";
   form.elements.confirmed.checked = false;
   $("#history-editor-title").textContent = `${entry ? "Edit" : "Add"} ${kind}`;
   form.hidden = false;
   historyFeedback(entry ? "Review every saved detail and confirm again to save changes." : "Only the details you enter and confirm here will be saved.");
   renderHistory();
-  form.elements[kind === "education" ? "institution" : "organization"].focus();
+  form.elements[{ education: "institution", employment: "organization", project: "name" }[kind]].focus();
 }
 const historyLabels = {
   institution: "Institution", degree: "Degree", field_of_study: "Field of study", gpa: "GPA",
   organization: "Organization", title: "Job title", location: "Location", current: "Current",
   start: "Start month", end: "Actual end month", expected_end: "Expected end month", description: "Responsibilities and accomplishments",
+  name: "Project name", role: "Your role", url: "Project link",
 };
 function renderHistory() {
   const form = $("#history-form"), busy = historyBusy || state.demo;
   for (const group of form.querySelectorAll("[data-history-kind]"))
     group.hidden = group.dataset.historyKind !== (form.dataset.kind || "education");
+  for (const group of form.querySelectorAll("[data-history-except]"))
+    group.hidden = group.dataset.historyExcept === (form.dataset.kind || "education");
   for (const control of form.elements) {
-    const group = control.closest("[data-history-kind]");
+    const group = control.closest("[data-history-kind],[data-history-except]");
     control.disabled = busy || Boolean(group?.hidden);
   }
-  for (const id of ["#history-add-education", "#history-add-employment"]) $(id).disabled = busy;
+  for (const id of ["#history-add-education", "#history-add-employment", "#history-add-project"]) $(id).disabled = busy;
   const signature = JSON.stringify([state.history || [], busy]);
   if (signature === renderedHistorySignature) return;
   renderedHistorySignature = signature;
@@ -2179,8 +2186,8 @@ function renderHistory() {
   for (const entry of state.history || []) {
     const row = el("article", undefined, "history-entry");
     row.dataset.historyId = entry.id;
-    row.append(el("h3", entry.kind === "education" ? entry.values.institution : `${entry.values.title} · ${entry.values.organization}`));
-    row.append(el("p", `${entry.kind === "education" ? "Education" : "Employment"} · ${entry.confirmed ? "Confirmed for applications" : "Not in use"} · revision ${entry.revision}`, "help"));
+    row.append(el("h3", entry.kind === "education" ? entry.values.institution : entry.kind === "project" ? entry.values.name : `${entry.values.title} · ${entry.values.organization}`));
+    row.append(el("p", `${{ education: "Education", employment: "Employment", project: "Project" }[entry.kind] || entry.kind} · ${entry.confirmed ? "Confirmed for applications" : "Not in use"} · revision ${entry.revision}`, "help"));
     const details = el("dl");
     for (const [key, value] of Object.entries(entry.values)) {
       details.append(el("dt", historyLabels[key] || key), el("dd", key === "current" ? value ? "Yes" : "No" : value));
@@ -2775,6 +2782,7 @@ const monthFacts = new Set([
   "college_start",
   "earliest_start",
   "latest_start",
+  "high_school_graduation",
 ]);
 const factHelp = {
   race: "Use your most specific answer (for example, South Asian rather than Asian). A specific answer can fill broader employer choices; a broad one cannot fill narrower choices.",
@@ -2833,6 +2841,7 @@ function renderFacts() {
         input.placeholder = "Choose Yes or No";
       }
       if (monthFacts.has(key)) input.type = "month";
+      if (["internship_start", "internship_end", "fulltime_start"].includes(key)) input.type = "date";
       if (key === "email" || key === "alternate_email") {
         input.type = "email";
         input.autocomplete = "email";
@@ -3642,6 +3651,8 @@ function render() {
   window.priorApplicationMail?.render(state);
   window.recruitingInsights?.render(state);
   window.historyImport?.render(state);
+  window.resumeStyle?.render(state);
+  window.writingVoice?.render(state);
   renderDocumentStatus();
   if (!editing("#facts-form")) renderFacts();
   renderHistory();
@@ -4693,6 +4704,9 @@ $("#material-upload-form").onsubmit = async (event) => {
 
 function renderMail() {
   const mail = state.gmail;
+  $("#gmail-connect-command").textContent = state.local_commands?.gmail_connect || "Reload the portal to get this workspace’s connection command.";
+  $("#workspace-start-command").textContent = state.local_commands?.dashboard || "Reload the portal to get this workspace’s startup command.";
+  $("#copy-gmail-command").disabled = !state.local_commands?.gmail_connect;
   $("#gmail-state").textContent = mail.connected
     ? `Authorization saved for ${mail.email}.`
     : mail.client_configured
@@ -4710,14 +4724,89 @@ function renderMail() {
       reports,
       "Batch reports appear here after the worker runs. Email delivery is optional.",
     );
-  for (const report of state.reports)
-    reports.append(
-      el(
-        "p",
-        `${date(report.created)} · ${report.state}${report.last_error ? " · " + report.last_error : ""}`,
-      ),
+  for (const report of state.reports) {
+    const row = el("div", undefined, "report-row"),
+      summary = el("div", undefined, "report-row-summary"),
+      actions = el("div", undefined, "report-row-actions");
+    summary.append(
+      el("strong", REPORT_DELIVERY[report.delivery] || report.delivery || report.state),
+      el("span", date(report.created), "help"),
     );
+    const detail = [report.explanation, report.error_message || (report.last_error && !report.error_message ? `Reason: ${report.last_error}` : "")]
+      .filter(Boolean)
+      .join(" ");
+    row.append(summary);
+    if (detail) row.append(el("p", detail, "help"));
+    const preview = el("button", "Download preview", "secondary");
+    preview.type = "button";
+    preview.onclick = () => downloadReportPreview(report.id, preview);
+    actions.append(preview);
+    if (report.state === "failed" || report.state === "held") {
+      const again = el("button", "Queue again", "secondary");
+      again.type = "button";
+      again.onclick = async () => {
+        again.disabled = true;
+        try {
+          await api("/api/reports/requeue", { id: report.id });
+          await refresh();
+          note("Report queued. It is sent with the next batch or when you choose Send queued reports.");
+        } catch (error) {
+          note(error.message, true);
+          again.disabled = false;
+        }
+      };
+      actions.append(again);
+    }
+    row.append(actions);
+    reports.append(row);
+  }
 }
+const REPORT_DELIVERY = {
+  queued: "Queued",
+  sending: "Sending",
+  provider_accepted: "Accepted by Gmail",
+  uncertain: "Uncertain — not resent",
+  failed: "Not sent",
+  reconciled: "Found in your mailbox",
+  held: "Held",
+  not_needed: "Not needed",
+  not_enabled: "Email reports were off",
+};
+async function downloadReportPreview(id, button) {
+  button.disabled = true;
+  try {
+    const preview = await api(`/api/report-preview?id=${encodeURIComponent(id)}`);
+    const html = preview.html !== null && preview.html !== undefined;
+    const url = URL.createObjectURL(
+      new Blob([html ? preview.html : preview.text], {
+        type: html ? "text/html;charset=utf-8" : "text/plain;charset=utf-8",
+      }),
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = html ? "hirememaybe-report-preview.html" : "hirememaybe-report-preview.txt";
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    note("Preview downloaded. It is the saved report exactly as it would be emailed; nothing was sent.");
+  } catch (error) {
+    note(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+$("#copy-gmail-command").onclick = async () => {
+  const command = state?.local_commands?.gmail_connect;
+  if (!command) return;
+  try {
+    await navigator.clipboard.writeText(command);
+    note("Gmail connection command copied.");
+  } catch {
+    const selection = window.getSelection(), range = document.createRange();
+    range.selectNodeContents($("#gmail-connect-command"));
+    selection.removeAllRanges(); selection.addRange(range);
+    note("Command selected. Use your browser’s copy command.");
+  }
+};
 $("#gmail-client-upload").onchange = async (event) => {
   const input = event.target,
     file = input.files[0];
@@ -4766,11 +4855,17 @@ $("#flush-reports").onclick = async (event) => {
     await refresh();
     note(
       result.error
-        ? `Reports remain queued: ${result.error}`
+        ? `Reports were not sent: ${result.error}. See Batch report delivery for the next step.`
+        : result.uncertain
+          ? "The send did not finish clearly. It is not resent; the next check looks for it in your mailbox."
+        : result.reconciled && !result.sent
+          ? `Checked earlier uncertain sends: ${result.reconciled.accepted} found in your mailbox, ${result.reconciled.not_found} did not arrive, ${result.reconciled.waiting} still unclear.`
         : result.batches > 1
           ? `One email sent covering ${result.batches} batches.`
-          : `${result.sent} report(s) sent.`,
-      !!result.error,
+          : result.sent
+            ? "Report accepted by Gmail."
+            : "No queued reports to send.",
+      !!result.error || !!result.uncertain,
     );
   } catch (error) {
     note(error.message, true);
@@ -5188,6 +5283,7 @@ $("#context-review-discard").onclick = () => {
 
 $("#history-add-education").onclick = () => editHistory("education");
 $("#history-add-employment").onclick = () => editHistory("employment");
+$("#history-add-project").onclick = () => editHistory("project");
 $("#history-discard").onclick = () => {
   const form = $("#history-form");
   form.reset(); form.hidden = true; saved(form);
@@ -5202,7 +5298,7 @@ $("#history-form").onsubmit = async (event) => {
   const form = event.target, data = new FormData(form), values = {};
   for (const [key, value] of data) {
     if (["source", "confirmed"].includes(key) || !String(value).trim()) continue;
-    values[key] = key === "current" ? value === "true" : String(value).trim();
+    values[key === "project_description" ? "description" : key] = key === "current" ? value === "true" : String(value).trim();
   }
   const body = {kind: form.dataset.kind, values, source: form.elements.source.value,
     confirmed: form.elements.confirmed.checked, revision: Number(form.dataset.revision || 0)};

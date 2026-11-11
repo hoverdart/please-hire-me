@@ -174,7 +174,7 @@ class AshbySubmission:
         self.used=True
         self.request_signature=(request.url,request.method,digest(data))
         self.denial={}
-        self.store.event('ashby_submission_write',self.aid,{'operation':operation,'survey_forms':len(self.surveys)})
+        self.store.event('ashby_submission_write',self.aid,{'operation':operation,'survey_forms':len(self.surveys),'request_hash':self.request_signature[2]})
         return True
 
     def observe_response(self,response):
@@ -186,6 +186,7 @@ class AshbySubmission:
         # response.json() can yield to an outcome poll on a slow worker. Keep
         # this response pending until its native decoder publishes a result.
         self.response_seen=True
+        result={}
         try:
             result=response.json()
             operation='submitMultipleFormsAction' if self.surveys else 'submitApplicationFormAction'
@@ -202,7 +203,10 @@ class AshbySubmission:
         except (ValueError,TypeError,AttributeError):pass
         finally:
             self.failed=not self.acknowledged
-            self.store.event('ashby_submission_response',self.aid,{'acknowledged':self.acknowledged})
+            from .util import application_identity
+            self.store.event('ashby_submission_response',self.aid,{'acknowledged':self.acknowledged,
+                'platform':'ashby','evidence_version':1,'posting_identity':list(application_identity(self.draft.job['url'])),
+                'http_status':response.status,'request_hash':self.request_signature[2],'response_sha256':digest(result)})
 
     def valid_intent(self,check_answers=True):
         """Recheck approval while a person is working, without granting a write."""

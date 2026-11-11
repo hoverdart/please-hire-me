@@ -12,7 +12,7 @@ import time
 from .util import Blocked, digest
 
 
-SETTINGS = ('live_enabled', 'onboarding_complete', 'roles', 'seniority', 'locations',
+SETTINGS = ('live_enabled', 'onboarding_complete', 'allowed_application_ats','uncertain_application_scope','rollout_stage','stop_on_uncertain_outcome','roles', 'seniority', 'locations',
             'summer_2027_locations', 'school_locations', 'min_annual_usd',
             'min_hourly_usd', 'max_years_required', 'min_fit_score', 'skip_companies',
             'interview_companies', 'company_aliases', 'max_per_company',

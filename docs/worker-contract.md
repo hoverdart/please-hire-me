@@ -17,6 +17,8 @@ Adaptive UI execution follows the same fact, policy and final-intent contract. T
 
 Application confirmation requires a fresh, explicit completed-application acknowledgement after the submission click. Generic interest or feedback messages, conditional instructions, explicit incomplete/error messages and receipt wording already present before the click do not establish acceptance. Ambiguous outcomes remain UNKNOWN and block retries.
 
+An iCIMS posting is opened through its own same-origin content document for the same requisition number. A frame from another origin or requisition is outside the executor and stops the attempt before any value is sent. Writes to account-profile, registration, withdrawal and deletion endpoints remain refused.
+
 No routine human approval. One-time setup confirms profile facts; new unknown questions are answered and saved in the dashboard. Account/CAPTCHA/unsupported verification/work-sample exceptions have clickable job links. Supported Greenhouse email challenges may continue through the applicant-authorized Gmail adapter.
 
 Every model request reserves a durable per-batch and local-day slot before dispatch, including failed calls and separate grounding reviews. Attempt ceilings bound blocked applications too. Pause increments a cancellation generation; resume cannot revive a cancelled cycle. Unknown or verification-pending applications remain held.

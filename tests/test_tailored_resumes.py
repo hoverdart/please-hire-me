@@ -88,21 +88,25 @@ def test_current_education_keeps_confirmed_expected_graduation_in_pdf(store,job,
     document=tailored_resumes.generate(store,job)
     data=tailored_resumes.validate(store,job,document)
     text=' '.join(page.extract_text() for page in PdfReader(io.BytesIO(data)).pages)
-    assert '2025-08 - Expected 2028-05' in text
+    assert 'Aug 2025 – Expected May 2028' in text
 
 
 def test_resume_keeps_job_heading_dates_and_experience_on_the_same_page():
     heading='Software Intern | Second Employer'
-    dates='2025-06 - 2025-08'
+    dates='Jun 2025 – Aug 2025'
     description='Built verified scheduling tools for the team.'
-    content={'name':'Example Applicant','contact':[],'sections':[('Experience',[
-        {'heading':'Earlier Role | First Employer','lines':[f'Verified work item {i}.' for i in range(29)]},
-        {'heading':heading,'lines':['Remote',dates,description,'Maintained the existing service.']}
-    ])]}
-    data,_=tailored_resumes.render(content)
-    pages=[page.extract_text() for page in PdfReader(io.BytesIO(data)).pages]
-    assert len(pages)==2
-    assert any(all(value in page for value in (heading,dates,description)) for page in pages)
+    split=0
+    # Sweep the preceding content so the second role lands on every position around the page break.
+    for filler in range(34,46):
+        content={'name':'Example Applicant','contact':[],'sections':[('Experience',[
+            {'heading':'Earlier Role | First Employer','lines':[f'Verified work item {i}.' for i in range(filler)]},
+            {'heading':heading,'meta':'Remote','dates':dates,'bulleted':True,'lines':[description,'Maintained the existing service.']}
+        ])]}
+        data,_=tailored_resumes.render(content)
+        pages=[page.extract_text() for page in PdfReader(io.BytesIO(data)).pages]
+        split+=len(pages)==2
+        assert any(all(value in page for value in (heading,dates,description)) for page in pages)
+    assert split
 
 
 def test_resume_compacts_contacts_without_losing_verified_content():
@@ -123,8 +127,8 @@ def test_resume_compacts_contacts_without_losing_verified_content():
 
 def test_resume_generation_rechecks_pause_and_sources_after_rendering(store,job,experience,monkeypatch):
     original=tailored_resumes.render
-    def change(content):
-        result=original(content)
+    def change(content,style=None):
+        result=original(content,style)
         store.withdraw_history_entry(experience['id'])
         return result
     monkeypatch.setattr(tailored_resumes,'render',change)

@@ -11,6 +11,8 @@ The [main README](../README.md) has the story, installation instructions and a s
 | [User guide](guide.md) | Documents, drafts, questions, models, schedules, backups, Gmail and troubleshooting |
 | [Raspberry Pi](pi.md) | Setup, background services, restarts and upgrades |
 | [Platform connections](connected-workspace.md) | Optional Handshake/Work at a Startup connections and capability gates |
+| [Capability matrix](capability-matrix.md) | Per-platform discovery, saves, submission, sign-in, challenges, receipts, fixtures and live evidence |
+| [rc17 candidate notes](reliability-rc17.md) | Resume templates and style, writing voice, HTML reports with delivery reconciliation, iCIMS entry |
 | [Release status](public-release.md) | Candidate scope, verification boundaries and remaining release gates |
 | [rc15 candidate notes](reliability-rc15.md) | Adaptive applications, Workday evidence, setup and compatibility limits |
 | [AutoApply comparison](autoapply-comparison.md) | Ideas adopted, strengths retained and the next improvements |

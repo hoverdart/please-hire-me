@@ -191,5 +191,10 @@ def save_basic_context(store, text, revision):
 def writing_context_hash(store, context):
     revisions = [tuple(r) for r in store.db.execute(
         'SELECT id,revision,role,kind FROM materials WHERE confirmed=1 ORDER BY id')]
+    from .voice import fingerprint
+    voice = fingerprint(store)
+    # Saved writing preferences change how drafts are written. Installations
+    # without any keep their existing hashes and cached writing.
     return digest({'grounding_version': 6, 'posting': {k: context.get(k, '') for k in ('company', 'title', 'description')},
-                   'materials': revisions,'facts':{k:(v['value'],v['revision']) for k,v in store.facts().items()}})
+                   'materials': revisions,'facts':{k:(v['value'],v['revision']) for k,v in store.facts().items()},
+                   **({'voice': voice} if voice else {})})

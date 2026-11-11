@@ -300,6 +300,37 @@ def _query(store, company):
     return query
 
 
+MAIL_SERVICE_FAILURES = {'prior_application_mail_access_denied', 'prior_application_mail_rate_limited'}
+
+
+def _scan_failure(error):
+    """Classify only bounded, allowlisted API codes, never provider messages."""
+    status=getattr(getattr(error,'resp',None),'status',None)
+    diagnostic={'category':'http' if type(status) is int and 100<=status<=599 else 'other'}
+    if diagnostic['category']=='http':diagnostic['status']=status
+    codes=set()
+    content=getattr(error,'content',None)
+    if isinstance(content,(str,bytes)) and len(content)<=65536:
+        try:
+            payload=json.loads(content)
+            errors=payload.get('error',{}).get('errors',[])
+            if isinstance(errors,list):
+                allowed={'rateLimitExceeded','userRateLimitExceeded','dailyLimitExceeded',
+                         'insufficientPermissions','accessNotConfigured','forbidden','authError'}
+                codes={item.get('reason') for item in errors if isinstance(item,dict)
+                       and isinstance(item.get('reason'),str) and item['reason'] in allowed}
+        except (ValueError,TypeError,AttributeError):pass
+    if codes:diagnostic['reasons']=sorted(codes)
+    if status==429 or status==403 and codes & {'rateLimitExceeded','userRateLimitExceeded','dailyLimitExceeded'}:
+        return diagnostic,Blocked('prior_application_mail_rate_limited',
+            'Gmail temporarily limited email-history checks. This batch will not repeat the request; saved progress and duplicate holds are preserved. Try again later.')
+    if status in {401,403}:
+        return diagnostic,Blocked('prior_application_mail_access_denied',
+            'Gmail denied email-history access. Check Gmail permissions and API access in Connections before retrying; reconnecting may be required. No application was attempted.')
+    return diagnostic,Blocked('prior_application_mail_unavailable',
+        'Gmail history could not be checked. Reconnect or retry the scan; existing email holds are preserved.')
+
+
 def scan(store, *, company=None, restart=False, client_factory=None, work_deadline=None):
     """One resumable page, including archived, spam and trash mail without an initial date cutoff."""
     from .store import worker_lock
@@ -374,8 +405,11 @@ def scan(store, *, company=None, restart=False, client_factory=None, work_deadli
             if not more: save(started)
             return {'processed':processed,'added':added,'more_available':more,'scope':company or 'All companies'}
         except Blocked: raise
-        except Exception:
-            raise Blocked('prior_application_mail_unavailable','Gmail history could not be checked. Reconnect or retry the scan; existing email holds are preserved.') from None
+        except Exception as error:
+            diagnostic,failure=_scan_failure(error)
+            try:store.event('prior_mail_scan_error',scope,diagnostic)
+            except Exception:pass
+            raise failure from None
 
 
 def require_recent_check(store,job):
@@ -401,6 +435,8 @@ def preflight(store,job):
         if error.reason in {'paused','cycle_timeout'}:raise
         if not error.reason.startswith('prior_application_'):
             error=Blocked('prior_application_mail_unavailable','Gmail history could not be checked. Reconnect or retry the scan; existing email holds are preserved.')
+        if error.reason in MAIL_SERVICE_FAILURES and getattr(store,'prior_mail_checked',None) is not None:
+            store.prior_mail_service_failure=(error.reason,error.detail)
         failures=getattr(store,'prior_mail_failures',None);checked=getattr(store,'prior_mail_checked',None)
         if failures is not None and checked is not None and _scope(store,job['company']) in checked and error.reason!='prior_application_email':
             failures[_scope(store,job['company'])]=(error.reason,error.detail)
@@ -410,6 +446,8 @@ def preflight(store,job):
 def _preflight(store,job):
     check_saved(store,job)
     if not store.settings()['gmail_prior_applications']: return
+    service_failure=getattr(store,'prior_mail_service_failure',None)
+    if service_failure and getattr(store,'prior_mail_checked',None) is not None:raise Blocked(*service_failure)
     checked=getattr(store,'prior_mail_checked',None);scope=_scope(store,job['company'])
     if checked is not None and scope in checked:
         failure=(getattr(store,'prior_mail_failures',None) or {}).get(scope)
@@ -423,10 +461,19 @@ def _preflight(store,job):
     try: require_recent_check(store,job);return
     except Blocked: pass
     deadline=time.monotonic()+AUTO_SCAN_SECONDS
+    failures=0
     for _ in range(AUTO_SCAN_PAGES):
         store.checkpoint()
         if time.monotonic()>=deadline:break
-        result=scan(store,company=job['company'],work_deadline=deadline)
+        try:
+            result=scan(store,company=job['company'],work_deadline=deadline)
+        except Blocked as error:
+            # These are read-only, resumable mailbox operations. A transient
+            # transport failure must not waste the whole six-hour cycle, but
+            # the freshness proof remains mandatory after bounded retries.
+            if error.reason!='prior_application_mail_unavailable' or failures>=2 or time.monotonic()>=deadline:raise
+            failures+=1
+            continue
         check_saved(store,job)
         if not result['more_available']:
             try:require_recent_check(store,job);return

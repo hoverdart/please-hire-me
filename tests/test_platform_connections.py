@@ -31,7 +31,9 @@ def test_session_check_gives_runnable_command_without_unlocking_flows(store,monk
     monkeypatch.setattr('hireme.platform_browser.PlatformBrowser',SessionBrowser)
     pc.configure(store,connection,{'enabled':True,'discovery_enabled':True,'native_apply_enabled':True})
     result=pc.check(store,connection)
-    assert result['connect_command']==f'.venv/bin/python -m hireme connection {connection} connect'
+    import shlex
+    args=shlex.split(result['connect_command'])
+    assert args[1:]==['-I','-m','hireme','--data-dir',str(store.root),'connection',connection,'connect']
     assert result['session_ready'] is ready
     assert not any(capability['available'] for capability in result['capabilities'].values())
     if not ready:

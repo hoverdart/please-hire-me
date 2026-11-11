@@ -31,6 +31,8 @@ def test_connected_workspace_drafts_focus_filters_and_disabled_capabilities(dash
         page.goto(dashboard+'/#token=fixture-capability')
         expect(page.locator('#today-attention')).to_be_visible()
         expect(page.locator('#worker-strip')).to_be_visible()
+        expect(page.locator('.overview-grid')).to_be_hidden()
+        page.locator('.portal-totals summary').click()
         expect(page.locator('#review-queue .metric-top').get_by_text('Needs your attention')).to_be_visible()
         expect(page.locator('.metric-top').get_by_text('Opportunities',exact=True)).to_be_visible()
         page.evaluate('window.scrollTo(0,0)')

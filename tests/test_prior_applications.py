@@ -515,6 +515,36 @@ class ReachedBrowser:
         return 'prepared'
 
 
+@pytest.mark.parametrize('has_prior',[False,True])
+def test_preflight_retries_transient_mail_read_without_bypassing_duplicate_check(store,optiver,monkeypatch,has_prior):
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[['mail-one'] if has_prior else []]
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    original=prior.scan;calls=[]
+    def flaky(*args,**kwargs):
+        calls.append(1)
+        if len(calls)==1:raise Blocked('prior_application_mail_unavailable')
+        return original(*args,**kwargs)
+    monkeypatch.setattr(prior,'scan',flaky)
+    if has_prior:
+        with pytest.raises(Blocked,match='prior_application_email'):prior.preflight(store,optiver)
+    else:
+        prior.preflight(store,optiver)
+        prior.require_recent_check(store,optiver)
+    assert len(calls)>=2
+
+
+def test_mail_scan_failure_records_only_safe_diagnostic(store,optiver):
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[['mail-one']]
+    def fail(**kwargs):raise RuntimeError('PRIVATE_MESSAGE_AND_PROVIDER_DETAILS')
+    service.get=fail
+    with pytest.raises(Blocked,match='prior_application_mail_unavailable'):
+        prior.scan(store,company='Optiver',client_factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    detail=store.db.execute("SELECT detail FROM events WHERE kind='prior_mail_scan_error'").fetchone()[0]
+    assert json.loads(detail)=={'category':'other'}
+
+
 @pytest.mark.parametrize('reason',['gmail_reconnect_required','gmail_not_connected','gmail_account_mismatch'])
 def test_worker_recovers_from_mail_connection_errors_without_a_permanent_review_hold(store,optiver,monkeypatch,reason):
     from hireme.worker import cycle

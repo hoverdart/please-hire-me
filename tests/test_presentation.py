@@ -24,10 +24,20 @@ def test_actionable_or_unrecognized_holds_remain_in_attention(store, job):
         assert summary(store)['attention_count'] == 1
 
 
-def test_unanswered_question_still_counts_even_if_job_is_outside_preferences(store, job):
-    store.block(job['id'], 'location_mismatch')
+def test_questions_for_excluded_jobs_stay_recorded_without_becoming_tasks(store, job):
+    from hireme.presentation import NOT_MATCH_REASONS
+    from hireme.question_ledger import search_questions
     store.ask(job['id'], job['host'], 'Your answer?', [])
+    for reason in NOT_MATCH_REASONS:
+        store.block(job['id'], reason)
+        assert summary(store)['question_count'] == 0
+        assert summary(store)['attention_count'] == 0
+        assert search_questions(store)['total'] == 0
+        assert store.db.execute('SELECT resolved FROM questions').fetchone()[0] == 0
+    # A later relevant attempt restores the unanswered question automatically.
+    store.block(job['id'], 'missing_answers')
     assert summary(store)['attention_count'] == 1
+    assert summary(store)['question_count'] == 1
 
 
 def test_uncertain_outcomes_are_always_visible_regardless_of_reason():

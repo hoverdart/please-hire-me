@@ -35,6 +35,8 @@ def test_outcome_poll_waits_for_reentrant_native_response_body_decode(store,plat
     grant.store=store;grant.aid='synthetic-decoder';grant.surveys=[]
     grant.request_signature=(request.url,request.method,digest({'native':'request'}))
     grant.request_keys={key};grant.baseline='Software engineer internship';grant.url=browser.page.url
+    grant.transport_hash=digest('transport')
+    grant.draft=SimpleNamespace(job={'url':'https://jobs.ashbyhq.com/acme/11111111-1111-4111-8111-111111111111'})
     if platform=='ashby':browser.ashby_submission=grant
     else:browser.native_submission=grant
     def decode():

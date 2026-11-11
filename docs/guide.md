@@ -54,7 +54,11 @@ Clearing a saved optional fact removes it from future confirmed use. **Review sa
 
 ## Writing and materials
 
-For per-posting resumes, first confirm **Education and employment** in **Your facts**. Add complete responsibilities or accomplishments on separate lines under their original role, with only dates and details you can confirm. Enable **Tailored resumes** in Settings → Search & automation. The worker chooses up to four complete lines per role by relevance, keeps their wording and employer context, and renders a PDF with your confirmed education, skills and contact details. It makes no model calls for this step. Missing descriptions, unsupported PDF characters or content exceeding two pages need attention before that resume can be used.
+For per-posting resumes, first confirm your history in **Your facts**. Add complete responsibilities or accomplishments on separate lines under their original role, with only dates and details you can confirm. Projects have their own entry type: a name, an optional role and https link, and what you built. Confirmed projects with descriptions are enough; employment history is optional. Enable **Tailored resumes** in Settings → Search & automation. The worker chooses the most relevant complete lines per role or project, keeps each employer with its dates, and renders a PDF with your confirmed education, projects, skills and contact details.
+
+Choose the look under **Documents & writing → Resume and letter style**: an ATS single-column template, a modern template, a compact technical template, or a layout measured from a reference resume you upload. A reference contributes font size, margins, spacing and section order only; its words are not stored and the file is not kept. Text size, margins, spacing, lines per role, page limit, section order and accent colour stay inside readable limits. **Preview PDF** renders your confirmed content in the unsaved style; **Save style** applies it to new revisions. Cover letters use the same style. Content that exceeds the page limit, or characters missing from the embedded font, stop that resume with the setting to change. Nothing is shortened to make it fit.
+
+By default every line appears exactly as you confirmed it and no model request is made. The optional **Rephrase selected lines** wording needs source-grounded writing to be enabled. Each rephrased line must pass a source check (no new numbers, tools, employers, links or inflated wording) and a separate review; a line that fails keeps your wording. In Materials, **Why these lines** shows what was included, left out or rephrased for each revision.
 
 Open a job's **Prepare application materials → Tailored resume PDF** to generate and download a version for review. When enabled, supported browser application runs use the generated resume. Your original upload remains selected in Your facts. Each revision stays in Materials; source changes invalidate its use in new submissions without deleting the historical download. Workday and platform-native controllers retain their separately validated document paths.
 
@@ -65,6 +69,9 @@ Approved personal sources can support factual answers and tailored writing when 
 Generated cover letters use a fixed one-page PDF layout. Templates guide wording and structure; arbitrary uploaded document layouts are not reproduced. Reusable materials and job-specific drafts retain their source revisions and content hashes. Official records and substantive work samples require applicant-supplied originals.
 
 Changing or withdrawing an approved source invalidates affected drafts. Re-uploading its matching original can repair a missing private file while preserving its reviewed excerpt. Keep original files available for historical evidence and backups.
+
+
+**Your writing voice** in Documents & writing describes how you write, measured from your approved writing samples and past cover letters: sentence and paragraph length, contractions, punctuation and openings. It guides drafts and never supplies facts. Add phrases to avoid, choose how to treat exclamation marks and contractions, set a longest sentence, or leave a short note; these preferences persist and prepared drafts are written again with them. A voice note asks the model for one revision at most and never blocks an answer; unsupported claims are still rejected.
 
 ## Find and import opportunities
 
@@ -225,7 +232,9 @@ Authorize the confirmed application email. Enable code handling and report deliv
 
 `gmail status` checks saved connection files. `gmail check` refreshes credentials when needed and verifies the account through the Gmail API without reading messages or sending mail. Run it on the worker machine when verifying unattended operation; a saved token alone does not prove current access.
 
-Code handling supports recognized Greenhouse challenges with sender, recipient, company, timing and one-use checks. Unsupported verification flows remain manual. Batch reports include attempted job links and are queued independently of applications. Missing authorization keeps mail pending; ambiguous delivery stays uncertain without automatic duplication. Mail failures never trigger application retries.
+Code handling supports recognized Greenhouse challenges with sender, recipient, company, timing and one-use checks. Unsupported verification flows remain manual. Batch reports include attempted job links and are queued independently of applications. They are sent as HTML with a plain-text alternative, with confirmed applications, work that needs you and uncertain outcomes in separate sections. The email has no images or tracking and no link into your workspace; act on it by opening HireMeMaybe on the computer running the worker.
+
+Connections → **Batch report delivery** lists each report as queued, accepted by Gmail, uncertain, not sent or found in sent mail. Accepted means Gmail took the message; it does not confirm inbox placement. A refused send (expired authorization, missing permission, rate limit) stays queued for up to five attempts and names the fix. A timeout is uncertain and is not resent: the next send looks for that exact message in sent mail and marks it accepted if present. An absent result stays uncertain, even after 15 minutes, because search cannot establish that the send failed. **Queue again** is available only for a report that was refused or held before dispatch. **Download preview** saves a report exactly as it would be emailed without contacting Gmail; `.venv/bin/python -m hireme reports preview --output report.html` does the same. Mail failures never trigger application retries.
 
 Employer account automation is off by default. Supported native forms use exact credentials, separate durable intents and one-use write grants. Account agreements, SSO, JavaScript-only registration and unverified account flows need manual handling. Fresh Workday postings can use the adaptive application browser after applicant sign-in; native transport verification remains separate. See [the execution evidence and limits](ats-reliability.md).
 
@@ -247,3 +256,24 @@ The first checks saved setup and installed prerequisites. The second also checks
 For a foreground dashboard, **Ctrl+C** in its terminal stops it; start it again with `.venv/bin/python -m hireme dashboard --open`. Closing a browser tab does not stop the process. If port 8766 is occupied, reopen the existing dashboard with `.venv/bin/python -m hireme open-dashboard` or restart its owning process. For a Pi service, follow the [restart instructions](pi.md#restart-or-stop-the-dashboard).
 
 Unsaved form drafts remain in the current page's memory. Save before closing or reloading it. A failed local request can be retried without clearing the form. If the dashboard is disconnected, restore its process before retrying.
+
+### Gmail history access and temporary limits
+
+Email-history checks distinguish denied API access (HTTP 401/403) from recognized rate limits. Denied access needs a Gmail permissions/API-access check in Connections; reconnect only if needed. A rate limit should be retried later. Neither condition repeatedly retries across companies in the same batch. The next batch can check again, and saved scan progress, earlier email matches and uncertain application outcomes remain protected. Transport failures retain their bounded retry behavior. Diagnostics contain only status and allowlisted error codes, never provider messages or mailbox content.
+
+### Evidence, reconciliation and staged operation
+
+New submission intents and outcomes append an `application_evidence` record to the private ledger. Its contract includes `attempt_id`, `posting_id`, `ats`, `status`, `evidence`, `verification_method`, and `verified_at`. Lever and Ashby native acknowledgements also bind the posting, HTTP status, request hash and response hash. Confirmation text and screenshot checksums preserve review evidence. A click, upload success message, HTTP 200 from a CAPTCHA service, or missing email never establishes acceptance.
+
+Use the interpreter and explicit `--data-dir` shown in Connections for these commands:
+
+```bash
+python -m hireme --data-dir /path/to/applicant reconcile-attempts --ats lever --ats ashby --scan-mail --output /path/to/private/audit.json
+python -m hireme --data-dir /path/to/applicant revalidate-holds --ats lever --ats ashby --output /path/to/private/holds.json
+```
+
+Reconciliation inspects retained evidence and bounded Gmail scans. It records confirmed, not-submitted or unresolved assessments without granting retries. Receipt candidates require independent verification; explicit native transport proof can repair an interrupted outcome. Historical records and previous assessments remain in the ledger. Mail rate limits defer further scans. Hold revalidation refreshes eligible, unattempted postings and queues them for fresh form preparation. It preserves uncertain submissions, remote-save fences and existing documents; a refreshed posting is not a prepared or submitted application.
+
+`allowed_application_ats` restricts both selection and final submission. `uncertain_application_scope="posting"` retains holds on the same requisition and its recognized aliases while allowing unrelated roles, subject to company limits. The compatibility default, `"company"`, additionally blocks the company. In-progress submissions, verification-pending applications, spam rejections, company exclusions and explicit cooldowns retain their existing restrictions.
+
+With the ATS scope set to Lever/Ashby, `rollout dry_run` commissions preparation only. `rollout controlled` requires one explicit `run --job-id` for a live cycle. `rollout restricted` requires a native confirmed submission for each enabled ATS, no more than two attempts per cycle/four per day, and `stop_on_uncertain_outcome=true`. A changed code fingerprint or ATS scope invalidates the commission. Restricted cycles check provider login, Gmail ownership and applicant setup; final upload and answer verification remain mandatory. A new unknown outcome or pending email verification pauses live operation. Commissioning does not itself enable live applications or install the scheduler. Configure existing batch reports before enabling unattended operation.

@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 
-from .config import validate_settings
+from .config import read_settings
 from .util import digest, now
 
 PROTECTED_TABLES = (
@@ -31,6 +31,7 @@ OPERATIONAL_TABLES = (
     'employer_accounts', 'remote_draft_steps', 'draft_operations', 'adapter_verifications',
     'confirmed_history', 'workday_drafts', 'recruiting_feedback', 'recruiting_sync',
     'prior_application_mail', 'prior_application_scans', 'prior_scan_protocols', 'prior_application_company_names', 'prior_application_mail_companies',
+    'report_outbox', 'report_models', 'report_dispatch', 'voice_preferences', 'settings_extension',
 )
 
 
@@ -99,11 +100,8 @@ class ReadOnlyLedger:
         self._temporary.cleanup()
 
     def settings(self):
-        row = self.db.execute('SELECT value FROM config WHERE id=1').fetchone()
-        if not row:
-            raise ValueError('settings_unavailable')
         # Do not call Store.settings(): it can expire a model-limit override.
-        return validate_settings(json.loads(row[0]))
+        return read_settings(self.db)
 
     def facts(self):
         return {row['key']: dict(row) for row in self.db.execute('SELECT * FROM facts WHERE confirmed=1')}

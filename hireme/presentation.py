@@ -25,6 +25,8 @@ REASON_GUIDANCE = {
     'prior_application_email': ('An earlier application was found in email', 'Review Past applications in Settings → Connections. Check the original message before applying again.'),
     'prior_application_scan_incomplete': ('Email history still needs checking', 'Continue scanning past applications in Connections. This role stays held until the company scan completes.'),
     'prior_application_mail_unavailable': ('Gmail history could not be checked', 'Check Gmail access in Connections and retry the scan. No application was attempted.'),
+    'prior_application_mail_access_denied': ('Gmail denied email-history access', 'Check Gmail permissions and API access in Connections, then retry. Reconnecting may be required. Duplicate holds remain in place.'),
+    'prior_application_mail_rate_limited': ('Gmail email checks are temporarily limited', 'Try again later. This batch will not repeat the request; saved scan progress and duplicate holds remain in place.'),
     'prior_application_check_required': ('Check past applications first', 'Enable and complete the company email check in Connections before applying.'),
     'prior_application_check_budget': ('Company email checks reached the batch limit', 'The next cycle can continue from saved scan progress. No application allowance was consumed by these checks.'),
     'seniority_mismatch': ('Outside your experience level', 'Your desk will keep looking for roles at your chosen level.'),
@@ -143,6 +145,6 @@ def attention_sql(alias='j'):
 def actionable_question_sql(alias='q'):
     """Retain evidence but hide questions for roles outside the chosen scope."""
     code="TRIM(SUBSTR(excluded.reason,1,CASE WHEN INSTR(excluded.reason,':')>0 THEN INSTR(excluded.reason,':')-1 ELSE LENGTH(excluded.reason) END))"
-    reasons=tuple(sorted({'seniority_mismatch','role_mismatch','internship_out_of_scope','fulltime_out_of_scope','parttime_out_of_scope'}))
+    reasons=tuple(sorted(NOT_MATCH_REASONS))
     placeholders=','.join('?' for _ in reasons)
     return (f"{alias}.resolved=0 AND {alias}.job_id NOT IN (SELECT job_id FROM job_decisions) AND NOT EXISTS(SELECT 1 FROM jobs excluded WHERE excluded.id={alias}.job_id AND excluded.status='blocked' AND {code} IN ({placeholders}))",reasons)

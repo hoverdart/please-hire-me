@@ -54,6 +54,7 @@ def ats(host):
     if 'ashby' in host: return 'Ashby'
     if 'lever' in host: return 'Lever'
     if 'myworkdayjobs' in host or 'myworkdaysite' in host: return 'Workday'
+    if host.casefold().endswith('.icims.com'): return 'iCIMS'
     return 'Other'
 
 def source_revision(store, key=None, template_id=None):
@@ -85,13 +86,13 @@ def present(key, value, field):
             except ValueError:pass
         if parsed is None:raise Blocked('missing_fact','Confirm an exact date ('+field['date_format']+'); a month alone does not establish the day')
         return parsed.isoformat() if field['date_format']=='YYYY-MM-DD' else parsed.strftime('%m/%d/%Y')
-    if key=='fulltime_start' and re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):
+    if key in {'fulltime_start','internship_start','internship_end'} and re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):
         if re.search(r'\bwhat year\b',label):return value[:4]
         if field.get('type') in {'text','textarea'} and not field.get('options'):
             from datetime import date
             day=date.fromisoformat(value)
             return f'{calendar.month_name[day.month]} {day.day}, {day.year}'
-    if key in {'college_start', 'graduation', 'earliest_start', 'latest_start'} and re.fullmatch(r'\d{4}-\d{2}', value):
+    if key in {'college_start', 'graduation', 'earliest_start', 'latest_start', 'high_school_graduation'} and re.fullmatch(r'\d{4}-\d{2}', value):
         year, month = value.split('-')
         if not 1 <= int(month) <= 12: raise Blocked('invalid_date_answer', field['label'])
         both = re.search(r'\bmonth\b', label) and re.search(r'\byear\b', label)

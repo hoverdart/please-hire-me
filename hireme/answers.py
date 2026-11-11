@@ -7,8 +7,8 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 6
-WRITING_SOURCE_VERSION = 3
+AUTOMATIC_ANSWER_VERSION = 8
+WRITING_SOURCE_VERSION = 4
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
 # These mappings authorize exact values only. Unknown wording is queued, never guessed.
@@ -87,6 +87,11 @@ def field_key(label):
     # Politically exposed person (PEP) declarations ask the same thing.
     if re.search(r'entrusted with (?:a )?(?:prominent )?(?:public )?(?:position|function)|politically exposed|family member of (?:someone|a person) holding such a position',label,re.I):return 'government_official'
     label=" ".join(label.strip().casefold().split()).rstrip(" *✱?:")
+    if re.fullmatch(r'(?:do you (?:currently )?(?:hold|possess)|have you got) an? active (?:u\.?s\.? |united states )?top secret security clearance',label):return 'active_top_secret'
+    if re.fullmatch(r'(?:ideal start date(?: in office)?|(?:available )?internship start date)',label):return 'internship_start'
+    if re.fullmatch(r'(?:ideal end date|(?:available )?internship end date)',label):return 'internship_end'
+    if re.fullmatch(r'(?:sat (?:total )?score|provide your best result on sat|what (?:is|was) your sat (?:total )?score)',label):return 'sat_score'
+    if re.fullmatch(r'(?:sat superscore|what (?:is|was) your sat superscore)',label):return 'sat_superscore'
     if label=='linkedin profile (www.linkedin.com/in/yourinfo)':return 'linkedin'
     if label=='desired hourly rate':return 'salary'
     if re.fullmatch(r"please select your gpa range based on a 4\.0 scale\. if you['’]re on a 5\.0 scale, please adjust to a 4\.0 scale\.?",label):return 'gpa'
@@ -104,6 +109,7 @@ def field_key(label):
     if re.fullmatch(r'what is the earliest date you are available to start (?:this|the) (?:position|role|job)',label):return 'earliest_start'
     if re.search(r'\bhigh school\b',label):
         if re.search(r'graduat',label) and re.search(r'\byear\b',label):return 'high_school_graduation_year'
+        if re.fullmatch(r'when did you graduate from high school|high school graduation(?: date)?',label):return 'high_school_graduation'
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
         if re.fullmatch(pattern,label): return key
@@ -768,6 +774,8 @@ def _fits_writing_limits(value, field, context=None):
 
 
 def _compatible_binding(key, label):
+    if key in {'active_top_secret','internship_start','internship_end','sat_score','sat_superscore','high_school_graduation'}:
+        return field_key(label)==key
     terms={
         'hispanic_latino':r'hispanic|latino',
         'temporary_work_authorization':r'currently.*(?:hold|have).*temporary.*(?:work|employment).*authoriz',
@@ -834,6 +842,9 @@ def _finra_license_followup(label,context):
 
 def _field_fact_key(store,label,context):
     key=field_key(label)
+    if key in {'internship_start','internship_end'}:
+        from .policy import employment_kind
+        if not context.get('title') or employment_kind(context)!='internship':return None
     if not key and _finra_license_followup(label,context):key='securities_licenses'
     if key=='earliest_start' and store.facts().get('fulltime_start') and context.get('title') and not re.search(r'internship|co.op|part.time',label,re.I):
         from .policy import employment_kind
@@ -843,6 +854,10 @@ def _field_fact_key(store,label,context):
 
 def _compatible_field(key, field, context=None):
     label=field['label']
+    if key=='onsite' and re.search(r'full[ -]time|\b\d+\s*hours?\b',label,re.I):return False
+    if key in {'internship_start','internship_end'}:
+        from .policy import employment_kind
+        return bool((context or {}).get('title') and employment_kind(context)=='internship' and _compatible_binding(key,label))
     if key=='securities_licenses' and _finra_license_followup(label,context or {}):return True
     if key=='fulltime_start' and field_key(label)!='fulltime_start' and _compatible_binding('earliest_start',label):
         from .policy import employment_kind
@@ -940,7 +955,19 @@ def _resume_evidence(store):
     if b'%%EOF' not in data:return doc['hash'],''
     from pypdf import PdfReader
     import io
-    try:text='\n'.join(page.extract_text() or '' for page in PdfReader(io.BytesIO(data)).pages)
+    try:
+        pages=PdfReader(io.BytesIO(data)).pages
+        text='\n'.join(page.extract_text() or '' for page in pages)
+        # Project URLs often live only in PDF link annotations. They are part
+        # of the approved resume bytes, just like its visible project text.
+        links=[]
+        for page in pages:
+            for annotation in page.get('/Annots',[]):
+                action=annotation.get_object().get('/A',{})
+                if hasattr(action,'get_object'):action=action.get_object()
+                uri=action.get('/URI') if hasattr(action,'get') else None
+                if isinstance(uri,str) and re.fullmatch(r'https?://[^\s<>]+',uri) and uri not in links:links.append(uri)
+        text+=''.join('\nResume link: '+uri for uri in links)
     except Exception:return doc['hash'],''
     return doc['hash'],text
 
@@ -973,11 +1000,13 @@ def _approved_sentences(store, context):
     # Keep inference cost bounded as an applicant adds a larger source library.
     source_budget=24000-sum(len(x['text']) for x in fact_choices)
     if sum(len(x['text']) for x in choices)>source_budget:
+        from .materials import basic_context
+        basic_id='material:'+str(basic_context(store).get('id',''))
         terms=set(re.findall(r'[a-z]{4,}',(context.get('title','')+' '+context.get('description','')).casefold()))
         question_terms=set(re.findall(r'[a-z]{4,}',context.get('field_context',{}).get('label','').casefold()))
         # A keyword-heavy context note must not crowd the current approved
         # resume's dates, role headings and results out of its own evidence.
-        ranked=sorted(enumerate(choices),key=lambda item:('resume_hash' not in item[1],
+        ranked=sorted(enumerate(choices),key=lambda item:(0 if item[1].get('template_id')==basic_id else 1 if 'resume_hash' in item[1] else 2,
             -len(question_terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),
             -len(terms&set(re.findall(r'[a-z]{4,}',item[1]['text'].casefold()))),item[0]))
         selected=[];budget=source_budget
@@ -1114,7 +1143,8 @@ def resolve(store, host, field, provider=None, context=None):
             return {'field':field,**ordinary}
     # Exact saved approvals take precedence over generated answer caches.
     # Chronological confirmations still use the current confirmed dates.
-    writing=None if explicit_year or student_confirmation or graduation_confirmation or saved else store.writing_answer(host,label,options)
+    from .page_answers import cached as page_cached
+    writing=None if explicit_year or student_confirmation or graduation_confirmation or saved else (page_cached(store,host,field,context) or store.writing_answer(host,label,options))
     if writing:
         try:
             _validate_writing(store,writing)
@@ -1209,7 +1239,11 @@ def resolve(store, host, field, provider=None, context=None):
             from .config import FACTS
             context['confirmed_facts']={k:{'label':FACTS[k],'value':v['value']} for k,v in store.facts().items()}
             choices=_approved_sentences(store,context)
-            draft=provider.draft_answer(label,choices,context,field.get('maxlength',-1)) if choices else {}
+            from .voice import guidance
+            # A description of how the applicant writes. It carries no claims.
+            context['style_profile']=guidance(store)
+            try:draft=provider.draft_answer(label,choices,context,field.get('maxlength',-1)) if choices else {}
+            finally:context.pop('style_profile',None)
             if writing_context_hash(store,context)!=source_hash:raise Blocked('stale_writing_context','Confirmed facts or approved sources changed during generation')
             draft_rejection=draft.get('rejected')
             ids=draft.get('sentence_ids',[]);by_id={x['id']:x for x in choices}
@@ -1391,9 +1425,11 @@ def validate_package(store, job, package):
                 raise Blocked('unsupported_or_stale_answer',field['label'])
             _validate_writing(store,answer)
             if prov.get('tailored') and prov.get('context_hash')!=writing_context_hash(store,job):raise Blocked('stale_writing_context')
-            if prov.get('context_answer') and prov.get('field_hash')!=digest(field_context(job.get('answer_scope',job['host']),field,job)):raise Blocked('stale_writing_context')
+            if prov.get('context_answer') and prov.get('field_hash')!=digest(field_context(job.get('answer_scope',job['host']),field,{**job,'previous_answers':package['answers'][:index]})):raise Blocked('stale_writing_context')
             validate_numeric(answer['value'],field)
-            cached=store.writing_answer(job.get('answer_scope',job['host']),field['label'],field.get('options',[]))
+            from .page_answers import cached as page_cached
+            cached=(page_cached(store,job.get('answer_scope',job['host']),field,{**job,'previous_answers':package['answers'][:index]}) if prov.get('page_plan')
+                    else store.writing_answer(job.get('answer_scope',job['host']),field['label'],field.get('options',[])))
             if cached!={'value':answer['value'],'provenance':prov}:raise Blocked('unsupported_or_stale_sample')
             continue
         if "template_id" in prov:

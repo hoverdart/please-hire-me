@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .config import DEFAULTS, FACTS, REQUIRED, validate_fact, validate_settings
+from .config import DEFAULTS, FACTS, REQUIRED, validate_fact, validate_settings, read_settings
 from .util import Blocked, atomic_json, company_normalizer, digest, now, private_dir
 
 SCHEMA = """
@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS captcha_handoffs (id TEXT PRIMARY KEY, application_id
 CREATE TABLE IF NOT EXISTS report_outbox (id TEXT PRIMARY KEY, recipient TEXT NOT NULL, subject TEXT NOT NULL,
  body TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE, state TEXT NOT NULL, created TEXT NOT NULL,
  attempts INTEGER NOT NULL, provider_id TEXT, sent TEXT, last_error TEXT);
+CREATE TABLE IF NOT EXISTS settings_extension (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS voice_preferences (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS report_models (id TEXT PRIMARY KEY, model TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS report_dispatch (report_id TEXT PRIMARY KEY, message_id TEXT NOT NULL, started REAL NOT NULL,
+ outcome TEXT, checked TEXT);
 CREATE TABLE IF NOT EXISTS mail_consumptions (message_id TEXT PRIMARY KEY, challenge_id TEXT NOT NULL,
  consumed REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS recruiting_feedback (id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL,
@@ -177,6 +182,23 @@ CREATE INDEX IF NOT EXISTS employer_accounts_state ON employer_accounts(state);
 CREATE INDEX IF NOT EXISTS runs_status_started ON runs(status,started);
 """
 
+# Settings added after 0.5.0rc16. That release rejects unknown keys in the
+# shared settings record, so these live in their own row: a ledger written by
+# this code stays readable by the previous release after a code rollback.
+EXTENSION_KEYS = ('allowed_application_ats', 'uncertain_application_scope', 'rollout_stage', 'stop_on_uncertain_outcome', 'resume_style')
+
+
+def config_json(settings):
+    """The shared settings record, limited to keys the previous release accepts."""
+    return json.dumps({key: value for key, value in settings.items() if key not in EXTENSION_KEYS})
+
+
+def write_settings(db, settings):
+    db.execute('UPDATE config SET value=? WHERE id=1', (config_json(settings),))
+    db.execute('INSERT OR REPLACE INTO settings_extension VALUES(1,?,?)',
+               (json.dumps({key: settings[key] for key in EXTENSION_KEYS if key in settings}), now()))
+
+
 APPLICATION_METADATA = 'id,job_id,company_key,state,hash,created,updated,attempted,confirmation,screenshot'
 APPLICATION_COLUMNS = 'id,job_id,company_key,state,package,hash,created,updated,attempted,confirmation,screenshot'
 
@@ -205,11 +227,11 @@ class Store:
                 self.db.executescript(SCHEMA)
                 if 'schema_version' not in {row['name'] for row in self.db.execute('PRAGMA table_info(schema_metadata)')}:
                     self.db.execute('ALTER TABLE schema_metadata ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0')
-                self.db.execute("INSERT OR IGNORE INTO config VALUES (1, ?)", (json.dumps(DEFAULTS),))
+                self.db.execute("INSERT OR IGNORE INTO config VALUES (1, ?)", (config_json(DEFAULTS),))
                 self.db.execute('INSERT OR REPLACE INTO schema_metadata(id,fingerprint,schema_version) VALUES(1,?,?)',
                                 (fingerprint,self.db.execute('PRAGMA schema_version').fetchone()[0]))
             elif not self.db.execute('SELECT 1 FROM config WHERE id=1').fetchone():
-                self.db.execute('INSERT OR IGNORE INTO config VALUES(1,?)',(json.dumps(DEFAULTS),))
+                self.db.execute('INSERT OR IGNORE INTO config VALUES(1,?)',(config_json(DEFAULTS),))
             os.chmod(self.path, 0o600)
         except BaseException:
             self.db.close();raise
@@ -253,7 +275,9 @@ class Store:
                     self.db.execute('UPDATE config SET value=? WHERE id=1',(json.dumps(saved),))
                     self.db.execute('DELETE FROM model_limit_override WHERE id=1')
                     self.event('model_limits_restored','config',json.loads(override['previous']))
-        return validate_settings(json.loads(self.db.execute("SELECT value FROM config").fetchone()[0]))
+        # Newer keys live in their own row; one still present in the shared
+        # record (written before this layout) is used until the next save.
+        return read_settings(self.db)
 
     def temporary_model_limits(self,daily=500,cycle=200,seconds=21600):
         if type(seconds) is not int or not 1<=seconds<=86400:raise ValueError('Temporary limits require an expiry within 24 hours')
@@ -263,7 +287,7 @@ class Store:
             previous={k:saved[k] for k in ('max_model_requests_per_day','max_model_requests_per_cycle')}
             updated=validate_settings({'max_model_requests_per_day':daily,'max_model_requests_per_cycle':cycle},saved)
             self.db.execute('INSERT INTO model_limit_override VALUES(1,?,?)',(time.time()+seconds,json.dumps(previous)))
-            self.db.execute('UPDATE config SET value=? WHERE id=1',(json.dumps(updated),))
+            write_settings(self.db,updated)
             self.event('model_limits_temporarily_raised','config',{'daily':daily,'cycle':cycle,'expires_in':seconds})
 
     def restore_model_limits(self):
@@ -311,7 +335,7 @@ class Store:
             if changes.get("live_enabled") is False:
                 self.db.execute("UPDATE worker_control SET generation=generation+1 WHERE id=1")
                 self.event("pause_requested", "worker", {})
-            self.db.execute("UPDATE config SET value=? WHERE id=1", (json.dumps(s),))
+            write_settings(self.db,s)
             self.event("settings_updated", "config", changes)
         self.export_config()
         return s
@@ -356,7 +380,7 @@ class Store:
                 if cleared & REQUIRED and self.settings()['live_enabled']:
                     settings = self.settings()
                     settings['live_enabled'] = False
-                    self.db.execute("UPDATE config SET value=? WHERE id=1", (json.dumps(settings),))
+                    write_settings(self.db,settings)
                     self.db.execute("UPDATE worker_control SET generation=generation+1 WHERE id=1")
                     self.event("pause_requested", "worker", {'reason': 'required_fact_removed'})
             self.event("facts_confirmed" if confirmed else "facts_proposed", "profile", sorted(values))
@@ -652,6 +676,13 @@ class Store:
 
     def _check_budget(self, job, s, *, application_id=None):
         self.check_job_decision(job["id"])
+        from .application_evidence import ats_for
+        if s['allowed_application_ats'] and ats_for(job['url']) not in s['allowed_application_ats']:
+            raise Blocked('ats_out_of_scope','This ATS is outside the enabled application scope')
+        if s['uncertain_application_scope']=='posting':
+            prior=self.db.execute("SELECT id FROM applications WHERE job_id=? AND state!='prepared'",(job['id'],)).fetchone()
+            if prior and prior['id']!=application_id:
+                raise Blocked('duplicate_or_uncertain','This posting already has a retained application attempt')
         from .browser_agent_protocol import guard_pending
         guard_pending(self,job)
         from .prior_applications import check_saved
@@ -698,8 +729,8 @@ class Store:
         active=[row for row in all_active if ck in row['company_keys']]
         if any(r["state"]=="awaiting_verification" for r in active):
             raise Blocked("company_verification_pending","Complete the earlier application verification first")
-        if any(r["state"] in ("submitting","unknown") for r in active):
-            raise Blocked("company_uncertain","Reconcile the earlier attempt first")
+        if any(r["state"]=='submitting' or r['state']=='unknown' and s['uncertain_application_scope']=='company' for r in active):
+            raise Blocked("company_uncertain","Another submission is in progress, or the configured company-wide uncertainty policy requires reconciliation")
         spam_ids={row[0] for row in self.db.execute("SELECT id FROM application_records WHERE state='not_submitted' AND LOWER(confirmation) LIKE '%possible spam%'")}
         if any(row['id'] in spam_ids and ck in row['company_keys']
                 and not permits(self,row,job['id'],application_id)
@@ -768,6 +799,9 @@ class Store:
             if not s["live_enabled"] or not s["onboarding_complete"] or self.missing_setup():
                 raise Blocked("not_ready")
             job=json.loads(self.db.execute("SELECT payload FROM jobs WHERE id=?",(app["job_id"],)).fetchone()[0])
+            from .rollout import check as check_rollout
+            if not check_rollout(self,live=True,job_ids=[job['id']]):
+                raise Blocked('rollout_dry_run','This rollout stage only permits preparation')
             from .prior_applications import require_recent_check
             require_recent_check(self,job)
             package=json.loads(app["package"])
@@ -783,6 +817,8 @@ class Store:
             self.db.execute("UPDATE jobs SET status='submitting',reason='',updated=? WHERE id=?",(now(),app['job_id']))
             from .application_journey import capture_context
             self.event("submit_intent",aid,{"hash":app["hash"],'job_context':capture_context(self,job)})
+            from .application_evidence import record
+            record(self,aid)
         return package
 
     def begin_verification(self,aid):
@@ -810,6 +846,8 @@ class Store:
                             (state,"" if state=="confirmed" else "Employer rejected submission; manual action required" if state=='not_submitted' else "Email verification required; application not yet submitted" if state=="awaiting_verification" else "Submission outcome needs reconciliation",now(),r[1]))
             self.db.execute("UPDATE verification_challenges SET state=? WHERE application_id=?",('complete' if state=='confirmed' else 'held' if state=='unknown' else 'pending',aid))
             self.event(state,aid,{"confirmation":confirmation[-4000:],"screenshot":screenshot})
+            from .application_evidence import record
+            record(self,aid)
 
     def recover(self):
         with self.transaction():
@@ -828,10 +866,14 @@ class Store:
                 self.db.execute("UPDATE jobs SET status='unknown',reason='Worker stopped after submit intent',updated=? WHERE id=?",(now(),r[1]))
                 self.db.execute("UPDATE verification_challenges SET state='held' WHERE application_id=?",(r[0],))
                 self.event("crash_recovered",r[0],{"state":"unknown"})
+                from .application_evidence import record
+                record(self,r[0])
             for r in list(self.db.execute("SELECT id FROM archived_applications WHERE state='submitting'")):
                 self.db.execute("UPDATE archived_applications SET state='unknown',updated=? WHERE id=?",(now(),r[0]))
                 self.db.execute("UPDATE verification_challenges SET state='held' WHERE application_id=?",(r[0],))
                 self.event('crash_recovered',r[0],{'state':'unknown','historical':True})
+                from .application_evidence import record
+                record(self,r[0])
             self.db.execute("UPDATE runs SET status='interrupted',finished=? WHERE status='running'",(now(),))
 
     def reconcile(self, aid, submitted: bool, note: str):
@@ -850,6 +892,8 @@ class Store:
             if not historical:
                 self.db.execute("UPDATE jobs SET status=?,reason=?,updated=? WHERE id=?",(state,note,now(),r[1]))
             self.event("human_reconciliation",aid,{"submitted":submitted,"note":note})
+            from .application_evidence import record
+            record(self,aid)
         # A not-submitted outcome is deliberately not retried automatically.
 
     def retry_not_submitted(self, aid, note, approved_package=None):

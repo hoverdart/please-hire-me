@@ -16,6 +16,7 @@
     <script src="/recruiting.js" defer></script>
     <script src="/insights.js" defer></script>
     <script src="/history-import.js" defer></script>
+    <script src="/resume-style.js" defer></script>
   </head>
   <body>
     <a class="skip" href="#main">Skip to workspace</a>
@@ -42,7 +43,8 @@
           <button data-view="opportunities"><span class="nav-icon" data-icon="jobs"></span>Jobs</button>
           <button data-view="applications"><span class="nav-icon" data-icon="materials"></span>Applications</button>
           <button data-view="questions"><span class="nav-icon" data-icon="attention"></span>Needs you <span id="question-count" class="nav-count"></span></button>
-          <button data-view="profile"><span class="nav-icon" data-icon="profile"></span>Profile</button>
+          <button data-view="profile"><span class="nav-icon" data-icon="profile"></span>Your context</button>
+          <button data-view="connections"><span class="nav-icon" data-icon="connections"></span>Connections</button>
           <div class="nav-utilities"><button data-view="settings"><span class="nav-icon" data-icon="settings"></span>Settings</button></div>
         </nav>
         <div class="rail-footer">
@@ -189,6 +191,10 @@
         </section>
         <section id="opportunities" class="view" hidden><div class="jobs-workspace"><div id="job-list-workspace"></div><aside id="job-detail-workspace" aria-label="Selected opportunity"><p class="detail-placeholder">Select a job to review its posting, materials and application record.</p></aside></div></section>
         <section id="today" class="view">
+          <nav class="portal-shortcuts" aria-label="Application essentials">
+            <button data-view="profile" class="secondary"><strong>Your context</strong><span id="portal-context-state">Loading saved context…</span></button>
+            <button data-view="connections" class="secondary"><strong>Model &amp; email</strong><span id="portal-connection-state">Checking connections…</span></button>
+          </nav>
           <div class="today-workspace"><section aria-labelledby="attention-title"><div class="section-head"><h2 id="attention-title">Needs your attention</h2><button id="open-attention" class="secondary">Review all</button></div><div id="today-attention"></div></section></div>
           <section class="section activity-panel" aria-labelledby="activity-title"><div class="section-head"><h2 id="activity-title">Latest activity</h2><button id="open-application-history" class="secondary">All activity</button></div><div id="brief-activity"></div></section>
           <div class="overview-grid" aria-label="Application overview">
@@ -887,7 +893,7 @@
             </div>
           </details>
         </section>
-        <nav id="profile-navigation" class="section-nav" aria-label="Profile sections" hidden><button data-view="profile" class="secondary">Your facts</button><button data-view="materials" class="secondary">Materials</button></nav>
+        <nav id="profile-navigation" class="section-nav" aria-label="Context sections" hidden><button data-view="profile" class="secondary">Facts &amp; notes</button><button data-view="materials" class="secondary">Documents &amp; writing</button></nav>
         <nav id="settings-navigation" class="section-nav" aria-label="Settings sections" hidden><button data-view="connections" class="secondary">Connections</button><button data-view="settings" class="secondary">Search &amp; automation</button><button data-view="setup" class="secondary">Setup</button></nav>
         <section id="profile" class="view" hidden>
           <details class="section"><summary>Platform profile suggestions</summary><p class="help">Draft a profile from approved sources, then review and copy it yourself. Generating a suggestion uses your selected model and request allowance.</p><div class="actions"><button id="suggest-handshake" class="secondary">Draft Handshake profile</button><button id="suggest-workatastartup" class="secondary">Draft startup profile</button></div><p id="profile-suggestion-status" role="status"></p><textarea id="profile-suggestion" readonly rows="6" aria-label="Draft profile suggestion" hidden></textarea><button id="copy-profile-suggestion" class="secondary" hidden>Copy suggestion</button></details>
@@ -990,6 +996,7 @@
             <div class="actions history-actions">
               <button type="button" id="history-add-education" class="secondary">Add education</button>
               <button type="button" id="history-add-employment" class="secondary">Add employment</button>
+              <button type="button" id="history-add-project" class="secondary">Add project</button>
             </div>
             <p id="history-feedback" class="help" role="status"></p>
             <form id="history-form" class="form-grid" hidden>
@@ -1006,7 +1013,13 @@
                 <label>Job title<input name="title" maxlength="1000" required disabled /></label>
                 <label class="wide">Responsibilities and accomplishments<textarea name="description" rows="3" maxlength="8000" disabled></textarea></label>
               </div>
-              <label>Location<input name="location" maxlength="1000" /></label>
+              <div class="form-grid wide" data-history-kind="project" hidden>
+                <label>Project name<input name="name" maxlength="1000" required disabled /></label>
+                <label>Your role<input name="role" maxlength="1000" disabled /></label>
+                <label class="wide">Project link (https)<input name="url" type="url" maxlength="1000" placeholder="https://" disabled /></label>
+                <label class="wide">What you built and the result, one line per point<textarea name="project_description" rows="3" maxlength="8000" required disabled></textarea></label>
+              </div>
+              <label data-history-except="project">Location<input name="location" maxlength="1000" /></label>
               <label>Current status<select name="current"><option value="">Not specified</option><option value="true">Current</option><option value="false">Not current</option></select></label>
               <label>Start month<input name="start" type="month" /></label>
               <label>Actual end month<input name="end" type="month" /></label>
@@ -1018,11 +1031,11 @@
           </div>
           <div class="section" id="context-inbox">
             <h2>Add context in your own words</h2>
-            <p class="help">Write anything applications ask about: classes, projects, team or office preferences, availability. Claude organizes it into facts and short notes. Nothing is saved until you review it.</p>
+            <p class="help">Add projects, classes, preferences or availability. Your selected model organizes your notes for review before saving.</p>
             <div id="context-needs" class="context-needs"></div>
             <form id="context-inbox-form" class="form-grid">
-              <label class="wide">Your notes<textarea name="text" rows="4" minlength="3" maxlength="6000" required placeholder="Write the way you would to a friend; Claude will tidy it up."></textarea></label>
-              <button type="submit">Organize with Claude</button>
+              <label class="wide">Your notes<textarea name="text" rows="4" minlength="3" maxlength="6000" required placeholder="What should applications know about you?"></textarea></label>
+              <button type="submit">Organize my notes</button>
             </form>
             <form id="context-review-form" class="form-grid context-review" hidden>
               <h3 class="wide">Review before saving</h3>
@@ -1039,7 +1052,7 @@
           </div>
           <div class="section">
             <h2>Basic context</h2>
-            <p class="help">Everything Claude can cite about you beyond your facts and resume. Notes you save above are added here; you can edit them directly. Saved facts take precedence when the two conflict.</p>
+            <p class="help">Approved notes your model can use alongside your resume. Confirmed facts take precedence.</p>
             <form id="basic-context-form" class="form-grid">
               <label class="wide">About you<textarea name="text" rows="7" minlength="20" maxlength="12000" required placeholder="Current work, school, projects, goals and anything an application should know"></textarea></label>
               <p id="basic-context-status" class="help wide" aria-live="polite"></p>
@@ -1158,6 +1171,68 @@
         </section>
         <section id="materials" class="view" hidden>
           <section class="section" aria-labelledby="generated-materials-title"><div class="section-head"><h2 id="generated-materials-title">Application materials</h2><button id="reload-artifacts" class="secondary">Refresh materials</button></div><p class="help">Tailored resumes, cover letters, introductions and response PDFs are saved per job. Earlier versions stay available in your history.</p><div id="artifact-library"></div><div class="actions"><button id="artifact-previous" class="secondary">Previous materials</button><span id="artifact-page" class="help" role="status"></span><button id="artifact-next" class="secondary">Next materials</button></div></section>
+          <section class="section" id="voice-section" aria-labelledby="voice-title">
+            <h2 id="voice-title">Your writing voice</h2>
+            <p class="help">Measured from your approved writing samples and past cover letters. It guides how drafts sound; it never supplies facts about you. Background reference documents are not counted.</p>
+            <ul id="voice-summary"></ul>
+            <p id="voice-sources" class="help"></p>
+            <form id="voice-form" class="form-grid">
+              <label class="wide">Phrases to avoid, one per line<textarea name="avoid_phrases" rows="3" maxlength="3400"></textarea></label>
+              <label>Exclamation marks<select name="exclamations"><option value="match">Match my samples</option><option value="never">Never use them</option></select></label>
+              <label>Contractions<select name="contractions"><option value="match">Match my samples</option><option value="use">Use them</option><option value="avoid">Write words out in full</option></select></label>
+              <label>Longest sentence, in words (0 for no limit)<input name="max_sentence_words" type="number" min="0" max="60" step="1" required /></label>
+              <label class="wide">Anything else about how you write<textarea name="notes" rows="2" maxlength="600" placeholder="For example: I open with the work, not with how I feel about the company."></textarea></label>
+              <p id="voice-status" class="help wide" role="status"></p>
+              <div class="actions wide"><button type="submit">Save writing preferences</button></div>
+            </form>
+          </section>
+          <section class="section" id="resume-style-section" aria-labelledby="resume-style-title">
+            <h2 id="resume-style-title">Resume and letter style</h2>
+            <p class="help">Choose how tailored resumes and cover letters look. A style changes layout only; the words come from your confirmed history. Saving a new style makes prepared applications build a new revision, and earlier revisions stay downloadable.</p>
+            <form id="resume-style-form" class="form-grid">
+              <label>Template<select name="template">
+                <option value="ats">ATS single column</option>
+                <option value="modern">Modern</option>
+                <option value="compact">Compact technical</option>
+                <option value="reference">Match my reference resume</option>
+              </select></label>
+              <label>Wording<select name="mode">
+                <option value="select">Use my confirmed lines exactly</option>
+                <option value="rewrite">Rephrase selected lines for the posting, with source checks</option>
+              </select></label>
+              <p id="resume-style-mode-help" class="help wide"></p>
+              <label>Typeface<select name="font"><option value="sans">Sans serif</option><option value="serif">Serif</option></select></label>
+              <label>Body text size (pt)<input name="body_size" type="number" step="0.5" min="9" max="12" required /></label>
+              <label>Page margin (pt)<input name="margin" type="number" step="1" min="36" max="72" required /></label>
+              <label>Line spacing<input name="line_spacing" type="number" step="0.05" min="1.15" max="1.6" required /></label>
+              <label>Lines per role<input name="max_bullets" type="number" step="1" min="1" max="8" required /></label>
+              <label>Page limit<select name="max_pages"><option value="1">One page</option><option value="2">Two pages</option></select></label>
+              <label>Dates<select name="date_layout"><option value="inline">Under the role, in the text flow</option><option value="right">Right aligned beside the role</option></select></label>
+              <label>Section headings<select name="heading_case"><option value="upper">UPPERCASE</option><option value="title">Title case</option></select></label>
+              <label>Accent colour<input name="accent" type="color" /></label>
+              <label class="confirmation"><input name="rule" type="checkbox" /> Draw a thin rule under section headings.</label>
+              <fieldset class="wide">
+                <legend>Section order</legend>
+                <ol id="resume-section-order" class="section-order"></ol>
+              </fieldset>
+              <div class="wide">
+                <label>Reference resume for layout (PDF)<input id="resume-style-reference" type="file" accept="application/pdf,.pdf" /></label>
+                <p class="help">Measures font size, margins, spacing and section order from a resume you like. Its words, name and contact details are never stored or reused, and the file is not kept. An embedded sans or serif face stands in for the reference typeface so every computer produces the same PDF.</p>
+                <ul id="resume-style-reference-notes" class="help" hidden></ul>
+              </div>
+              <p id="resume-style-status" class="help wide" role="status"></p>
+              <div class="actions wide">
+                <button type="submit">Save style</button>
+                <button type="button" id="resume-style-preview" class="secondary">Preview PDF</button>
+                <button type="button" id="resume-style-reset" class="secondary">Use template defaults</button>
+              </div>
+            </form>
+            <div id="resume-style-preview-panel" hidden>
+              <p id="resume-style-preview-note" class="help" role="status"></p>
+              <iframe id="resume-style-preview-frame" title="Resume style preview"></iframe>
+              <p><a id="resume-style-preview-download" class="secondary" download="resume-style-preview.pdf">Download this preview</a></p>
+            </div>
+          </section>
           <h2 id="reusable-sources-title">Reusable sources</h2>
           <p class="intro">
             Give the model your writing, cover-letter examples and supporting
@@ -1243,15 +1318,15 @@
           ></div>
         </section>
         <section id="connections" class="view" hidden>
-
-          <div class="section">
+          <details id="workspace-terminal" class="section"><summary>Open this workspace from the terminal</summary>
+            <p class="help">This command uses the same documents, email connection and application history as this portal.</p>
+            <pre tabindex="0" aria-label="Workspace startup command"><code id="workspace-start-command">Loading workspace command…</code></pre>
+          </details>
+          <div class="section" id="gmail-connection">
             <h2>Gmail</h2>
             <p id="gmail-state">Checking authorization…</p>
-            <p class="intro">
-              Connect the same email you use on applications to read
-              verification codes and receive batch reports. Being signed into
-              Gmail in a browser does not grant background access.
-            </p>
+            <p class="help">Check past applications and recruiting replies using your application email.</p>
+            <details id="gmail-setup"><summary>Connect or reconnect Gmail</summary>
             <label class="upload"
               >Google Desktop OAuth client JSON<input
                 id="gmail-client-upload"
@@ -1270,20 +1345,21 @@
               >.
             </p>
             <p>
-              Then run this from the project folder in a terminal on the
-              computer running the worker:
+              Run this in a terminal on this computer. It connects the workspace you have open:
             </p>
             <pre
               tabindex="0"
               aria-label="Gmail connection command"
-            ><code>.venv/bin/python -m hireme gmail connect</code></pre>
+            ><code id="gmail-connect-command">Loading workspace command…</code></pre>
+            <button id="copy-gmail-command" type="button" class="secondary">Copy connection command</button>
             <p class="help">
               Google will open a consent screen. Select your confirmed
-              application email and authorize reading email and sending reports.
+              application email. Sending access is requested only if email reports are enabled.
               Testing-mode OAuth tokens generally expire after seven days;
               finish the personal-use OAuth setup before relying on unattended
               runs.
             </p>
+            </details>
           </div>
           <form id="mail-settings-form" class="section">
             <h2>Email automation</h2>
@@ -1300,7 +1376,7 @@
               ><input name="gmail_prior_applications" type="checkbox" /> Check Gmail for past applications before applying, including applications made outside this app. Matching roles stay held for review.</label
             ><button type="submit">Save email preferences</button>
             <p class="help">
-              Codes stay out of Claude prompts and logs. Unsupported
+              Codes stay out of model prompts and logs. Unsupported
               verification steps remain held for manual handling.
             </p>
           </form>
@@ -1532,7 +1608,7 @@
             </div>
             <fieldset class="section">
               <legend>Context and writing</legend>
-              <label class="confirmation"><input name="tailored_resumes" type="checkbox" /> Build a resume for each posting from my confirmed education and employment. Select up to four complete experience lines per role by relevance, keeping their original wording and employer. Use the generated PDF in supported browser applications. No model requests are needed; my uploaded original stays available.</label>
+              <label class="confirmation"><input name="tailored_resumes" type="checkbox" /> Build a resume for each posting from my confirmed education, employment and projects. Select the most relevant complete lines per role, keeping their employer and dates. Use the generated PDF in supported browser applications; my uploaded original stays available. Choose the template and wording under Documents &amp; writing → Resume and letter style.</label>
               <label class="confirmation"><input name="adaptive_browser" type="checkbox" /> Use the adaptive application browser for multi-step forms and supported ATS fallbacks.</label>
               <label class="confirmation"><input name="remote_drafts" type="checkbox" /> Allow live application steps to save confirmed answers and documents at the employer before final submission. Local preparation in the adaptive browser sends no values or documents. Unknown agreements still require approval.</label>
               <label class="confirmation"
@@ -1856,7 +1932,7 @@ claude auth login</pre
           <div id="opportunity-note-editor"></div>
         </details>
         <section id="connected-job-context" class="section"></section>
-        <details id="job-writing-panel" class="section"><summary>Prepare application materials</summary><p class="help">Tailored resumes select confirmed history without rewriting it or calling a model. Other writing uses approved sources and your selected model. Review each result before use.</p><form id="artifact-form" class="form-grid"><label>Purpose<select name="kind"><option value="resume">Tailored resume PDF</option><option value="cover_letter">Grounded cover letter</option><option value="introduction">Company introduction</option><option value="supplemental_response">Supplemental response PDF</option></select></label><label class="wide">Employer prompt<textarea name="prompt" required maxlength="4000" rows="3"></textarea></label><button type="submit">Generate material</button></form><p id="artifact-status" role="status"></p><div id="job-artifacts"></div></details>
+        <details id="job-writing-panel" class="section"><summary>Prepare application materials</summary><p class="help">Tailored resumes select confirmed employment or project lines. Optional rephrasing follows your saved style and checks each change against its source. Other writing uses approved sources and your selected model. Review each result before use.</p><form id="artifact-form" class="form-grid"><label>Purpose<select name="kind"><option value="resume">Tailored resume PDF</option><option value="cover_letter">Grounded cover letter</option><option value="introduction">Company introduction</option><option value="supplemental_response">Supplemental response PDF</option></select></label><label class="wide">Employer prompt<textarea name="prompt" required maxlength="4000" rows="3"></textarea></label><button type="submit">Generate material</button></form><p id="artifact-status" role="status"></p><div id="job-artifacts"></div></details>
         <details id="job-record-panel" class="section"><summary>Application record</summary><div id="job-record-evidence"></div></details>
         <h3>About the opportunity</h3>
         <p id="job-dialog-description" class="posting-description"></p>

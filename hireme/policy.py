@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 11
+ELIGIBILITY_VERSION = 13
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {

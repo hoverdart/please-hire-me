@@ -26,6 +26,8 @@ def _recorded_outcome(store, job_id, fallback):
 
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
     with worker_lock(store.root):
+        from .rollout import check as check_rollout
+        live=check_rollout(store,live=live,job_ids=job_ids)
         store.recover()
         from .reports import recover_reports
         recover_reports(store)
@@ -36,6 +38,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         store.active_run_id=rid
         store.prior_mail_checked=set()
         store.prior_mail_failures={}
+        store.prior_mail_service_failure=None
         max_attempts=min(max_attempts or s['max_attempts_per_cycle'],s['max_attempts_per_cycle'])
         store.prior_mail_check_limit=max_attempts
         store.db.execute("INSERT INTO runs(id,started,status,detail) VALUES(?,?,'running',?)",(rid,now(),json.dumps({'mode':'live' if live else 'prepare'})))
@@ -199,6 +202,10 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                 reasons['browser_error']=reasons.get('browser_error',0)+1
                                 if safe_job_state(store,job['id']):
                                     store.block(job['id'],'browser_error',type(e).__name__);hold(store,job,'browser_error',type(e).__name__)
+                            if live and store.settings()['stop_on_uncertain_outcome'] and _recorded_outcome(store,job['id'],None) in {'unknown','awaiting_verification'}:
+                                store.update_settings({'live_enabled':False})
+                                store.event('restricted_worker_stopped',job['id'],{'reason':'uncertain_outcome'})
+                                raise Blocked('uncertain_outcome_stop','Automatic applications paused after an unverified outcome')
             store.checkpoint()
             detail=json.dumps({'target':target,'attempts':attempts,'outcomes':outcomes,'confirmed':count if live else 0,'prepared':count if not live else 0,'shortfall':max(0,target-count),'reasons':reasons,'mode':'live' if live else 'prepare','discovered':discovered_count,'eligible':eligible_count})
             store.db.execute("UPDATE runs SET finished=?,status='finished',submitted=?,detail=? WHERE id=?",(now(),count if live else 0,detail,rid))
@@ -216,6 +223,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             store.active_run_id=None
             store.prior_mail_checked=None
             store.prior_mail_failures=None
+            store.prior_mail_service_failure=None
             try:
                 from .reports import queue_report,flush_reports
                 queue_report(store,rid)

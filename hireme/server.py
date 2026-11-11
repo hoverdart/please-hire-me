@@ -17,7 +17,7 @@ from .util import private_dir,atomic_json,Blocked
 
 MAX_BODY=21*1024*1024
 REQUEST_TIMEOUT=30
-UPLOAD_PATHS={'/api/resume','/api/transcript','/api/gmail-client','/api/material-upload',
+UPLOAD_PATHS={'/api/resume','/api/transcript','/api/gmail-client','/api/material-upload','/api/resume-style-reference',
               '/api/posting-import-preview','/api/posting-import'}
 
 
@@ -167,7 +167,7 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
             self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Referrer-Policy','no-referrer')
             if download:self.send_header('Content-Disposition',f'attachment; filename="{download}"')
-            self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
+            self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; frame-src blob:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
             self.end_headers()
 
         def send(self,code,data,ctype='application/json',download=None):
@@ -184,8 +184,8 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
         def do_GET(self):
             path=urlsplit(self.path).path
             if not self._valid_host():return self.send(403,{'error':'Invalid host'})
-            if path in ('/','/app.js','/notes.js','/workspace.js','/recruiting.js','/insights.js','/history-import.js','/style.css'):
-                name={'/':'index.html','/app.js':'app.js','/notes.js':'notes.js','/workspace.js':'workspace.js','/recruiting.js':'recruiting.js','/insights.js':'insights.js','/history-import.js':'history-import.js','/style.css':'style.css'}[path]
+            if path in ('/','/app.js','/notes.js','/workspace.js','/recruiting.js','/insights.js','/history-import.js','/resume-style.js','/style.css'):
+                name={'/':'index.html','/app.js':'app.js','/notes.js':'notes.js','/workspace.js':'workspace.js','/recruiting.js':'recruiting.js','/insights.js':'insights.js','/history-import.js':'history-import.js','/resume-style.js':'resume-style.js','/style.css':'style.css'}[path]
                 return self.send(200,(assets/name).read_bytes(),'text/html; charset=utf-8' if path=='/' else 'text/css' if path=='/style.css' else 'text/javascript')
             if not self._auth():return self.send(403,{'error':'Open the dashboard URL printed by .venv/bin/python -m hireme dashboard'})
             store=Store(root)
@@ -199,6 +199,10 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     from .gmail import status as gmail_status
                     from .reports import report_status
                     snapshot['gmail']=gmail_status(store);snapshot['reports']=report_status(store)
+                    from .local_commands import command
+                    snapshot['local_commands']={'gmail_connect':command(store,'gmail','connect'),
+                        'gmail_check':command(store,'gmail','check'),
+                        'dashboard':command(store,'dashboard','--port',str(port),'--open')}
                     from .setup_status import readiness
                     if demo:
                         from .demo import DEMO_READINESS
@@ -248,6 +252,23 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         lookback=int(query.get('lookback',['90'])[0]),window=int(query.get('window',['14'])[0]),
                         metric=query.get('metric',['attempts'])[0],group_id=query.get('group_id',[''])[0],
                         offset=int(query.get('offset',['0'])[0]),group_offset=int(query.get('group_offset',['0'])[0])))
+                    except ValueError as error:return self.send(400,{'error':str(error)})
+                if path=='/api/voice':
+                    from .voice import profile
+                    return self.send(200,profile(store))
+                if path=='/api/resume-style':
+                    from .resume_styles import BOUNDS,TEMPLATES,validate_style
+                    return self.send(200,{'style':validate_style(store.settings()['resume_style']),'templates':TEMPLATES,'bounds':BOUNDS,
+                                          'rewriting_authorized':store.settings()['tailored_writing']})
+                if path=='/api/resume-explain':
+                    from .tailored_resumes import explain
+                    query=parse_qs(urlsplit(self.path).query)
+                    try:return self.send(200,explain(store,query.get('id',[''])[0]))
+                    except ValueError as error:return self.send(400,{'error':str(error)})
+                if path=='/api/report-preview':
+                    from .reports import preview_report
+                    query=parse_qs(urlsplit(self.path).query)
+                    try:return self.send(200,preview_report(store,query.get('id',[None])[0]))
                     except ValueError as error:return self.send(400,{'error':str(error)})
                 if path=='/api/coverage':
                     from .coverage import coverage
@@ -411,6 +432,11 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                         with tempfile.NamedTemporaryFile(suffix='.pdf',dir=root) as f:
                             f.write(raw);f.flush();result=import_resume(store,Path(f.name),'transcript' if path=='/api/transcript' else 'resume')
                         return self.send(200,{'hash':result['hash'],'candidates':result['candidates'],'repaired':result['repaired']})
+                    if path=='/api/resume-style-reference':
+                        # Measurements only: the reference file and its words are not stored.
+                        from .resume_styles import style_from_reference
+                        style,notes=style_from_reference(raw)
+                        return self.send(200,{'style':style,'notes':notes})
                     if path=='/api/gmail-client':
                         import tempfile
                         from .gmail import import_client
@@ -563,6 +589,25 @@ def serve(root,repo,port=8766,token=None,demo=False,open_browser=False,hide_toke
                     elif path=='/api/reports/flush':
                         from .reports import flush_reports
                         result=flush_reports(store)
+                    elif path=='/api/voice-preferences':
+                        from .voice import save_preferences,profile
+                        if set(data)!={'preferences','revision'}:raise ValueError('Provide writing preferences and their saved revision')
+                        result={**save_preferences(store,data['preferences'],data['revision']),'profile':profile(store)}
+                    elif path=='/api/resume-style':
+                        from .resume_styles import validate_style
+                        if set(data)!={'style'}:raise ValueError('Provide one resume style')
+                        validate_style(data['style'])
+                        result={'style':validate_style(store.update_settings({'resume_style':data['style']})['resume_style'])}
+                    elif path=='/api/resume-preview':
+                        import base64
+                        from .tailored_resumes import preview
+                        if set(data)-{'style'}:raise ValueError('Provide one resume style')
+                        rendered=preview(store,data.get('style'))
+                        result={'pdf':base64.b64encode(rendered['data']).decode('ascii'),'sample':rendered['sample'],'pages':rendered['pages']}
+                    elif path=='/api/reports/requeue':
+                        from .reports import requeue_report
+                        if not isinstance(data.get('id'),str) or len(data['id'])>200:raise ValueError('Choose a saved report')
+                        result=requeue_report(store,data['id'])
                     elif path=='/api/answer-revoke':
                         from .saved_answers import revoke_answer
                         revoke_answer(store,data['id']);result={'revoked':True}

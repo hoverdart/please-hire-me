@@ -208,7 +208,7 @@ def test_pending_batches_are_sent_as_one_email(store):
     class Client:
         email='test@candidate.invalid';sent=[]
         def __init__(self,s):pass
-        def send_report(self,subject,body,message_id):Client.sent.append((subject,body));return 'one'
+        def send_report(self,subject,body,message_id,html=None):Client.sent.append((subject,body));return 'one'
     assert flush_reports(store,Client)=={'sent':1,'enabled':True,'batches':3}
     (subject,body),=Client.sent
     assert subject=='Recruiting update: 2 confirmed — review next actions'

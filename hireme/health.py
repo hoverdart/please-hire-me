@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import urllib.error
 import urllib.request
 
-from .config import validate_settings
+from .config import read_settings
 from .storage import capacity
 from .util import atomic_json, now
 
@@ -57,7 +57,7 @@ def check_health(root, *, services=True, verify_login=True, clock=None, dashboar
         db=sqlite3.connect((root/'ledger.sqlite3').as_uri()+'?mode=ro',uri=True,timeout=3)
         db.row_factory=sqlite3.Row
         db.execute('PRAGMA query_only=ON');db.execute('BEGIN')
-        settings=validate_settings(json.loads(db.execute('SELECT value FROM config WHERE id=1').fetchone()[0]))
+        settings=read_settings(db)
         result['paused']=not settings['live_enabled']
         if settings['deployment']=='pi':
             from .pi import memory_controller_available,power_status

@@ -18,6 +18,10 @@ READ_SCOPES=SCOPES[:1]
 SEND_SCOPES=SCOPES[1:]
 
 
+class InvalidReportMessage(ValueError):
+    """Message construction failed locally, before any send request."""
+
+
 def required_scopes(store):
     # Reading verifies mailbox ownership and supports the selected read features.
     return READ_SCOPES+SEND_SCOPES if store.settings()['gmail_reports'] else list(READ_SCOPES)
@@ -221,18 +225,40 @@ class GmailClient:
                     return code
         return None
 
-    def send_report(self, subject, body, message_id):
+    def find_sent_report(self, message_id):
+        """The Gmail ID of a report carrying this exact Message-ID, or None.
+
+        Read-only evidence for an ambiguous send. The identifier is generated
+        locally; no mailbox text is returned or stored.
+        """
+        if not re.fullmatch(r'<[0-9a-f]{32}@please-hire-me\.local>', message_id or ''):
+            raise ValueError('Invalid report identifier')
+        found = self.service.users().messages().list(userId='me', q='rfc822msgid:' + message_id[1:-1],
+                                                     labelIds=['SENT'], includeSpamTrash=True, maxResults=2).execute().get('messages', [])
+        return found[0]['id'] if found else None
+
+    def send_report(self, subject, body, message_id, html=None):
         if hasattr(self,'credentials') and not has_granted_scopes(self.credentials,SEND_SCOPES):
             raise Blocked('gmail_scopes_missing','Reconnect Gmail with reporting enabled to authorize sending')
-        if '\n' in subject or '\r' in subject or len(subject) > 200:
-            raise ValueError('Invalid report subject')
-        message = EmailMessage()
-        message['To'] = self.email
-        message['From'] = self.email
-        message['Subject'] = subject
-        message['Message-ID'] = message_id
-        message.set_content(body)
-        raw = base64.urlsafe_b64encode(message.as_bytes()).decode('ascii')
+        if any(ord(c) < 32 or ord(c) == 127 for c in subject) or len(subject) > 200:
+            raise InvalidReportMessage('Invalid report subject')
+        if not re.fullmatch(r'<[A-Za-z0-9._-]{1,120}@[A-Za-z0-9.-]{1,120}>', message_id or ''):
+            raise InvalidReportMessage('Invalid report identifier')
+        try:
+            message = EmailMessage()
+            message['To'] = self.email
+            message['From'] = self.email
+            message['Subject'] = subject
+            message['Message-ID'] = message_id
+            message.set_content(body)
+            if html:
+                # The plain part stays first; clients without HTML show it unchanged.
+                message.add_alternative(html, subtype='html')
+            raw = base64.urlsafe_b64encode(message.as_bytes()).decode('ascii')
+        except (ValueError, TypeError):
+            raise InvalidReportMessage('The report could not be encoded') from None
+        # Parsing the response can also raise ValueError, after Gmail accepted
+        # the message. That error must remain an uncertain send.
         return self.service.users().messages().send(userId='me', body={'raw': raw}).execute()['id']
 
 

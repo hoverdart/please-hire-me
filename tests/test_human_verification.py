@@ -92,3 +92,60 @@ def test_dashboard_never_offers_a_stale_or_unbound_human_wait(store,job,package,
     else:store.db.execute("UPDATE events SET detail='[]' WHERE kind='human_verification'")
     if change not in {'unknown','paused','stopped','malformed','not_an_object'}:store.event('human_verification',aid,detail)
     assert current_wait(store) is None
+
+
+def test_disappearing_challenge_keeps_human_deadline_until_native_dispatch(store,job,monkeypatch):
+    from types import SimpleNamespace
+    from hireme.browser import Browser
+    from hireme.util import Blocked
+    store.update_settings({'human_verification_handoff':False})
+    b=Browser(store);b.aid='synthetic-wait';b.human_verification_seconds=180
+    elapsed=[0.0];checks=[];grant=SimpleNamespace(used=False,boundary=SimpleNamespace(check=lambda:None),failed=False)
+    b.native_submission=grant
+    def guard(*args,**kwargs):
+        checks.append(elapsed[0])
+        if elapsed[0]==0:raise Blocked('captcha_blocked')
+        if elapsed[0]>=90:
+            grant.used=True
+            return 'Thank you for applying! Your application has been received.'
+        return 'Application form'
+    b._guard=guard
+    b._native_submission_acknowledged=lambda:grant.used
+    b.page=SimpleNamespace(wait_for_timeout=lambda ms:elapsed.__setitem__(0,elapsed[0]+ms/1000),
+        locator=lambda _:SimpleNamespace(count=lambda:0))
+    monkeypatch.setattr('hireme.browser.time.monotonic',lambda:elapsed[0])
+    result=b._wait_submission_outcome(job)
+    assert 'received' in result and elapsed[0]>=90
+    phases=[json.loads(r[0])['phase'] for r in store.db.execute("SELECT detail FROM events WHERE subject='synthetic-wait' AND kind='human_verification' ORDER BY seq")]
+    assert phases==['challenge','checking_receipt','finished']
+
+
+def test_disappearing_challenge_does_not_extend_human_deadline(store,job,monkeypatch):
+    from types import SimpleNamespace
+    from hireme.browser import Browser
+    from hireme.util import Blocked
+    store.update_settings({'human_verification_handoff':False})
+    b=Browser(store);b.aid='synthetic-timeout';b.human_verification_seconds=120
+    elapsed=[0.0];grant=SimpleNamespace(used=False,boundary=SimpleNamespace(check=lambda:None),failed=False)
+    b.native_submission=grant
+    def guard(*args,**kwargs):
+        if elapsed[0]==0:raise Blocked('captcha_blocked')
+        return 'Application form'
+    b._guard=guard
+    b.page=SimpleNamespace(wait_for_timeout=lambda ms:elapsed.__setitem__(0,elapsed[0]+ms/1000))
+    monkeypatch.setattr('hireme.browser.time.monotonic',lambda:elapsed[0])
+    with pytest.raises(Blocked,match='captcha_blocked'):b._wait_submission_outcome(job)
+    assert elapsed[0]==120 and not grant.used
+
+
+@pytest.mark.parametrize('used,keys,response,expected',[(False,set(),False,True),(True,set(),False,False),(False,{'request'},False,False),(False,set(),True,False)])
+def test_only_live_undispatched_lever_controller_can_prove_no_submission(store,used,keys,response,expected):
+    from types import SimpleNamespace
+    from hireme.browser import Browser
+    from hireme.lever_submission import LeverSubmission
+    b=Browser(store);b.aid='fixture-proof'
+    grant=object.__new__(LeverSubmission);grant.aid=b.aid;grant.used=used;grant.request_keys=keys;grant.response_seen=response
+    grant.deadline=100;grant.boundary=SimpleNamespace(deadline=100);b.native_submission=grant
+    assert b._close_undispatched_lever_submit() is expected
+    assert (grant.boundary.deadline==0) is expected
+    assert bool(store.db.execute("SELECT 1 FROM events WHERE kind='native_submission_not_dispatched'").fetchone()) is expected

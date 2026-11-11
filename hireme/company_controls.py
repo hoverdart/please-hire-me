@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from .config import validate_settings
+from .store import write_settings
 from .util import now, company_normalizer
 
 
@@ -20,7 +21,7 @@ def skip_company(store, job_id):
         existing = {normalize(name) for name in settings['skip_companies']}
         if key not in existing:
             settings = validate_settings({'skip_companies': [*settings['skip_companies'], company]}, settings)
-            store.db.execute('UPDATE config SET value=? WHERE id=1', (json.dumps(settings),))
+            write_settings(store.db, settings)
         candidates = store.db.execute("""SELECT id,company FROM jobs WHERE status IN ('discovered','blocked','prepared')
             AND NOT EXISTS(SELECT 1 FROM application_records a WHERE a.job_id=jobs.id AND a.state!='prepared')""")
         ids = [row['id'] for row in candidates if normalize(row['company']) == key]
@@ -54,7 +55,7 @@ def allow_company(store, job_id):
         removed = len(settings['skip_companies']) - len(remaining)
         if removed:
             settings = validate_settings({'skip_companies': remaining}, settings)
-            store.db.execute('UPDATE config SET value=? WHERE id=1', (json.dumps(settings),))
+            write_settings(store.db, settings)
         store.event('company_allowed', key, {'company': job['company'], 'exclusions_removed': removed})
     store.export_config()
     return {'company': job['company'], 'removed': removed,
