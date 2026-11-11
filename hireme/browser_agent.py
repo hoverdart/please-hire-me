@@ -178,7 +178,12 @@ class AdaptiveBrowser(Browser):
 
     def _enter_frame(self):
         from .icims import enter_content
-        content=enter_content(self.page,limit_reached=getattr(self,'frame_entries',0)>=8)
+        from .browser_observation import retry_dom_read
+        # Navigation can replace the DOM between the click and frame lookup.
+        # Retry only this read, never the action or the following navigation.
+        content=retry_dom_read(self.page,
+            lambda:enter_content(self.page,limit_reached=getattr(self,'frame_entries',0)>=8),
+            checkpoint=self.store.checkpoint)
         if not content:return False
         self.frame_entries=getattr(self,'frame_entries',0)+1
         self.page.goto(content,wait_until='domcontentloaded',timeout=45000)
