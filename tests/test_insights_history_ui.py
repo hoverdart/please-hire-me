@@ -91,3 +91,43 @@ def test_insight_drilldown_and_reviewed_history_import(store,job,package,cohort,
         assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
         assert not mail_requests and not errors and page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         browser.close()
+
+
+@pytest.mark.parametrize('width',[320,1440])
+def test_project_import_retains_drafts_and_requires_review_after_changing_kind(store,history_server,width):
+    from playwright.sync_api import sync_playwright,expect
+    from tests.test_history_import import PROJECT_TEXT,select_pdf
+    select_pdf(store,PROJECT_TEXT)
+    store.update_settings({'live_enabled':False})
+    with sync_playwright() as p:
+        browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':1000})
+        errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        page.goto(history_server+'/#token=fixture-capability')
+        open_view(page,'profile')
+        page.locator('#history-import-panel > summary').click()
+        page.locator('#history-import-candidates').get_by_role('button',name='project · Timetable Solver · lines',exact=False).click()
+        form=page.locator('#history-import-form')
+        expect(form.get_by_label('Project name',exact=True)).to_have_value('Timetable Solver')
+        expect(form.get_by_label('Your role',exact=True)).to_have_value('')
+        expect(form.get_by_label('Project link (https)',exact=True)).to_have_value('https://github.com/example/solver')
+        assert form.locator('[name=location]').count()==0
+        form.get_by_label('What you built',exact=True).fill('Built a constraint solver in Python.\nPublished reproducible examples.')
+        page.evaluate('refresh()')
+        expect(form.get_by_label('What you built',exact=True)).to_have_value('Built a constraint solver in Python.\nPublished reproducible examples.')
+        assert not store.history_entries()
+        form.get_by_label('I reviewed this excerpt',exact=False).check()
+        form.get_by_label('Entry type',exact=True).select_option('employment')
+        expect(form.get_by_role('button',name='Confirm and import entry')).to_be_disabled()
+        expect(form.get_by_label('I reviewed this excerpt',exact=False)).not_to_be_checked()
+        form.get_by_label('Entry type',exact=True).select_option('project')
+        form.get_by_role('button',name='Propose fields from these lines',exact=True).click()
+        expect(form.get_by_label('What you built',exact=True)).to_have_value('Built a constraint solver in Python.\nPublished reproducible examples.')
+        expect(form.get_by_label('I reviewed this excerpt',exact=False)).not_to_be_checked()
+        form.get_by_label('I reviewed this excerpt',exact=False).check()
+        form.get_by_role('button',name='Confirm and import entry').click()
+        expect(page.locator('#history-import-status')).to_contain_text('Entry imported and confirmed')
+        expect(page.locator('#history-list')).to_contain_text('Timetable Solver')
+        assert len(store.history_entries('project'))==1 and not store.history_entries('employment')
+        assert not errors and page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
+        browser.close()

@@ -4,7 +4,8 @@
   const status=get('history-import-status'),fields=get('history-import-fields');
   const definitions={
     employment:[['organization','Organization'],['title','Job title'],['description','Responsibilities and accomplishments']],
-    education:[['institution','Institution'],['degree','Degree'],['field_of_study','Field of study'],['gpa','GPA'],['expected_end','Expected end month']]
+    education:[['institution','Institution'],['degree','Degree'],['field_of_study','Field of study'],['gpa','GPA'],['expected_end','Expected end month']],
+    project:[['name','Project name'],['role','Your role'],['url','Project link (https)'],['description','What you built']]
   };
   const common=[['location','Location'],['current','Current status'],['start','Start month'],['end','Actual end month']];
   let snapshot=null,source=null,busy=false,activeKey='',excerptHash='',selectionReady=false,drafts=new Map();
@@ -27,7 +28,7 @@
   function saveDraft(){if(activeKey)drafts.set(activeKey,values());}
   function fill(kind,proposals){
     fields.replaceChildren();
-    for(const [name,labelText] of [...definitions[kind],...common]){
+    for(const [name,labelText] of [...definitions[kind],...common.filter(([name])=>kind!=='project'||name!=='location')]){
       let control;
       if(name==='description'){control=el('textarea');control.rows=5;control.maxLength=8000;}
       else if(name==='current'){
@@ -35,14 +36,14 @@
         for(const [value,label] of [['','Not specified'],['true','Current'],['false','Not current']]){
           const option=el('option',label);option.value=value;control.append(option);
         }
-      }else{control=el('input');control.type=['start','end','expected_end'].includes(name)?'month':'text';control.maxLength=1000;}
+      }else{control=el('input');control.type=['start','end','expected_end'].includes(name)?'month':name==='url'?'url':'text';control.maxLength=1000;}
       control.name=name;control.value=proposals[name]===undefined?'':String(proposals[name]);
-      control.required=['organization','title','institution'].includes(name);
+      control.required=['organization','title','institution','name'].includes(name)||(kind==='project'&&name==='description');
       const label=el('label',labelText,name==='description'?'wide':undefined);label.append(control);fields.append(label);
     }
     form.elements.confirmed.checked=false;
-    const similar=(source?.history||[]).filter(entry=>entry.kind===kind&&['organization','title','institution'].some(key=>proposals[key]&&entry.values[key]?.toLowerCase()===proposals[key].toLowerCase()));
-    get('history-import-duplicates').textContent=similar.length?'Similar saved entries exist. Check Education and employment before adding another role or school. Identical confirmed entries are reused; existing entries are never overwritten.':'Existing entries are kept. You can edit or withdraw an imported entry in Education and employment.';
+    const similar=(source?.history||[]).filter(entry=>entry.kind===kind&&['organization','title','institution','name'].some(key=>proposals[key]&&entry.values[key]?.toLowerCase()===proposals[key].toLowerCase()));
+    get('history-import-duplicates').textContent=similar.length?'Similar saved entries exist. Check your saved history before adding another entry. Identical confirmed entries are reused; existing entries are never overwritten.':'Existing entries are kept. You can edit or withdraw an imported entry in your saved history.';
   }
   function choose(proposal){
     saveDraft();form.hidden=false;form.elements.kind.value=proposal.kind;form.elements.start_line.value=proposal.start_line;form.elements.end_line.value=proposal.end_line;
@@ -59,7 +60,7 @@
       source=result;const list=get('history-import-candidates');list.replaceChildren();
       get('history-import-source').textContent=result.lines.map((line,index)=>(index+1)+': '+line).join('\n');
       for(const proposal of result.candidates){
-        const label=proposal.values.organization||proposal.values.institution||'Unrecognized header';
+        const label=proposal.values.organization||proposal.values.institution||proposal.values.name||'Unrecognized header';
         const button=el('button',proposal.kind+' · '+label+' · lines '+proposal.start_line+'–'+proposal.end_line,'secondary');button.type='button';
         button.onclick=()=>choose(proposal);list.append(button);
       }
@@ -88,7 +89,7 @@
     busy=true;controls();announce('Saving the applicant-confirmed entry…');
     try{
       const result=await api('/api/history-import/confirm',data);form.elements.confirmed.checked=false;
-      announce(result.existing?'This confirmed entry already exists. Its source and revision were preserved.':'Entry imported and confirmed. Edit or withdraw it in Education and employment.');
+      announce(result.existing?'This confirmed entry already exists. Its source and revision were preserved.':'Entry imported and confirmed. Edit or withdraw it in your saved history.');
       await refresh();
     }catch(error){announce(error.message,true);}finally{busy=false;controls();}
   };

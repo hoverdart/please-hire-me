@@ -784,9 +784,9 @@ const toolDestinations = [
     target: "#heading",
   },
   {
-    label: "Education and employment",
-    description: "Confirm individual schools, jobs and their dates for applications.",
-    aliases: "history institution degree employer work experience expected graduation",
+    label: "Education, employment and projects",
+    description: "Confirm schools, jobs, projects and their dates for applications and writing.",
+    aliases: "history institution degree employer work experience project portfolio expected graduation",
     view: "profile",
     target: "#history-add-education",
   },

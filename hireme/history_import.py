@@ -9,8 +9,10 @@ from .util import digest
 from .workday_history import _validate
 
 SECTIONS = {'experience':'employment','work experience':'employment','professional experience':'employment',
-            'employment':'employment','education':'education'}
-STOPS = {'projects','skills','technical skills','publications','awards','leadership','certifications','interests'}
+            'employment':'employment','education':'education','projects':'project',
+            'selected projects':'project','personal projects':'project','academic projects':'project',
+            'research projects':'project'}
+STOPS = {'skills','technical skills','publications','awards','leadership','certifications','interests'}
 MONTHS = {name:index for index,names in enumerate((
     ('jan','january'),('feb','february'),('mar','march'),('apr','april'),('may',),('jun','june'),
     ('jul','july'),('aug','august'),('sep','sept','september'),('oct','october'),('nov','november'),('dec','december')),1) for name in names}
@@ -30,9 +32,9 @@ def _month(value):
 def _values(lines,kind):
     values={};clean=[line.strip() for line in lines if line.strip()]
     if not clean:return values
-    if kind=='employment' and (sum(('|' in line or line.count('•')>=2) and not re.match(r'^[•*-]\s',line) for line in clean)>1 or
+    if kind in {'employment','project'} and (sum(('|' in line or line.count('•')>=2) and not re.match(r'^[•*-]\s',line) for line in clean)>1 or
             sum(bool(RANGE.search(line)) and not re.match(r'^[•*-]\s',line) for line in clean)>1):
-        return {}  # Never associate two apparent employer headers with one accomplishment list.
+        return {}  # Never associate two apparent entry headers with one accomplishment list.
     header=[]
     for line in clean[:3]:
         if re.match(r'^[•*-]\s',line):break
@@ -48,11 +50,20 @@ def _values(lines,kind):
         text=re.sub(r'\bexpected\s+'+DATE,'',text,flags=re.I).strip(' |•–—-')
         if text and not re.match(r'^[•*-]\s',line):header.append(text)
     parts=[part.strip() for part in re.split(r'\s*[|•]\s*',header[0]) if part.strip()] if header else []
-    if kind=='employment':
-        if len(parts)==2 and len(header)>=2 and '•' in clean[0] and RANGE.search(clean[0]):
-            values.update(organization=parts[0],location=parts[1],title=header[1])
-        elif len(parts)>=2:values.update(organization=parts[0],title=parts[1])
-        elif len(header)>=2:values.update(organization=header[0],title=header[1])
+    if kind in {'employment','project'}:
+        if kind=='employment':
+            if len(parts)==2 and len(header)>=2 and '•' in clean[0] and RANGE.search(clean[0]):
+                values.update(organization=parts[0],location=parts[1],title=header[1])
+            elif len(parts)>=2:values.update(organization=parts[0],title=parts[1])
+            elif len(header)>=2:values.update(organization=header[0],title=header[1])
+        elif parts:
+            # A technology list after the project name is not an applicant role.
+            # Only a complete, literal https URL from the header can become a link.
+            name=re.sub(r'https://[^\s|•<>"\']+','',parts[0]).strip(' |•–—-')
+            if name:values['name']=name
+            links=re.findall(r'https://[^\s|•<>"\']+','\n'.join(header))
+            if len(links)==1 and re.fullmatch(r'https://[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s<>"\']*)?',links[0]):
+                values['url']=links[0]
         body=[]
         for line in clean:
             if line.casefold().rstrip(':') in SECTIONS.keys() | STOPS:break
@@ -85,7 +96,7 @@ def candidates(lines):
     result=[]
     for kind,start,end in sections:
         anchors=[index for index in range(start,end) if not re.match(r'^\s*[•*-]\s',lines[index]) and
-                 (RANGE.search(lines[index]) or kind=='employment' and '|' in lines[index] or
+                 (RANGE.search(lines[index]) or kind in {'employment','project'} and '|' in lines[index] or
                   kind=='education' and re.search(r'\bexpected\s+'+DATE,lines[index],re.I))]
         starts=[]
         for index in anchors:
@@ -132,8 +143,8 @@ def preview(store):
 
 
 def suggest(store,data):
-    if not isinstance(data,dict) or set(data)-{'resume_hash','start_line','end_line','kind'} or data.get('kind') not in {'employment','education'}:
-        raise ValueError('Choose an education or employment excerpt')
+    if not isinstance(data,dict) or set(data)-{'resume_hash','start_line','end_line','kind'} or data.get('kind') not in {'employment','education','project'}:
+        raise ValueError('Choose an education, employment or project excerpt')
     source=selected_resume_text(store)
     if data.get('resume_hash')!=source['hash']:raise ValueError('Your selected resume changed. Reload its excerpts before importing.')
     excerpt=_selection(source,data.get('start_line'),data.get('end_line'))
@@ -145,7 +156,7 @@ def confirm(store,data):
     if not isinstance(data,dict) or set(data)-allowed or data.get('confirmed') is not True:
         raise ValueError('Review and explicitly confirm this history entry before importing')
     kind=data.get('kind')
-    if not isinstance(kind,str):raise ValueError('Choose education or employment')
+    if not isinstance(kind,str):raise ValueError('Choose education, employment or project')
     values=_validate(kind,data.get('values'))
     source=selected_resume_text(store)
     if data.get('resume_hash')!=source['hash']:raise ValueError('Your selected resume changed. Reload its excerpts before importing.')

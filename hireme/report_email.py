@@ -16,6 +16,7 @@ TONES = {
     'attention': ('#fbf0de', '#8d641f', 'Needs you'),
     'uncertain': ('#fbe9eb', '#b73745', 'Verify first'),
     'neutral': ('#eaf0ff', '#3155d9', 'Waiting'),
+    'prepared': ('#eaf0ff', '#3155d9', 'Prepared'),
 }
 FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 LOCAL_HOSTS = {'localhost', 'localhost.localdomain', '0.0.0.0', '::1', '[::1]'}
