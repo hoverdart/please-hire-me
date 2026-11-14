@@ -44,10 +44,47 @@ def test_changed_schema_applies_once_and_preserves_existing_data(store,monkeypat
 def test_failed_schema_change_does_not_record_readiness(store,monkeypatch):
     from hireme import store as module
     original=store.db.execute('SELECT fingerprint FROM schema_metadata').fetchone()[0]
-    monkeypatch.setattr(module,'SCHEMA',module.SCHEMA+'\nINVALID SQL;')
+    monkeypatch.setattr(module,'SCHEMA',module.SCHEMA+'\nCREATE TABLE incomplete_migration(id INTEGER);\nINVALID SQL;')
     with pytest.raises(sqlite3.OperationalError):Store(store.root)
     assert store.db.execute('SELECT fingerprint FROM schema_metadata').fetchone()[0]==original
     assert store.facts()['full_name']['value']=='Test Person'
+    assert not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='incomplete_migration'").fetchone()
+
+
+def test_failed_first_initialization_leaves_no_partial_schema(tmp_path,monkeypatch):
+    from hireme import store as module
+    root=tmp_path/'private'
+    monkeypatch.setattr(module,'SCHEMA',module.SCHEMA+'\nINVALID SQL;')
+    with pytest.raises(sqlite3.OperationalError):Store(root)
+    with sqlite3.connect(root/'ledger.sqlite3') as observer:
+        assert not observer.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+
+
+def test_initial_schema_is_not_visible_before_config_succeeds(tmp_path,monkeypatch):
+    from hireme import store as module
+    root=tmp_path/'private'
+    def fail_config(settings):
+        with sqlite3.connect(root/'ledger.sqlite3') as observer:
+            assert not observer.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+        raise ValueError('Initial configuration failed')
+    monkeypatch.setattr(module,'config_json',fail_config)
+    with pytest.raises(ValueError,match='Initial configuration failed'):Store(root)
+    with sqlite3.connect(root/'ledger.sqlite3') as observer:
+        assert not observer.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+
+
+def test_config_failure_rolls_back_legacy_marker_upgrade(store,monkeypatch):
+    from hireme import store as module
+    facts=store.facts();settings=store.settings()
+    store.db.execute('DROP TABLE schema_metadata')
+    store.db.execute('CREATE TABLE schema_metadata (id INTEGER PRIMARY KEY,fingerprint TEXT NOT NULL)')
+    store.db.execute("INSERT INTO schema_metadata VALUES(1,'previous-version')")
+    def fail_config(settings):raise ValueError('Initial configuration failed')
+    monkeypatch.setattr(module,'config_json',fail_config)
+    with pytest.raises(ValueError,match='Initial configuration failed'):Store(store.root)
+    assert [row['name'] for row in store.db.execute('PRAGMA table_info(schema_metadata)')]==['id','fingerprint']
+    assert store.db.execute('SELECT fingerprint FROM schema_metadata').fetchone()[0]=='previous-version'
+    assert store.facts()==facts and store.settings()==settings
 
 
 def test_missing_config_retains_conservative_initialization(store):

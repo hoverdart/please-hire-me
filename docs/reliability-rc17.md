@@ -49,4 +49,6 @@ All six ATS scope choices can be selected together; duplicates and lookalike ATS
 
 Recovery preserves existing remote-draft uncertainty holds even when the applicant has excluded the job. Repeated recovery no longer increments their retry counters or changes their timestamps. A missing hold is rebuilt when the job already displays uncertainty; the draft is never retried.
 
+Schema initialization and upgrades commit their tables, indexes, initial configuration and readiness marker together. A failure rolls back the whole initialization, including an older marker upgrade. WAL and full synchronization remain enabled; batching avoids a separate disk synchronization for every schema statement on slower storage. Opening an already initialized ledger still needs no writer lock.
+
 A configured paused schedule exits successfully with zero attempts even when its rollout pin is stale. Dry-run commissioning cannot turn that scheduled stop into preparation, and a concurrent Resume cannot bypass rollout validation. Enabled runs and explicit preparation still require current evidence; incomplete setup remains an error. Reporting and feedback retain their independent controls.
