@@ -10,7 +10,7 @@ import pytest
 
 from hireme import reports
 from hireme.gmail import GmailClient, InvalidReportMessage
-from hireme.report_email import render_html, safe_link
+from hireme.report_email import render_html, safe_link, with_delivery_reference
 from hireme.reports import flush_reports, preview_report, queue_report, report_status, requeue_report
 from hireme.util import Blocked
 
@@ -274,6 +274,103 @@ def test_report_search_excludes_unsent_drafts(store):
     client = GmailClient(store, service)
     assert client.find_sent_report('<' + 'a' * 32 + '@please-hire-me.local>') is None
     assert service.search['labelIds'] == ['SENT'] and service.search['includeSpamTrash']
+
+
+def rewriting_mailbox():
+    """Gmail may replace Message-ID even after accepting a timed-out send."""
+    from tests.test_gmail import Service,Response
+    class MailboxService(Service):
+        timeout=True
+        def __init__(self):super().__init__('test@candidate.invalid',None);self.queries=[]
+        def send(self,**kwargs):
+            service=self
+            class Accepted:
+                def execute(self):
+                    service.sent.append(kwargs['body'])
+                    wire=email.message_from_bytes(base64.urlsafe_b64decode(kwargs['body']['raw']),policy=email.policy.default)
+                    service.original_id=str(wire['Message-ID'])
+                    service.reference=str(wire['X-HireMeMaybe-Report-ID'])
+                    service.message={'id':'rewritten-sent','labelIds':['SENT'],
+                        'payload':{'headers':[{'name':key,'value':str(value)} for key,value in wire.items()]}}
+                    for header in service.message['payload']['headers']:
+                        if header['name'].casefold()=='message-id':header['value']='<gmail-rewritten@mail.gmail.com>'
+                    if service.timeout:raise TimeoutError()
+                    return {'id':'rewritten-sent'}
+            return Accepted()
+        def list(self,**kwargs):
+            self.queries.append(kwargs)
+            found=self.message is not None and kwargs['q']=='"'+self.reference+'"'
+            return Response({'messages':[{'id':'rewritten-sent'}] if found else []})
+    return MailboxService()
+
+
+def test_real_mime_rewritten_by_gmail_reconciles_a_timeout_without_resending(store):
+    store.update_settings({'gmail_reports':True})
+    run(store)
+    preview=preview_report(store)
+    service=rewriting_mailbox()
+    client=GmailClient(store,service)
+    assert flush_reports(store,lambda unused:client)['uncertain']==1
+    wire=email.message_from_bytes(base64.urlsafe_b64decode(service.sent[0]['raw']),policy=email.policy.default)
+    from email.utils import parsedate_to_datetime
+    assert parsedate_to_datetime(wire['Date']).tzinfo is not None
+    assert wire.get_body(('plain',)).get_content().strip()==preview['text'].strip()
+    assert wire.get_body(('html',)).get_content().strip()==preview['html'].strip()
+    assert preview['text'].count('HireMeMaybe report reference: ')==1
+    assert preview['html'].count('HireMeMaybe report reference: ')==1
+    service.timeout=False
+    result=flush_reports(store,lambda unused:client)
+    assert result['sent']==0 and result['reconciled']['accepted']==1
+    assert len(service.sent)==1 and report_status(store)[0]['delivery']=='reconciled'
+    assert all(query['labelIds']==['SENT'] for query in service.queries)
+
+
+@pytest.mark.parametrize('change',['draft','not_sent','sender','recipient','missing_reference','wrong_reference','duplicate_sender'])
+def test_reference_search_alone_cannot_confirm_an_unrelated_or_unsent_message(store,change):
+    store.update_settings({'gmail_reports':True});run(store)
+    service=rewriting_mailbox();client=GmailClient(store,service)
+    flush_reports(store,lambda unused:client)
+    headers=service.message['payload']['headers']
+    if change=='draft':service.message['labelIds']=['SENT','DRAFT']
+    elif change=='not_sent':service.message['labelIds']=['INBOX']
+    elif change=='missing_reference':headers[:]=[header for header in headers if header['name'].casefold()!='x-hirememaybe-report-id']
+    elif change=='duplicate_sender':headers.append({'name':'From','value':'attacker@elsewhere.invalid'})
+    else:
+        name={'sender':'from','recipient':'to','wrong_reference':'x-hirememaybe-report-id'}[change]
+        for header in headers:
+            if header['name'].casefold()==name:header['value']='attacker@elsewhere.invalid'
+    result=flush_reports(store,lambda unused:client)
+    assert result['reconciled']['accepted']==0 and result['sent']==0
+    assert store.db.execute('SELECT state FROM report_outbox').fetchone()[0]=='uncertain'
+    assert len(service.sent)==1
+
+
+def test_legacy_exact_message_id_still_requires_owner_bound_sent_metadata(store):
+    from tests.test_gmail import Service,Response
+    identifier='<'+'a'*32+'@please-hire-me.local>'
+    message={'labelIds':['SENT'],'payload':{'headers':[
+        {'name':'Message-ID','value':identifier},{'name':'From','value':'test@candidate.invalid'},
+        {'name':'To','value':'test@candidate.invalid'}]}}
+    client=GmailClient(store,Service('test@candidate.invalid',message))
+    assert client.find_sent_report(identifier)=='mail-one'
+    message['labelIds']=['DRAFT']
+    assert client.find_sent_report(identifier) is None
+
+
+@pytest.mark.parametrize('width',[320,1280])
+def test_delivery_reference_remains_visible_without_horizontal_overflow(width):
+    from playwright.sync_api import sync_playwright
+    html=render_html([{'summary':{},'run':{'id':'verification'},'groups':[]}],'Verification')
+    identifier='<'+'a'*32+'@please-hire-me.local>'
+    body,html=with_delivery_reference('Report body',html,identifier)
+    assert with_delivery_reference(body,html,identifier)==(body,html)
+    with sync_playwright() as p:
+        browser=p.chromium.launch()
+        try:
+            page=browser.new_page(viewport={'width':width,'height':1000});page.set_content(html)
+            assert page.get_by_text('HireMeMaybe report reference:',exact=False).is_visible()
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        finally:browser.close()
 
 
 def test_mailbox_lookup_failure_leaves_the_send_uncertain(store, mailbox, monkeypatch):

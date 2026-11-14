@@ -465,6 +465,8 @@ def flush_reports(store, client_factory=GmailClient, limit=25):
         subject, body = _combined(store, rows)
         html = render_report_html(store, rows, subject)
         message_id = rows[-1]['message_id']
+        from .report_email import with_delivery_reference
+        body,html=with_delivery_reference(body,html,message_id)
         with store.transaction():
             store.db.execute(f"UPDATE report_outbox SET state='sending',attempts=attempts+1,last_error=NULL WHERE id IN ({marks})", ids)
             # The identifier actually placed on the wire, for later mailbox reconciliation.
@@ -555,4 +557,8 @@ def preview_report(store, report_id=None):
     row=(store.db.execute('SELECT * FROM report_outbox WHERE id=?',(report_id,)).fetchone() if report_id else
          store.db.execute('SELECT * FROM report_outbox ORDER BY created DESC LIMIT 1').fetchone())
     if not row:raise ValueError('No saved report to preview')
-    return {'id':row['id'],'subject':row['subject'],'text':row['body'],'html':render_report_html(store,[row],row['subject'])}
+    from .report_email import with_delivery_reference
+    dispatch=store.db.execute('SELECT message_id FROM report_dispatch WHERE report_id=?',(row['id'],)).fetchone()
+    body,html=with_delivery_reference(row['body'],render_report_html(store,[row],row['subject']),
+                                      dispatch['message_id'] if dispatch else row['message_id'])
+    return {'id':row['id'],'subject':row['subject'],'text':body,'html':html}
