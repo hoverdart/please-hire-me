@@ -27,7 +27,13 @@ def _recorded_outcome(store, job_id, fallback):
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
     with worker_lock(store.root):
         from .rollout import check as check_rollout
-        live=check_rollout(store,live=live,job_ids=job_ids)
+        requested_live=live
+        paused_at_start=live and not store.settings()['live_enabled']
+        # A normal paused schedule is a successful no-op, including after an
+        # update invalidates its rollout pin. Explicit preparation and every
+        # enabled run still need the current rollout checks.
+        if not paused_at_start:
+            live=check_rollout(store,live=live,job_ids=job_ids)
         store.recover()
         from .reports import recover_reports
         recover_reports(store)
@@ -43,6 +49,11 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         store.prior_mail_check_limit=max_attempts
         store.db.execute("INSERT INTO runs(id,started,status,detail) VALUES(?,?,'running',?)",(rid,now(),json.dumps({'mode':'live' if live else 'prepare'})))
         try:
+            if paused_at_start or requested_live and not s['live_enabled']:
+                missing=store.missing_setup()
+                if missing or not s['onboarding_complete']:
+                    raise Blocked('setup_incomplete',', '.join(missing))
+                raise Blocked('paused')
             from .job_holds import upgrade_information_holds
             upgrade_information_holds(store)
             from .workday_commission_state import bind_run
@@ -51,7 +62,6 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             if store.missing_setup() or not s['onboarding_complete']:
                 raise Blocked('setup_incomplete',', '.join(store.missing_setup()))
             store.checkpoint()
-            if live and not s['live_enabled']:raise Blocked('paused')
             from .storage import require_space
             try:require_space(store.root)
             except ValueError:raise Blocked('storage_low','Free disk space before starting another application batch') from None
