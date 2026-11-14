@@ -27,6 +27,10 @@ def retry_dom_read(page,read,*,checkpoint=None,timeout=5):
         except Error as error:
             transient=any(message in str(error) for message in (
                 'Execution context was destroyed','Cannot find context with specified id'))
+            if getattr(page,'_retry_detached_reads',False) is True:
+                transient=transient or any(message in str(error) for message in (
+                    'Element is not attached to the DOM','Unable to adopt element handle from a different document',
+                    'Frame was detached','Frame has been detached'))
             if not transient or page.is_closed() or time.monotonic()>=deadline:raise
             page.wait_for_timeout(50)
 

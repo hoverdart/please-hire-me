@@ -108,7 +108,7 @@ def application_identity(url: str):
             if (len(boards) == len(ids) == 1 and re.fullmatch(r'[A-Za-z0-9_-]+', boards[0])
                     and re.fullmatch(r'\d+', ids[0])):
                 return (host, boards[0], ids[0])
-    if host.endswith('.icims.com'):
+    if host.endswith('.icims.com') or host == 'careers.amd.com':
         from .icims import identity
         found = identity(normalized)
         if found: return found

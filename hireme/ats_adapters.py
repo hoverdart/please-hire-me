@@ -212,14 +212,19 @@ class WorkdayPostingAdapter(SingleStepAdapter):
 class ICIMSPostingAdapter(SingleStepAdapter):
     """Open the requisition's own content document instead of its frame wrapper."""
     def navigation(self,job,*,checkpoint=None,deadline=None):
-        from .icims import frame_url,identity
-        if not identity(job['url']):
+        from urllib.parse import urlsplit
+        from .icims import frame_url,identity,posting_url
+        hosts={urlsplit(job['url']).hostname,urlsplit(posting_url(job['url'])).hostname}
+        if not identity(job['url']) or job['host'] not in hosts:
             raise Blocked('icims_posting_unrecognized','This iCIMS link is not a recognized job posting address. Open it and apply manually.')
         return frame_url(job['url']),None
 
 
 def adapter_for(job):
     if job['host'].casefold().endswith('.icims.com'):return ICIMSPostingAdapter()
+    if job['host']=='careers.amd.com':
+        from .icims import posting_url
+        if posting_url(job['url'])!=job['url']:return ICIMSPostingAdapter()
     if 'greenhouse.io' in job['host']:return GreenhouseAdapter()
     if job['host'] in {'jobs.lever.co','jobs.eu.lever.co'}:return LeverPostingAdapter()
     if job['host'].endswith('.myworkdayjobs.com'):return WorkdayPostingAdapter()

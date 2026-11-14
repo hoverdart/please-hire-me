@@ -5,6 +5,21 @@ from hireme.store import Store
 from hireme.util import digest
 
 
+def test_store_fixture_copies_cannot_change_session_seed(store,synthetic_applicant_seed):
+    before={path.relative_to(synthetic_applicant_seed):path.read_bytes()
+            for path in synthetic_applicant_seed.rglob('*') if path.is_file()}
+    store.put_facts({'full_name':'Changed in one test'})
+    store.update_settings({'live_enabled':False})
+    document=store.db.execute('SELECT filename FROM documents').fetchone()[0]
+    (store.root/'documents'/document).write_bytes(b'%PDF-local replacement')
+    assert store.facts()['full_name']['value']=='Changed in one test'
+    assert not store.settings()['live_enabled']
+    assert store.db.execute('PRAGMA journal_mode').fetchone()[0]=='wal'
+    assert store.db.execute('PRAGMA synchronous').fetchone()[0]==2
+    assert {path.relative_to(synthetic_applicant_seed):path.read_bytes()
+            for path in synthetic_applicant_seed.rglob('*') if path.is_file()}==before
+
+
 def test_initialized_store_opens_without_waiting_for_active_writer(store):
     writer=sqlite3.connect(store.path,isolation_level=None)
     writer.execute('BEGIN IMMEDIATE')

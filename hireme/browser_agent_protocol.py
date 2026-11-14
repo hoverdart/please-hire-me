@@ -35,11 +35,14 @@ def request_identity(request):
 def guard_pending(store,job):
     """A lost UI save blocks the job and company before another browser opens."""
     active=getattr(store,'browser_agent_session',None)
-    rows=store.db.execute("""SELECT DISTINCT d.job_id,d.session,d.state,j.company FROM draft_operations d
+    from .util import application_identity
+    identity=application_identity(job['url'])
+    rows=store.db.execute("""SELECT DISTINCT d.job_id,d.session,d.state,j.company,j.url FROM draft_operations d
         JOIN jobs j ON j.id=d.job_id WHERE d.operation LIKE 'ui:%' AND d.state IN ('intent','unknown')""")
     for row in rows:
         if row['job_id']==job['id'] and row['session']==active and row['state']=='intent':continue
-        if row['job_id']==job['id'] or store.company(row['company'])==store.company(job['company']):
+        if (row['job_id']==job['id'] or application_identity(row['url'])==identity
+                or store.company(row['company'])==store.company(job['company'])):
             raise Blocked('browser_draft_uncertain','An interrupted employer UI operation needs reconciliation before another application')
 
 
@@ -178,10 +181,11 @@ def unrelated_write(request):
 def validate_browser_package(store,job,package):
     metadata=package.get('browser_agent')
     if not metadata:return
+    from .icims import posting_url
     if (not isinstance(metadata,dict) or metadata.get('version')!=1
             or not re.fullmatch(r'[a-f0-9]{64}',str(metadata.get('profile_binding','')))
             or not isinstance(metadata.get('last_url'),str)
-            or origin(metadata['last_url'])!=origin(job['url'])
+            or origin(metadata['last_url'])!=origin(posting_url(job['url']))
             or type(metadata.get('complete')) is not bool):
         raise Blocked('browser_package_invalid')
     completed=metadata.get('completed_steps')

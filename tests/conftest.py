@@ -1,27 +1,48 @@
 import hashlib
 import os
+import shutil
 import pytest
 from hireme.store import Store
 from hireme.util import digest
 
+class OfflineProvider:
+    def __init__(self,*args,**kwargs):pass
+    def choose_answer(self,*args,**kwargs):return None
+    def choose_sentences(self,*args,**kwargs):return []
+    def match_field(self,*args,**kwargs):return {'fact_key':None,'template_id':None}
+    def map_option(self,*args,**kwargs):return None
+    def plan_form(self,*args,**kwargs):return {'answers':[]}
+
+
+@pytest.fixture(scope='session')
+def synthetic_applicant_seed(tmp_path_factory):
+    """Build common data once; every test gets its own closed-database copy."""
+    root=tmp_path_factory.mktemp('synthetic-applicant')/'private'
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr('hireme.provider.ManagedProvider',OfflineProvider)
+        s=Store(root)
+        try:
+            s.put_facts({'full_name':'Test Person','first_name':'Test','last_name':'Person','email':'test@candidate.invalid','phone':'5551234567','location':'Berkeley, CA','graduation':'2028-05','work_authorized_us':'Yes','needs_sponsorship':'No','us_person':'Yes','professional_years':'1','skills':'Python, TypeScript'})
+            docs=s.root/'documents';docs.mkdir();data=b'%PDF-1.4\nsynthetic test document';h=hashlib.sha256(data).hexdigest();(docs/(h+'.pdf')).write_bytes(data)
+            s.db.execute('INSERT INTO documents VALUES(?,?,?)',('resume',h,h+'.pdf'))
+            s.update_settings({'onboarding_complete':True,'live_enabled':True,
+                               'browser_channel':os.environ.get('HIREME_TEST_BROWSER_CHANNEL','chromium'),'headless':True})
+        finally:
+            # Closing checkpoints the WAL before any test copies the seed.
+            s.close()
+    return root
+
+
 @pytest.fixture
-def store(tmp_path,monkeypatch):
-    class OfflineProvider:
-        def __init__(self,*args,**kwargs):pass
-        def choose_answer(self,*args,**kwargs):return None
-        def choose_sentences(self,*args,**kwargs):return []
-        def match_field(self,*args,**kwargs):return {'fact_key':None,'template_id':None}
-        def map_option(self,*args,**kwargs):return None
-        def plan_form(self,*args,**kwargs):return {'answers':[]}
+def store(tmp_path,monkeypatch,synthetic_applicant_seed):
     monkeypatch.setattr('hireme.provider.ManagedProvider',OfflineProvider)
-    s=Store(tmp_path/'private')
-    s.put_facts({'full_name':'Test Person','first_name':'Test','last_name':'Person','email':'test@candidate.invalid','phone':'5551234567','location':'Berkeley, CA','graduation':'2028-05','work_authorized_us':'Yes','needs_sponsorship':'No','us_person':'Yes','professional_years':'1','skills':'Python, TypeScript'})
-    docs=s.root/'documents';docs.mkdir();data=b'%PDF-1.4\nsynthetic test document';h=hashlib.sha256(data).hexdigest();(docs/(h+'.pdf')).write_bytes(data)
-    s.db.execute('INSERT INTO documents VALUES(?,?,?)',('resume',h,h+'.pdf'))
-    s.update_settings({'onboarding_complete':True,'live_enabled':True,
-                       'browser_channel':os.environ.get('HIREME_TEST_BROWSER_CHANNEL','chromium'),'headless':True})
-    yield s
-    s.close()
+    # Copy bytes, never hard links: facts, settings, documents and SQLite files
+    # must remain independent even when tests overwrite or migrate them.
+    root=tmp_path/'private'
+    shutil.copytree(synthetic_applicant_seed,root)
+    s=Store(root)
+    try:yield s
+    finally:s.close()
 
 @pytest.fixture
 def job(store):

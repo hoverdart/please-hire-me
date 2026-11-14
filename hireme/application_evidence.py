@@ -28,6 +28,9 @@ def ats_for(url):
     if host=='greenhouse.io' or host.endswith('.greenhouse.io'):return 'greenhouse'
     if host.endswith('.myworkdayjobs.com'):return 'workday'
     if host.endswith('.icims.com'):return 'icims'
+    if host=='careers.amd.com':
+        from .icims import identity
+        if identity(url):return 'icims'
     return 'other'
 
 
