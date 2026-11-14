@@ -237,14 +237,18 @@ def recover_drafts(store):
         WHERE NOT EXISTS(SELECT 1 FROM application_records a WHERE a.job_id=j.id AND a.state!='prepared') AND
           (EXISTS(SELECT 1 FROM remote_draft_steps d WHERE d.job_id=j.id AND d.state='unknown')
            OR EXISTS(SELECT 1 FROM workday_drafts d WHERE d.job_id=j.id AND d.state='unknown'))"""))
-    from .job_holds import hold
+    from .job_holds import category, hold
     for row in rows:
         ashby=store.db.execute("SELECT 1 FROM remote_draft_steps WHERE job_id=? AND step LIKE 'ashby:%' AND state='unknown'",(row['id'],)).fetchone()
         reason='ashby_draft_uncertain' if ashby else 'remote_draft_uncertain'
-        if row['status']=='blocked' and row['reason'].startswith(reason):
-            continue
         job=json.loads(row['payload'])
         detail=('The Ashby guest draft may have reached the employer; automatic retry and owner-bound readback are unavailable'
                 if ashby else 'Read back the existing employer draft before any further write')
-        store.block(row['id'],reason,detail)
-        hold(store,job,reason,detail,'recovery')
+        # A local exclusion never resolves the remote write. Keep its existing
+        # uncertainty fence without counting another retry on every recovery.
+        excluded=store.db.execute('SELECT 1 FROM job_decisions WHERE job_id=?',(row['id'],)).fetchone()
+        if not excluded and not (row['status']=='blocked' and row['reason'].startswith(reason)):
+            store.block(row['id'],reason,detail)
+        previous=store.db.execute('SELECT category,reason,retry_at FROM job_holds WHERE job_id=?',(row['id'],)).fetchone()
+        if not previous or previous['reason']!=reason or previous['category']!=category(reason) or previous['retry_at'] is not None:
+            hold(store,job,reason,detail,'recovery')

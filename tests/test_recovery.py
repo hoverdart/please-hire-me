@@ -59,3 +59,37 @@ def test_interrupted_draft_is_visible_and_recovery_never_retries_it(store, job, 
     assert recover_interrupted(store)['unfinished_drafts']==1
     assert store.db.execute("SELECT state FROM remote_draft_steps WHERE id='draft-intent'").fetchone()[0]=='unknown'
     assert not worker_status(store)['recovery_needed'] and not ready(store,job,at=10**9)
+
+
+@pytest.mark.parametrize('step,reason',[('ashby:attempt','ashby_draft_uncertain'),('application:fixture','remote_draft_uncertain')])
+@pytest.mark.parametrize('decision',['skipped','manually_applied'])
+def test_recovery_preserves_existing_draft_holds_and_exclusions_without_counting_retries(store,job,package,step,reason,decision):
+    from hireme.job_holds import hold,ready
+    aid=store.prepare(job,package)
+    store.db.execute('INSERT INTO remote_draft_steps VALUES(?,?,?,?,?,?,?,?,?,?)',
+        ('draft-unknown',job['id'],job['host'],step,'hash','sources','unknown','2020','2020',''))
+    store.block(job['id'],reason)
+    hold(store,job,reason,stage='recovery')
+    store.decide_job(job['id'],decision)
+    before=dict(store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone())
+    job_before=dict(store.db.execute('SELECT * FROM jobs WHERE id=?',(job['id'],)).fetchone())
+    app_before=store.application_record(aid)
+    for _ in range(3):store.recover()
+    assert dict(store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone())==before
+    assert dict(store.db.execute('SELECT * FROM jobs WHERE id=?',(job['id'],)).fetchone())==job_before
+    assert store.application_record(aid)==app_before
+    assert store.db.execute('SELECT state FROM remote_draft_steps').fetchone()[0]=='unknown'
+    assert not ready(store,job)
+
+
+@pytest.mark.parametrize('step,reason',[('ashby:attempt','ashby_draft_uncertain'),('application:fixture','remote_draft_uncertain')])
+def test_recovery_repairs_a_missing_hold_even_when_the_job_already_shows_uncertainty(store,job,step,reason):
+    store.db.execute('INSERT INTO remote_draft_steps VALUES(?,?,?,?,?,?,?,?,?,?)',
+        ('draft-unknown',job['id'],job['host'],step,'hash','sources','unknown','2020','2020',''))
+    store.block(job['id'],reason)
+    assert not store.db.execute('SELECT 1 FROM job_holds').fetchone()
+    store.recover()
+    saved=dict(store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone())
+    assert saved['reason']==reason and saved['retry_at'] is None
+    store.recover()
+    assert dict(store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone())==saved

@@ -27,6 +27,77 @@ def test_controlled_run_and_code_pin(store,job,monkeypatch):
     with pytest.raises(Blocked,match='rollout_stale'):check(store,live=True,job_ids=[job['id']])
 
 
+@pytest.mark.parametrize('stage',['dry_run','controlled','restricted'])
+def test_paused_scheduled_run_does_not_require_current_rollout_authority(store,job,monkeypatch,stage):
+    import json
+    store.update_settings({'allowed_application_ats':['lever','ashby'],'rollout_stage':stage,'live_enabled':False})
+    def forbidden(*args,**kwargs):pytest.fail('A paused schedule tried discovery, inference or browser work')
+    monkeypatch.setattr('hireme.worker.sweep_lists',forbidden)
+    monkeypatch.setattr('hireme.worker.sweep_portals',forbidden)
+    monkeypatch.setattr('hireme.worker.sweep_boards',forbidden)
+    with pytest.raises(Blocked,match='^paused$'):
+        cycle(store,Path('.'),browser_factory=forbidden)
+    run=store.db.execute('SELECT * FROM runs ORDER BY started DESC LIMIT 1').fetchone()
+    assert run['status']=='paused' and run['submitted']==0
+    assert json.loads(run['detail'])['attempts']==0
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='rollout_commissioned'").fetchone()
+    # Pausing never repairs or waives the evidence required for a live run.
+    store.update_settings({'live_enabled':True})
+    with pytest.raises(Blocked,match='rollout_stale'):
+        cycle(store,Path('.'),browser_factory=forbidden)
+
+
+def test_valid_dry_run_cannot_turn_a_paused_scheduled_run_into_preparation(store,job):
+    store.update_settings({'allowed_application_ats':['lever','ashby']})
+    commission(store,'dry_run');store.update_settings({'live_enabled':False})
+    class Forbidden:
+        def __init__(self,*args):pytest.fail('A normal paused schedule must not prepare applications')
+    with pytest.raises(Blocked,match='^paused$'):
+        cycle(store,Path('.'),discover=False,browser_factory=Forbidden)
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+    assert not store.db.execute('SELECT 1 FROM model_requests').fetchone()
+
+
+def test_explicit_preparation_while_paused_still_requires_a_current_rollout_pin(store,job,monkeypatch):
+    store.update_settings({'allowed_application_ats':['lever','ashby']})
+    commission(store,'dry_run');store.update_settings({'live_enabled':False})
+    class Reader:
+        def __init__(self,*args):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def apply(self,item,live=True):assert live is False;return 'prepared'
+    result=cycle(store,Path('.'),discover=False,live=False,limit=1,browser_factory=Reader)
+    assert result['mode']=='prepare' and result['prepared']==1 and result['confirmed']==0
+    monkeypatch.setattr('hireme.rollout.code_fingerprint',lambda:'changed')
+    with pytest.raises(Blocked,match='rollout_stale'):
+        cycle(store,Path('.'),discover=False,live=False,limit=1,browser_factory=Reader)
+
+
+def test_paused_cli_returns_success_even_when_its_rollout_pin_is_stale(store,capsys):
+    from hireme.cli import main
+    store.update_settings({'allowed_application_ats':['lever','ashby'],'rollout_stage':'dry_run','live_enabled':False})
+    assert main(['--data-dir',str(store.root),'run','--no-discovery'])==0
+    assert capsys.readouterr().err.strip()=='paused'
+
+
+def test_resume_during_paused_start_cannot_bypass_a_stale_rollout_pin(store,monkeypatch):
+    store.update_settings({'allowed_application_ats':['lever','ashby'],'rollout_stage':'controlled','live_enabled':False})
+    recover=store.recover
+    def resume_during_recovery():
+        recover();store.update_settings({'live_enabled':True})
+    monkeypatch.setattr(store,'recover',resume_during_recovery)
+    class Forbidden:
+        def __init__(self,*args):pytest.fail('Resuming raced past rollout validation')
+    with pytest.raises(Blocked,match='^paused$'):
+        cycle(store,Path('.'),discover=False,browser_factory=Forbidden)
+    assert store.settings()['live_enabled'] is True
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+    with pytest.raises(Blocked,match='rollout_stale'):
+        cycle(store,Path('.'),discover=False,browser_factory=Forbidden)
+
+
 def test_restricted_rollout_rejects_local_confirmed_flag_without_native_proof(store,job,package):
     store.update_settings({'allowed_application_ats':['lever','ashby']})
     aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'confirmed','Synthetic button click')

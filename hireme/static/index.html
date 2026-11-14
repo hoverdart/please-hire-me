@@ -968,8 +968,8 @@
             </p>
           </div>
           <div class="section" id="history-panel">
-            <h2>Education and employment</h2>
-            <p class="help">Confirm each school and role separately so applications and tailored resumes can use the right entry. Put each complete responsibility or accomplishment on its own line under its original employer. Enter dates you know as a month and year; blank fields remain unknown. Your resume and notes do not fill these records automatically.</p>
+            <h2>Education, employment and projects</h2>
+            <p class="help">Confirm each school, role and project separately so applications and tailored resumes can use the right entry. Put each complete responsibility or accomplishment on its own line under its original employer or project. Enter dates you know as a month and year; blank fields remain unknown. Projects supply resumes and writing, not employment answers. Your resume and notes do not fill these records automatically.</p>
             <div id="history-list" aria-live="polite"></div>
             <details id="history-import-panel" class="section">
               <summary>Import history from your resume</summary>
@@ -980,13 +980,13 @@
               <details><summary>Choose lines from the full resume</summary><pre id="history-import-source" class="resume-source" tabindex="0"></pre></details>
               <form id="history-import-form" hidden>
                 <div class="form-grid">
-                  <label>Entry type<select name="kind"><option value="employment">Employment</option><option value="education">Education</option></select></label>
+                  <label>Entry type<select name="kind"><option value="employment">Employment</option><option value="education">Education</option><option value="project">Project</option></select></label>
                   <label>First source line<input name="start_line" type="number" min="1" required /></label>
                   <label>Last source line<input name="end_line" type="number" min="1" required /></label>
                   <button id="history-import-select" type="button" class="secondary">Propose fields from these lines</button>
                 </div>
                 <h3>Original excerpt</h3><pre id="history-import-excerpt" class="resume-source" tabindex="0"></pre>
-                <p class="help">These are proposals. Check employer, role, dates and every accomplishment against your own records. Put each complete accomplishment on its own line; you can correct PDF line wrapping here.</p>
+                <p class="help">These are proposals. Check the entry name, role, dates, links and every accomplishment against your own records. Put each complete accomplishment on its own line; you can correct PDF line wrapping here.</p>
                 <div id="history-import-fields" class="form-grid"></div>
                 <p id="history-import-duplicates" class="help"></p>
                 <label class="confirmation"><input name="confirmed" type="checkbox" required /> I reviewed this excerpt and confirm the entry and my corrections are accurate.</label>

@@ -221,15 +221,18 @@ class Store:
             fingerprint=digest(SCHEMA)
             if (not metadata or metadata['fingerprint']!=fingerprint
                     or metadata['schema_version']!=self.db.execute('PRAGMA schema_version').fetchone()[0]):
-                # Record readiness only after every idempotent schema statement
-                # and the initial config succeed. Ordinary readers need no DDL
-                # or INSERT lock while the worker is writing.
-                self.db.executescript(SCHEMA)
+                # Schema, seed config and readiness must commit together. Start
+                # inside executescript: it commits a transaction opened before
+                # the call. One FULL-sync commit also avoids syncing every DDL
+                # statement separately on slower disks. Closing on failure
+                # rolls back the whole initialization, including schema changes.
+                self.db.executescript('BEGIN IMMEDIATE;\n'+SCHEMA)
                 if 'schema_version' not in {row['name'] for row in self.db.execute('PRAGMA table_info(schema_metadata)')}:
                     self.db.execute('ALTER TABLE schema_metadata ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0')
                 self.db.execute("INSERT OR IGNORE INTO config VALUES (1, ?)", (config_json(DEFAULTS),))
                 self.db.execute('INSERT OR REPLACE INTO schema_metadata(id,fingerprint,schema_version) VALUES(1,?,?)',
                                 (fingerprint,self.db.execute('PRAGMA schema_version').fetchone()[0]))
+                self.db.execute('COMMIT')
             elif not self.db.execute('SELECT 1 FROM config WHERE id=1').fetchone():
                 self.db.execute('INSERT OR IGNORE INTO config VALUES(1,?)',(config_json(DEFAULTS),))
             os.chmod(self.path, 0o600)

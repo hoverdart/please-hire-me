@@ -6,7 +6,7 @@ import json
 import re
 import time
 from email.message import EmailMessage
-from email.utils import getaddresses, parseaddr
+from email.utils import formatdate, getaddresses, parseaddr
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -233,9 +233,34 @@ class GmailClient:
         """
         if not re.fullmatch(r'<[0-9a-f]{32}@please-hire-me\.local>', message_id or ''):
             raise ValueError('Invalid report identifier')
-        found = self.service.users().messages().list(userId='me', q='rfc822msgid:' + message_id[1:-1],
-                                                     labelIds=['SENT'], includeSpamTrash=True, maxResults=2).execute().get('messages', [])
-        return found[0]['id'] if found else None
+        from .report_email import report_reference
+        reference=report_reference(message_id)
+        messages=self.service.users().messages()
+        seen=set()
+        # Gmail can replace an application's Message-ID. A locally generated
+        # reference also survives in the body and a dedicated header. Search
+        # is only a candidate lookup; inspect the authenticated Sent metadata.
+        for query in ('rfc822msgid:'+message_id[1:-1], '"'+reference+'"'):
+            found=messages.list(userId='me',q=query,labelIds=['SENT'],includeSpamTrash=True,maxResults=2).execute().get('messages',[])
+            for candidate in found:
+                identity=candidate.get('id')
+                if not isinstance(identity,str) or not identity.strip() or identity in seen:continue
+                seen.add(identity)
+                item=messages.get(userId='me',id=identity,format='metadata',
+                    metadataHeaders=['Message-ID','X-HireMeMaybe-Report-ID','From','To']).execute()
+                labels=item.get('labelIds',[])
+                if 'SENT' not in labels or 'DRAFT' in labels:continue
+                headers={}
+                for header in item.get('payload',{}).get('headers',[]):
+                    headers.setdefault(header.get('name','').casefold(),[]).append(header.get('value',''))
+                def single(name):
+                    values=headers.get(name,[])
+                    return values[0].strip() if len(values)==1 and isinstance(values[0],str) else ''
+                if any([address.casefold() for _,address in getaddresses([single(name)])]!=[self.email] for name in ('from','to')):
+                    continue
+                if single('message-id')==message_id or single('x-hirememaybe-report-id')==reference:
+                    return identity
+        return None
 
     def send_report(self, subject, body, message_id, html=None):
         if hasattr(self,'credentials') and not has_granted_scopes(self.credentials,SEND_SCOPES):
@@ -245,11 +270,16 @@ class GmailClient:
         if not re.fullmatch(r'<[A-Za-z0-9._-]{1,120}@[A-Za-z0-9.-]{1,120}>', message_id or ''):
             raise InvalidReportMessage('Invalid report identifier')
         try:
+            from .report_email import report_reference,with_delivery_reference
+            body,html=with_delivery_reference(body,html,message_id)
             message = EmailMessage()
             message['To'] = self.email
             message['From'] = self.email
             message['Subject'] = subject
             message['Message-ID'] = message_id
+            message['Date'] = formatdate(usegmt=True)
+            reference=report_reference(message_id)
+            if reference:message['X-HireMeMaybe-Report-ID']=reference
             message.set_content(body)
             if html:
                 # The plain part stays first; clients without HTML show it unchanged.

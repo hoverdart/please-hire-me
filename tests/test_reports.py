@@ -121,7 +121,9 @@ def test_post_click_error_keeps_durable_outcome_and_never_invites_reapplication(
     assert json.loads(event[0])['outcome']==expected
     assert result['outcomes']=={expected:1} and result['confirmed']==int(state=='confirmed')
     body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
-    assert ('Applied successfully' if state=='confirmed' else 'Other outcomes — review before retrying') in body
+    assert ('Applied successfully' if state=='confirmed' else
+            'Not submitted — review the saved result' if state=='not_submitted' else
+            'Other outcomes — review before retrying') in body
     assert 'Blocked — review or apply manually' not in body
     if expected in {'unknown','awaiting_verification'}:
         assert ('Submission outcome is uncertain.' if expected=='unknown' else 'Email verification is pending.') in body

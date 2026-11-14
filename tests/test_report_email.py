@@ -10,7 +10,7 @@ import pytest
 
 from hireme import reports
 from hireme.gmail import GmailClient, InvalidReportMessage
-from hireme.report_email import render_html, safe_link
+from hireme.report_email import render_html, safe_link, with_delivery_reference
 from hireme.reports import flush_reports, preview_report, queue_report, report_status, requeue_report
 from hireme.util import Blocked
 
@@ -115,6 +115,38 @@ def test_report_separates_confirmed_from_uncertain_and_blocked(store, job, packa
     text = preview_report(store)['text']
     for company in ('Confirmed Co', 'Unknown Co', 'Blocked Co'):
         assert company in text
+
+
+def test_known_unsent_and_prepared_results_are_separate_from_uncertain_applications(store,job,package):
+    from hireme.util import digest
+    for outcome in ('prepared','not_submitted','unknown','awaiting_verification','blocked'):
+        url=job['url']+'-'+outcome
+        item={**job,'id':digest(url),'url':url,'company':outcome+' Co'}
+        store.upsert_job(item)
+        if outcome!='blocked':
+            aid=store.prepare(item,{**package,'job_id':item['id'],'url':url})
+            if outcome!='prepared':
+                store.begin_submit(aid);store.finish(aid,outcome,'Synthetic result')
+        store.event('application_finished',item['id'],{'run_id':'run-one','outcome':outcome})
+    before=[dict(row) for row in store.db.execute('SELECT * FROM application_records ORDER BY id')]
+    run(store,detail='{"attempts":5}')
+    model=json.loads(store.db.execute('SELECT model FROM report_models').fetchone()[0])
+    assert model['summary']=={'confirmed':0,'human':2,'unconfirmed':2}
+    groups={group['heading']:group for group in model['groups'] if group['items']}
+    assert [item['company'] for item in groups['Other outcomes — review before retrying']['items']]==[
+        'unknown Co','awaiting_verification Co']
+    prepared=groups['Prepared locally — nothing submitted']
+    assert prepared['tone']=='prepared' and prepared['items'][0]['company']=='prepared Co'
+    refused=groups['Not submitted — review the saved result']
+    assert refused['tone']=='attention' and refused['items'][0]['company']=='not_submitted Co'
+    assert refused['items'][0]['status']=='Not submitted.'
+    preview=preview_report(store)
+    for body in (preview['text'],preview['html']):
+        assert 'Prepared locally — nothing submitted' in body
+        assert 'Not submitted — review the saved result' in body
+        assert 'Email verification is pending.' in body
+    assert 'Human interventions: 2\nUnconfirmed results to verify: 2' in preview['text']
+    assert [dict(row) for row in store.db.execute('SELECT * FROM application_records ORDER BY id')]==before
 
 
 def test_gmail_message_is_multipart_with_plain_text_first_and_injection_refused(store):
@@ -244,6 +276,103 @@ def test_report_search_excludes_unsent_drafts(store):
     assert service.search['labelIds'] == ['SENT'] and service.search['includeSpamTrash']
 
 
+def rewriting_mailbox():
+    """Gmail may replace Message-ID even after accepting a timed-out send."""
+    from tests.test_gmail import Service,Response
+    class MailboxService(Service):
+        timeout=True
+        def __init__(self):super().__init__('test@candidate.invalid',None);self.queries=[]
+        def send(self,**kwargs):
+            service=self
+            class Accepted:
+                def execute(self):
+                    service.sent.append(kwargs['body'])
+                    wire=email.message_from_bytes(base64.urlsafe_b64decode(kwargs['body']['raw']),policy=email.policy.default)
+                    service.original_id=str(wire['Message-ID'])
+                    service.reference=str(wire['X-HireMeMaybe-Report-ID'])
+                    service.message={'id':'rewritten-sent','labelIds':['SENT'],
+                        'payload':{'headers':[{'name':key,'value':str(value)} for key,value in wire.items()]}}
+                    for header in service.message['payload']['headers']:
+                        if header['name'].casefold()=='message-id':header['value']='<gmail-rewritten@mail.gmail.com>'
+                    if service.timeout:raise TimeoutError()
+                    return {'id':'rewritten-sent'}
+            return Accepted()
+        def list(self,**kwargs):
+            self.queries.append(kwargs)
+            found=self.message is not None and kwargs['q']=='"'+self.reference+'"'
+            return Response({'messages':[{'id':'rewritten-sent'}] if found else []})
+    return MailboxService()
+
+
+def test_real_mime_rewritten_by_gmail_reconciles_a_timeout_without_resending(store):
+    store.update_settings({'gmail_reports':True})
+    run(store)
+    preview=preview_report(store)
+    service=rewriting_mailbox()
+    client=GmailClient(store,service)
+    assert flush_reports(store,lambda unused:client)['uncertain']==1
+    wire=email.message_from_bytes(base64.urlsafe_b64decode(service.sent[0]['raw']),policy=email.policy.default)
+    from email.utils import parsedate_to_datetime
+    assert parsedate_to_datetime(wire['Date']).tzinfo is not None
+    assert wire.get_body(('plain',)).get_content().strip()==preview['text'].strip()
+    assert wire.get_body(('html',)).get_content().strip()==preview['html'].strip()
+    assert preview['text'].count('HireMeMaybe report reference: ')==1
+    assert preview['html'].count('HireMeMaybe report reference: ')==1
+    service.timeout=False
+    result=flush_reports(store,lambda unused:client)
+    assert result['sent']==0 and result['reconciled']['accepted']==1
+    assert len(service.sent)==1 and report_status(store)[0]['delivery']=='reconciled'
+    assert all(query['labelIds']==['SENT'] for query in service.queries)
+
+
+@pytest.mark.parametrize('change',['draft','not_sent','sender','recipient','missing_reference','wrong_reference','duplicate_sender'])
+def test_reference_search_alone_cannot_confirm_an_unrelated_or_unsent_message(store,change):
+    store.update_settings({'gmail_reports':True});run(store)
+    service=rewriting_mailbox();client=GmailClient(store,service)
+    flush_reports(store,lambda unused:client)
+    headers=service.message['payload']['headers']
+    if change=='draft':service.message['labelIds']=['SENT','DRAFT']
+    elif change=='not_sent':service.message['labelIds']=['INBOX']
+    elif change=='missing_reference':headers[:]=[header for header in headers if header['name'].casefold()!='x-hirememaybe-report-id']
+    elif change=='duplicate_sender':headers.append({'name':'From','value':'attacker@elsewhere.invalid'})
+    else:
+        name={'sender':'from','recipient':'to','wrong_reference':'x-hirememaybe-report-id'}[change]
+        for header in headers:
+            if header['name'].casefold()==name:header['value']='attacker@elsewhere.invalid'
+    result=flush_reports(store,lambda unused:client)
+    assert result['reconciled']['accepted']==0 and result['sent']==0
+    assert store.db.execute('SELECT state FROM report_outbox').fetchone()[0]=='uncertain'
+    assert len(service.sent)==1
+
+
+def test_legacy_exact_message_id_still_requires_owner_bound_sent_metadata(store):
+    from tests.test_gmail import Service,Response
+    identifier='<'+'a'*32+'@please-hire-me.local>'
+    message={'labelIds':['SENT'],'payload':{'headers':[
+        {'name':'Message-ID','value':identifier},{'name':'From','value':'test@candidate.invalid'},
+        {'name':'To','value':'test@candidate.invalid'}]}}
+    client=GmailClient(store,Service('test@candidate.invalid',message))
+    assert client.find_sent_report(identifier)=='mail-one'
+    message['labelIds']=['DRAFT']
+    assert client.find_sent_report(identifier) is None
+
+
+@pytest.mark.parametrize('width',[320,1280])
+def test_delivery_reference_remains_visible_without_horizontal_overflow(width):
+    from playwright.sync_api import sync_playwright
+    html=render_html([{'summary':{},'run':{'id':'verification'},'groups':[]}],'Verification')
+    identifier='<'+'a'*32+'@please-hire-me.local>'
+    body,html=with_delivery_reference('Report body',html,identifier)
+    assert with_delivery_reference(body,html,identifier)==(body,html)
+    with sync_playwright() as p:
+        browser=p.chromium.launch()
+        try:
+            page=browser.new_page(viewport={'width':width,'height':1000});page.set_content(html)
+            assert page.get_by_text('HireMeMaybe report reference:',exact=False).is_visible()
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        finally:browser.close()
+
+
 def test_mailbox_lookup_failure_leaves_the_send_uncertain(store, mailbox, monkeypatch):
     store.update_settings({'gmail_reports': True})
     run(store)
@@ -253,6 +382,96 @@ def test_mailbox_lookup_failure_leaves_the_send_uncertain(store, mailbox, monkey
     store.db.execute('UPDATE report_dispatch SET started=0')
     assert flush_reports(store, mailbox)['reconciled'] == {'accepted': 0, 'not_found': 0, 'waiting': 1}
     assert report_status(store)[0]['state'] == 'uncertain' and mailbox.calls == 1
+
+
+def uncertain_backlog(store,count,*,prefix='uncertain',recipient='test@candidate.invalid',started=0):
+    """Seed already dispatched synthetic messages without sending any mail."""
+    from hireme.util import digest
+    ids=[]
+    for index in range(count):
+        rid=f'{prefix}-{index:03}'
+        wire=f'<{digest(rid)[:32]}@please-hire-me.local>'
+        created=f'2026-01-01T00:{index//60:02}:{index%60:02}+00:00'
+        store.db.execute('''INSERT INTO report_outbox
+            (id,recipient,subject,body,message_id,state,created,attempts)
+            VALUES(?,?,?,?,?,'uncertain',?,1)''',(rid,recipient,'Synthetic report','Body',wire,created))
+        store.db.execute('INSERT INTO report_dispatch VALUES(?,?,?,NULL,NULL)',(rid,wire,started))
+        ids.append((rid,wire))
+    return ids
+
+
+@pytest.mark.parametrize('lookup',['not_found','not_visible_yet','lookup_error'])
+def test_reconciliation_rotates_past_a_full_batch_of_unresolved_messages(store,mailbox,monkeypatch,lookup):
+    store.update_settings({'gmail_reports':True})
+    ids=uncertain_backlog(store,60,started=time.time() if lookup=='not_visible_yet' else 0)
+    calls=[];visible={}
+    def find(self,message_id):
+        calls.append(message_id)
+        if message_id in visible:return visible[message_id]
+        if lookup=='lookup_error':raise TimeoutError()
+        return None
+    monkeypatch.setattr(mailbox,'find_sent_report',find)
+    flush_reports(store,mailbox)
+    assert len(calls)==50 and len(set(calls))==50
+    assert store.db.execute('SELECT count(*) FROM report_dispatch WHERE checked IS NOT NULL').fetchone()[0]==50
+    visible[ids[-1][1]]='accepted-late-message'
+    result=flush_reports(store,mailbox)
+    assert result['reconciled']['accepted']==1 and len(calls)<=100
+    assert dict(store.db.execute('SELECT state,provider_id FROM report_outbox WHERE id=?',(ids[-1][0],)).fetchone())=={
+        'state':'sent','provider_id':'accepted-late-message'}
+    assert store.db.execute("SELECT count(*) FROM report_outbox WHERE state='uncertain'").fetchone()[0]==59
+    assert mailbox.calls==0 and not store.db.execute("SELECT 1 FROM report_outbox WHERE state='pending'").fetchone()
+    # Late positive evidence for a previously checked row still gets a turn.
+    visible[ids[0][1]]='accepted-earlier-message'
+    flush_reports(store,mailbox)
+    assert store.db.execute('SELECT state FROM report_outbox WHERE id=?',(ids[0][0],)).fetchone()[0]=='sent'
+    assert mailbox.calls==0
+
+
+def test_reports_for_a_previous_owner_cannot_starve_current_owner_reconciliation(store,mailbox):
+    store.update_settings({'gmail_reports':True})
+    uncertain_backlog(store,55,prefix='old-owner',recipient='other@candidate.invalid')
+    current,=uncertain_backlog(store,1,prefix='current-owner')
+    mailbox.accepted[current[1]]=('Previously dispatched report','','')
+    result=flush_reports(store,mailbox)
+    assert result['reconciled']['accepted']==1 and mailbox.calls==0
+    assert store.db.execute('SELECT state FROM report_outbox WHERE id=?',(current[0],)).fetchone()[0]=='sent'
+    assert store.db.execute("SELECT count(*) FROM report_outbox WHERE recipient='other@candidate.invalid' AND state='uncertain'").fetchone()[0]==55
+    assert store.db.execute("SELECT count(*) FROM report_dispatch WHERE report_id LIKE 'old-owner-%' AND checked IS NOT NULL").fetchone()[0]==0
+
+
+def test_reconciliation_requires_the_wire_identifier_and_shares_a_combined_lookup(store,mailbox,monkeypatch):
+    store.update_settings({'gmail_reports':True})
+    ids=uncertain_backlog(store,3)
+    wire='<'+'a'*32+'@please-hire-me.local>'
+    store.db.execute('UPDATE report_dispatch SET message_id=?',(wire,))
+    # A legacy uncertainty without recorded dispatch evidence stays held.
+    store.db.execute('DELETE FROM report_dispatch WHERE report_id=?',(ids[-1][0],))
+    calls=[]
+    def find(self,message_id):
+        calls.append(message_id)
+        return 'accepted-combined-message'
+    monkeypatch.setattr(mailbox,'find_sent_report',find)
+    result=flush_reports(store,mailbox)
+    assert result['reconciled']['accepted']==2 and calls==[wire] and mailbox.calls==0
+    assert store.db.execute('SELECT state FROM report_outbox WHERE id=?',(ids[-1][0],)).fetchone()[0]=='uncertain'
+    with pytest.raises(ValueError,match='reconciled first'):requeue_report(store,ids[-1][0])
+
+
+@pytest.mark.parametrize('receipt',[True,1,{'id':'not-an-identifier'},['unexpected'],''])
+def test_invalid_mailbox_lookup_keeps_uncertainty_and_does_not_block_a_new_report(store,mailbox,monkeypatch,receipt):
+    store.update_settings({'gmail_reports':True})
+    run(store)
+    mailbox.behavior='timeout_before_accept'
+    flush_reports(store,mailbox)
+    run(store,'run-two')
+    monkeypatch.setattr(mailbox,'find_sent_report',lambda self,message_id:receipt)
+    mailbox.behavior='accept'
+    result=flush_reports(store,mailbox)
+    assert result['sent']==1 and result['reconciled']=={'accepted':0,'not_found':0,'waiting':1}
+    assert store.db.execute("SELECT state FROM report_outbox WHERE id='run-one'").fetchone()[0]=='uncertain'
+    assert store.db.execute("SELECT state FROM report_outbox WHERE id='run-two'").fetchone()[0]=='sent'
+    assert mailbox.calls==2
 
 
 @pytest.mark.parametrize('error,reason,state', [

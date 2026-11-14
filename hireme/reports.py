@@ -126,7 +126,9 @@ OUTCOME_WORDS={'confirmed':'The employer returned a fresh receipt.','unknown':'N
                'prepared':'Prepared locally; nothing was sent to the employer.','blocked':'Stopped before submission.',
                'error':'Stopped by an error before a result was recorded.'}
 TONES={'Applied successfully — employer-confirmed':'confirmed','Blocked — review or apply manually':'attention',
-       'Other outcomes — review before retrying':'uncertain'}
+       'Other outcomes — review before retrying':'uncertain',
+       'Not submitted — review the saved result':'attention',
+       'Prepared locally — nothing submitted':'prepared'}
 
 
 def queue_report(store, run_id):
@@ -137,6 +139,7 @@ def queue_report(store, run_id):
     from .presentation import REASON_GUIDANCE, WAIT_REASONS
     waiting = 'Waiting for a company or daily limit — no action needed'
     groups = {'Applied successfully — employer-confirmed': [], 'Blocked — review or apply manually': [], 'Other outcomes — review before retrying': [],
+              'Not submitted — review the saved result': [], 'Prepared locally — nothing submitted': [],
               waiting: [], 'Waiting for the model allowance — retried automatically': []}
     terminal={};entries={heading:[] for heading in groups}
     for e in store.db.execute("SELECT subject,detail FROM events WHERE kind='application_finished' AND timestamp>=? ORDER BY seq", (run['started'],)):
@@ -152,6 +155,8 @@ def queue_report(store, run_id):
             receipt=_receipt(store,job_id,run['started']) if detail['outcome']=='confirmed' else ''
             group = ('Applied successfully — employer-confirmed' if detail['outcome'] == 'confirmed' and receipt else
                      'Other outcomes — review before retrying' if detail['outcome']=='confirmed' else
+                     'Prepared locally — nothing submitted' if detail['outcome']=='prepared' else
+                     'Not submitted — review the saved result' if detail['outcome']=='not_submitted' else
                      waiting if detail.get('reason') in WAIT_REASONS else
                      'Waiting for the model allowance — retried automatically' if detail.get('reason') == 'model_budget_exhausted' and not manual_questions else
                      'Blocked — review or apply manually' if detail['outcome'] == 'blocked' else
@@ -174,12 +179,14 @@ def queue_report(store, run_id):
                 'status':(reason if detail['outcome']=='blocked' and reason else
                           OUTCOME_WORDS.get(detail['outcome'],detail['outcome'])+(f" ({reason})" if reason else '')),
                 'note':uncertainty,'questions':questions,
-                'action':('Wait for employer follow-up; do not apply again.' if receipt else ''),
+                'action':('Wait for employer follow-up; do not apply again.' if receipt else
+                          'Review the saved employer result in your workspace before another attempt.' if detail['outcome']=='not_submitted' else ''),
                 'receipt':_receipt(store,job_id,run['started'],structured=True) if receipt else None,
                 'detail':'' if questions or not detail.get('detail') else _short(detail['detail'],300)})
     outcomes = [heading + '\n\n' + '\n\n'.join(items) for heading, items in groups.items() if items]
     detail = json.loads(run['detail']) if run['detail'].startswith('{') else {'reason': run['detail']}
-    human=len(groups['Blocked — review or apply manually'])+len(set(outstanding)-terminal.keys())
+    human=(len(groups['Blocked — review or apply manually'])+len(groups['Not submitted — review the saved result'])
+           +len(set(outstanding)-terminal.keys()))
     unconfirmed=len(groups['Other outcomes — review before retrying'])+len(set(held_outcomes)-terminal.keys())
     recruiting,recruiting_groups,notices=_recruiting_next_steps(store,email,structured=True)
     earlier=[];earlier_groups=[]
@@ -380,17 +387,26 @@ def _reconcile(store, client):
     result={'accepted':0,'not_found':0,'waiting':0}
     find=getattr(client,'find_sent_report',None)
     if not find:return result
-    rows=list(store.db.execute("""SELECT o.id,o.recipient,o.message_id AS own,d.message_id,d.started FROM report_outbox o
-        LEFT JOIN report_dispatch d ON d.report_id=o.id WHERE o.state='uncertain' AND d.outcome IS NULL
-        ORDER BY o.created LIMIT 50"""))
+    rows=list(store.db.execute("""SELECT o.id,d.message_id,d.started FROM report_outbox o
+        JOIN report_dispatch d ON d.report_id=o.id
+        WHERE o.state='uncertain' AND d.outcome IS NULL AND o.recipient=?
+        ORDER BY COALESCE(d.checked,''),o.created,o.id LIMIT 50""",(client.email,)))
     seen={}
     for row in rows:
-        if row['recipient']!=client.email:continue
-        message_id=row['message_id'] or row['own']
+        message_id=row['message_id']
         if message_id not in seen:
-            try:seen[message_id]=find(message_id)
+            try:
+                found=find(message_id)
+                if found is not None and (not isinstance(found,str) or not found.strip()):
+                    raise ValueError('Mailbox lookup returned no valid message identifier')
+                seen[message_id]=found
             except Exception as error:seen[message_id]=error
         found=seen[message_id]
+        # Rotate every attempted lookup, including errors and search results
+        # that have not become visible yet. Sub-second ordering keeps quick
+        # successive flushes fair as well as ordinary scheduled cycles.
+        store.db.execute("UPDATE report_dispatch SET checked=? WHERE report_id=? AND outcome IS NULL",
+                         (datetime.now(timezone.utc).isoformat(timespec='microseconds'),row['id']))
         if isinstance(found,Exception):
             result['waiting']+=1
         elif found:
@@ -400,13 +416,12 @@ def _reconcile(store, client):
                                  (row['id'],message_id,clock.time(),now()))
                 store.event('batch_report_reconciled',row['id'],{'found':True,'provider_id':found})
             result['accepted']+=1
-        elif row['message_id'] and clock.time()-row['started']>=RECONCILE_AFTER_SECONDS:
+        elif clock.time()-row['started']>=RECONCILE_AFTER_SECONDS:
             # Search can lag, and accepted mail can be deleted or unsearchable.
             # Absence is not proof of refusal, even after a long wait. Keep
             # checking for positive evidence without ever authorizing a resend.
             with store.transaction():
                 store.db.execute("UPDATE report_outbox SET last_error='not_found_after_uncertain_send' WHERE id=? AND state='uncertain'",(row['id'],))
-                store.db.execute("UPDATE report_dispatch SET checked=? WHERE report_id=?",(now(),row['id']))
             result['not_found']+=1
         else:result['waiting']+=1
     return result
@@ -450,6 +465,8 @@ def flush_reports(store, client_factory=GmailClient, limit=25):
         subject, body = _combined(store, rows)
         html = render_report_html(store, rows, subject)
         message_id = rows[-1]['message_id']
+        from .report_email import with_delivery_reference
+        body,html=with_delivery_reference(body,html,message_id)
         with store.transaction():
             store.db.execute(f"UPDATE report_outbox SET state='sending',attempts=attempts+1,last_error=NULL WHERE id IN ({marks})", ids)
             # The identifier actually placed on the wire, for later mailbox reconciliation.
@@ -540,4 +557,8 @@ def preview_report(store, report_id=None):
     row=(store.db.execute('SELECT * FROM report_outbox WHERE id=?',(report_id,)).fetchone() if report_id else
          store.db.execute('SELECT * FROM report_outbox ORDER BY created DESC LIMIT 1').fetchone())
     if not row:raise ValueError('No saved report to preview')
-    return {'id':row['id'],'subject':row['subject'],'text':row['body'],'html':render_report_html(store,[row],row['subject'])}
+    from .report_email import with_delivery_reference
+    dispatch=store.db.execute('SELECT message_id FROM report_dispatch WHERE report_id=?',(row['id'],)).fetchone()
+    body,html=with_delivery_reference(row['body'],render_report_html(store,[row],row['subject']),
+                                      dispatch['message_id'] if dispatch else row['message_id'])
+    return {'id':row['id'],'subject':row['subject'],'text':body,'html':html}

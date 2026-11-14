@@ -20,6 +20,14 @@ TEXT = [
     'SKILLS','Python, TypeScript',
 ]
 
+PROJECT_TEXT = [
+    'Test Person', 'PROJECTS',
+    'Timetable Solver | Python, Rust | https://github.com/example/solver | January 2025 - May 2025',
+    '- Built a constraint solver in Python.',
+    '- Published reproducible examples.',
+    'EDUCATION', 'Example University | B.S. | Computer Science',
+]
+
 
 def select_pdf(store,lines=TEXT):
     from reportlab.pdfgen.canvas import Canvas
@@ -208,3 +216,64 @@ def test_import_endpoints_are_authenticated_and_source_bound(store,source,histor
     assert request(history_server,'/api/history-import')[1]['resume_hash']==source['resume_hash']
     assert request(history_server,'/api/history-import/confirm',payload(source,confirmed=False))[0]==400
     assert request(history_server,'/api/history-import/confirm',payload(source))[0]==200
+
+
+def test_project_proposals_preserve_their_own_sources_without_inventing_a_role(store):
+    select_pdf(store,PROJECT_TEXT)
+    source=history_import.preview(store)
+    project=source['candidates'][0]
+    assert project['kind']=='project'
+    assert project['values']=={'name':'Timetable Solver','url':'https://github.com/example/solver',
+        'start':'2025-01','end':'2025-05',
+        'description':'- Built a constraint solver in Python.\n- Published reproducible examples.'}
+    assert project['excerpt']=='\n'.join(PROJECT_TEXT[2:5])
+    assert not store.history_entries() and not store.db.execute('SELECT 1 FROM model_requests').fetchone()
+    result=history_import.confirm(store,payload(source))
+    assert store.history_entries('project')[0]['id']==result['entry_id']
+    assert not store.history_entries('employment')
+
+
+def test_manual_project_selection_is_reviewed_and_can_build_a_resume_without_employment(store,job):
+    select_pdf(store,PROJECT_TEXT)
+    source=history_import.preview(store)
+    selection={'resume_hash':source['resume_hash'],'kind':'project','start_line':3,'end_line':5}
+    proposed=history_import.suggest(store,selection)
+    data={**selection,**proposed,'confirmed':True}
+    data.pop('excerpt')
+    with pytest.raises(ValueError,match='explicitly confirm'):
+        history_import.confirm(store,{**data,'confirmed':False})
+    assert not store.history_entries()
+    history_import.confirm(store,data)
+    store.update_settings({'tailored_resumes':True})
+    document=tailored_resumes.generate(store,job)
+    from pypdf import PdfReader
+    pdf=tailored_resumes.validate(store,job,document)
+    text='\n'.join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
+    assert 'Timetable Solver' in text and 'Built a constraint solver in Python.' in text
+    assert 'Python, Rust' not in store.history_entries('project')[0]['values'].get('role','')
+    assert not store.history_entries('employment')
+
+
+def test_project_sections_do_not_extend_employer_descriptions_or_merge_projects():
+    lines=['EXPERIENCE','Employer | Intern | May 2024 - August 2024','- Built employer services.',
+           'SELECTED PROJECTS','Solver | Python | 2024 - 2025','- Built solver.',
+           'Analyzer | Rust | 2023 - 2024','- Built analyzer.',
+           'SKILLS','Python, Rust']
+    proposals=history_import.candidates(lines)
+    assert [item['kind'] for item in proposals]==['employment','project','project']
+    assert [item['values']['description'] for item in proposals]==[
+        '- Built employer services.','- Built solver.','- Built analyzer.']
+    assert all('start' not in item['values'] and 'end' not in item['values'] for item in proposals[1:])
+    assert history_import._values(lines[4:8],'project')=={}
+
+
+@pytest.mark.parametrize('change',['replacement','excerpt','lines'])
+def test_project_import_rejects_changed_or_unreviewed_sources(store,change):
+    select_pdf(store,PROJECT_TEXT)
+    source=history_import.preview(store)
+    data=payload(source)
+    if change=='replacement':select_pdf(store,['Test Person','PROJECTS','Different Project | Rust','- Built something else.'])
+    elif change=='excerpt':data['excerpt_hash']='a'*64
+    else:data['end_line']+=1
+    with pytest.raises(ValueError):history_import.confirm(store,data)
+    assert not store.history_entries()

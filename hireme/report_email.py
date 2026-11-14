@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from html import escape
+import re
 from urllib.parse import urlsplit
 
 # The dashboard palette from DESIGN.md. Email clients need literal inline values.
@@ -16,9 +17,29 @@ TONES = {
     'attention': ('#fbf0de', '#8d641f', 'Needs you'),
     'uncertain': ('#fbe9eb', '#b73745', 'Verify first'),
     'neutral': ('#eaf0ff', '#3155d9', 'Waiting'),
+    'prepared': ('#eaf0ff', '#3155d9', 'Prepared'),
 }
 FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 LOCAL_HOSTS = {'localhost', 'localhost.localdomain', '0.0.0.0', '::1', '[::1]'}
+
+
+def report_reference(message_id):
+    match=re.fullmatch(r'<([0-9a-f]{32})@please-hire-me\.local>',message_id or '')
+    return match[1] if match else None
+
+
+def with_delivery_reference(body,html,message_id):
+    """The same searchable receipt reference in previews and actual messages."""
+    reference=report_reference(message_id)
+    if not reference:return body,html
+    label='HireMeMaybe report reference: '+reference
+    if label not in body.splitlines():body=body.rstrip()+'\n\n'+label+'\n'
+    if html and label not in html:
+        note=(f'<div style="max-width:600px;margin:8px auto;padding:0 12px;font-size:12px;'
+              f'line-height:1.5;color:{MUTED};overflow-wrap:anywhere;">{label}</div>')
+        closing=re.search(r'</body\s*>',html,re.I)
+        html=html[:closing.start()]+note+html[closing.start():] if closing else html+note
+    return body,html
 
 
 def safe_link(url):
