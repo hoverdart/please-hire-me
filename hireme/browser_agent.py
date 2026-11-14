@@ -149,6 +149,11 @@ class AdaptiveBrowser(Browser):
         if self.stopped_reason:raise self.stopped_reason
         if self.denied_write and not self.preparing:raise Blocked('browser_operation_blocked','The employer attempted a save outside the active approved browser action')
         if origin(self.page.url)!=self.allowed_origin:raise Blocked('unexpected_redirect')
+        from .icims import ContentPage,is_icims_host,requisition
+        current=urlsplit(self.page.url)
+        if ((isinstance(self.page,ContentPage) or is_icims_host(current.hostname))
+                and requisition(self.page.url) and current.path.rstrip('/').endswith('/login')):
+            raise Blocked('account_blocked','Sign in using the app’s dedicated employer browser, then resume this saved application')
         if self.connection_id and not getattr(self,'owner_verified',False):
             from .browser_identity import verify_observed_account
             self.owner_verified=verify_observed_account(self)
@@ -177,21 +182,26 @@ class AdaptiveBrowser(Browser):
             ENTRY.fullmatch(a['label']) or NEXT.fullmatch(a['label']) or FINAL.fullmatch(a['label']) for a in view['actions']))
 
     def _enter_frame(self):
-        from .icims import enter_content
+        from .icims import ContentPage,enter_content
         from .browser_observation import retry_dom_read
-        # Navigation can replace the DOM between the click and frame lookup.
-        # Retry only this read, never the action or the following navigation.
-        content=retry_dom_read(self.page,
-            lambda:enter_content(self.page,limit_reached=getattr(self,'frame_entries',0)>=8),
+        parent=self.page.parent if isinstance(self.page,ContentPage) else self.page
+        # Reinspect the original wrapper after each step. Read recovery cannot
+        # replay a click, save or navigation; the employer owns frame loading.
+        content=retry_dom_read(parent,
+            lambda:enter_content(parent),
             checkpoint=self.store.checkpoint)
         if not content:return False
-        self.frame_entries=getattr(self,'frame_entries',0)+1
-        self.page.goto(content,wait_until='domcontentloaded',timeout=45000)
+        if isinstance(self.page,ContentPage):return False
+        self.page=ContentPage(parent)
         self.page.wait_for_function('()=>document.body&&document.body.innerText.trim().length>0',timeout=20000)
         return True
 
     def _outcome_text(self):
         """Visible page text, including an approved same-requisition content frame. Reads only."""
+        from .browser_observation import retry_dom_read
+        return retry_dom_read(self.page,self._read_outcome_text,checkpoint=self.store.checkpoint)
+
+    def _read_outcome_text(self):
         text=self.page.locator('body').inner_text()
         from .icims import WRAPPER,enter_content
         try:
@@ -881,18 +891,25 @@ class AdaptiveBrowser(Browser):
         self._perform(choice,view,[],[])
 
     def apply(self,job,live=True):
+        from .icims import ContentPage
+        if isinstance(self.page,ContentPage):self.page=self.page.parent
         self.job=dict(job);self.preparing=not live;self.attempted=False;self.aid=None
+        from .icims import posting_url
+        entry=posting_url(job['url'])
         if not self.test_url:
             from .discovery import ATS_HOSTS,PORTAL_HOSTS
             from .platform_connections import PLATFORMS
             from .workday_site import is_workday_url
-            parsed=urlsplit(job['url'])
+            parsed=urlsplit(entry)
+            source_host=urlsplit(job['url']).hostname if entry!=job['url'] else None
+            allowed_hosts={parsed.hostname}
+            if source_host is not None:allowed_hosts.add(source_host)
             platform_host=PLATFORMS.get(self.connection_id,{}).get('host')
-            if (parsed.scheme!='https' or parsed.port not in (None,443) or parsed.username or parsed.password
-                    or parsed.hostname!=job['host']
+            if (parsed.scheme!='https' or parsed.port not in (None,443) or parsed.username is not None or parsed.password is not None
+                    or job['host'] not in allowed_hosts
                     or job['host'] not in ATS_HOSTS|PORTAL_HOSTS|({platform_host} if platform_host else set()) and not is_workday_url(job['url'])):
                 raise Blocked('unapproved_destination')
-        self.allowed_origin=origin(self.test_url or job['url']);self.current_host=urlsplit(self.allowed_origin).hostname
+        self.allowed_origin=origin(self.test_url or entry);self.current_host=urlsplit(self.allowed_origin).hostname
         self.stopped_reason=None;self.completed_steps=[];self.uploads={};self.staged_documents={};self.memory=[];self.opened=set();self.searched=set();self.search_queries={};self.option_cache={}
         self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={};self.frame_entries=0
         self.job['answer_scope']=job.get('answer_scope') or job['host']+'|'+self.store.company(job['company'])

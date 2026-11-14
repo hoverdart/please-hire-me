@@ -31,9 +31,11 @@ Saved preferences (phrases to avoid, exclamation marks, contractions, longest se
 
 ## iCIMS
 
-Hosted iCIMS postings gain a requisition identity (host and numeric ID), so a renamed title or frame query cannot create a duplicate. The adaptive executor opens the posting's own same-origin content document and re-enters it when a step returns to the frame wrapper. A frame from another origin or requisition stops the attempt before any value is sent. Receipts are read from the approved frame.
+Hosted iCIMS postings gain a requisition identity (host and numeric ID), so a renamed title or frame query cannot create a duplicate. The adaptive executor uses the posting's approved content frame while retaining the real outer page: the live client can restore that wrapper when content is opened directly. Every nested wrapper must retain the exact origin and requisition. Controls outside the approved content document are excluded. Receipt reads may recover from a detached frame; saved steps and final requests are never replayed.
 
-`icims` is its own entry in the application scope; allowing `other` does not include it. Staged rollout still commissions Lever and Ashby only. Steps that save through an account-profile endpoint are refused by the existing executor rule. This path has synthetic fixture coverage only and has never run against a live iCIMS site.
+The exact AMD careers URL shape resolves to the same numeric requisition on AMD's fixed iCIMS host. The saved source URL and job ID remain unchanged. Hosted and careers links share duplicate comparisons, including historical manual applications and unacknowledged UI saves under another feed name. Other hosts, credentials, lookalikes and unknown paths gain no bridge.
+
+`icims` is its own entry in the application scope, including the recognized AMD careers bridge; allowing `other` does not include it. Staged rollout still commissions Lever and Ashby only. Steps that save through an account-profile endpoint are refused. Public AMD careers and iCIMS entry pages were observed read-only on November 14, 2026, without applicant data, login or CAPTCHA interaction. Full application execution has synthetic coverage only; no live iCIMS application was submitted or accepted.
 
 ## Limits
 

@@ -17,7 +17,7 @@ Adaptive UI execution follows the same fact, policy and final-intent contract. T
 
 Application confirmation requires a fresh, explicit completed-application acknowledgement after the submission click. Generic interest or feedback messages, conditional instructions, explicit incomplete/error messages and receipt wording already present before the click do not establish acceptance. Ambiguous outcomes remain UNKNOWN and block retries.
 
-An iCIMS posting is opened through its own same-origin content document for the same requisition number. A frame from another origin or requisition is outside the executor and stops the attempt before any value is sent. Writes to account-profile, registration, withdrawal and deletion endpoints remain refused.
+An iCIMS posting uses its own same-origin content document for the same requisition number while retaining the real frame wrapper. Each nested wrapper and replaced frame is checked again; controls in outer wrappers are excluded. The exact AMD careers bridge preserves its saved source identity while resolving to AMD's fixed iCIMS host. A frame from another origin or requisition stops the attempt before any value is sent. Writes to account-profile, registration, withdrawal and deletion endpoints remain refused.
 
 No routine human approval. One-time setup confirms profile facts; new unknown questions are answered and saved in the dashboard. Account/CAPTCHA/unsupported verification/work-sample exceptions have clickable job links. Supported Greenhouse email challenges may continue through the applicant-authorized Gmail adapter.
 

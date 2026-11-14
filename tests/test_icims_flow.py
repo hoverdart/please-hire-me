@@ -71,6 +71,10 @@ def hosted(store):
             pass
 
         def respond(self, body, status=200, ctype='text/html'):
+            if ctype == 'text/html' and parse_qs(urlsplit(self.path).query).get('in_iframe') == ['1']:
+                # The live client restores the wrapper when this content is
+                # opened as a top-level document. It must run in its real frame.
+                body = '<script>if(self===top)location.replace(location.pathname)</script>' + body
             raw = body.encode() if isinstance(body, str) else body
             self.send_response(status);self.send_header('Content-Type', ctype);self.end_headers();self.wfile.write(raw)
 
@@ -78,7 +82,9 @@ def hosted(store):
             state['wrappers'] += 1
             source = {'foreign': 'http://localhost:1/jobs/4821/x/job?in_iframe=1',
                       'other_job': '/jobs/7777/another-role/job?in_iframe=1'}.get(state['mode'], path + '?in_iframe=1')
-            return self.respond(f'<div class=header>Acme Careers</div><iframe id=icims_content_iframe src="{source}"></iframe>')
+            return self.respond(f'''<div class=header>Acme Careers</div>
+                <label>Full Name<input id=decoy oninput="fetch('/wrapper-trap',{{method:'POST',body:this.value}})"></label>
+                <iframe id=icims_content_iframe src="{source}"></iframe>''')
 
         def do_GET(self):
             parsed = urlsplit(self.path);path = parsed.path
@@ -86,11 +92,21 @@ def hosted(store):
             if path.startswith('/jobs/') and not framed:
                 return self.wrapper(path)
             if path == JOB:
+                if state['mode'] in ('nested_foreign', 'nested_other_job'):
+                    target = ('http://localhost:1/jobs/4821/x/job?in_iframe=1' if state['mode'] == 'nested_foreign'
+                              else '/jobs/7777/x/job?in_iframe=1')
+                    return self.respond(f'<h1>{TITLE}</h1><iframe id=icims_content_iframe src="{target}"></iframe>')
+                entry = '/jobs/4821/login' if state['mode'] == 'email_login' else '/jobs/4821/profile'
                 return self.respond(f'''<h1>{TITLE}</h1><h2>Acme</h2><p>Build Python and TypeScript software in San Francisco, United States.</p>
-                    <a href="/jobs/4821/profile">Apply for this job online</a>''')
+                    <a href="{entry}">Apply for this job online</a>''')
+            if path == '/jobs/4821/login':
+                return self.respond('<h1>Enter Your Information</h1><label>Email<input type=email></label><button>Continue</button>')
             if path == '/jobs/4821/profile':
+                challenge = ('<iframe src="/hcaptcha/widget"></iframe>' if state['mode'] == 'captcha' else
+                             '<label>Password<input type=password></label>' if state['mode'] == 'login' else '')
+                next_path = '/jobs/7777/questions' if state['mode'] == 'changed_requisition' else '/jobs/4821/questions'
                 return self.respond(f'''<h1>Candidate Profile</h1><h2>{TITLE}</h2>
-                    <form><label>First Name<input id=first name=first required></label>
+                    {challenge}<form><label>First Name<input id=first name=first required></label>
                     <label>Last Name<input id=last name=last required></label>
                     <label>Email<input id=email name=email type=email required></label>
                     <label>Resume<input id=resume name=resume type=file required></label>
@@ -100,7 +116,7 @@ def hosted(store):
                       await fetch('/upload',{{method:'POST',body:event.target.files[0]}});}};
                     document.getElementById('next').onclick=async()=>{{
                       const result=await fetch('{'/jobs/4821/profile' if state['mode']=='profile_write' else '/save/candidate'}',{{method:'POST',body:JSON.stringify({{first:first.value,last:last.value,email:email.value}})}});
-                      if(result.ok)top.location.href='/jobs/4821/questions';}};
+                      if(result.ok)top.location.href='{next_path}';}};
                     </script>''')
             if path == '/jobs/4821/questions':
                 extra = '<label>What is your badge number at your current employer?<input name=badge required></label>' if state['mode'] == 'unknown' else ''
@@ -151,8 +167,12 @@ def browser_for(store, hosted):
     return browser
 
 
-def test_hosted_flow_enters_the_content_frame_and_completes_profile_questions_upload_and_receipt(store, hosted):
+@pytest.mark.parametrize('direct_content_entry', [False, True])
+def test_hosted_flow_executes_in_real_frame_despite_top_level_rewrapping(store, hosted, direct_content_entry):
     base, job, state = hosted
+    if direct_content_entry:
+        job = {**job, 'url': job['url'] + '?in_iframe=1', 'id': digest(job['url'] + '?in_iframe=1')}
+        store.upsert_job(job)
     with browser_for(store, hosted) as browser:
         try:
             assert browser.apply(job) == 'confirmed'
@@ -172,7 +192,25 @@ def test_hosted_flow_enters_the_content_frame_and_completes_profile_questions_up
     assert store.db.execute('SELECT state FROM applications').fetchone()[0] == 'confirmed'
 
 
-@pytest.mark.parametrize('mode', ['foreign', 'other_job'])
+@pytest.mark.parametrize('mode,reason', [('captcha', 'captcha_blocked'), ('login', 'account_blocked'), ('email_login', 'account_blocked')])
+def test_challenge_or_login_inside_approved_frame_is_a_handoff_before_values(store, hosted, mode, reason):
+    _, job, state = hosted
+    state['mode'] = mode
+    with browser_for(store, hosted) as browser:
+        with pytest.raises(Blocked, match=reason):browser.apply(job)
+    assert not state['records'] and state['file'] is None and state['finals'] == 0
+
+
+def test_parent_navigation_to_another_requisition_stops_after_saved_step(store, hosted):
+    _, job, state = hosted
+    state['mode'] = 'changed_requisition'
+    with browser_for(store, hosted) as browser:
+        with pytest.raises(Blocked, match='icims_frame_boundary'):browser.apply(job)
+    assert state['profile'] is not None and state['finals'] == 0
+    assert not any(record['path'] == '/wrapper-trap' for record in state['records'])
+
+
+@pytest.mark.parametrize('mode', ['foreign', 'other_job', 'nested_foreign', 'nested_other_job'])
 def test_foreign_or_mismatched_frame_stops_before_any_value_is_sent(store, hosted, mode):
     base, job, state = hosted
     state['mode'] = mode
@@ -180,6 +218,23 @@ def test_foreign_or_mismatched_frame_stops_before_any_value_is_sent(store, hoste
         with pytest.raises(Blocked, match='icims_frame_boundary'):
             browser.apply(job)
     assert not state['records'] and not store.db.execute("SELECT 1 FROM applications WHERE state!='prepared'").fetchone()
+
+
+def test_receipt_frame_read_recovers_detachment_without_replaying_submit(store, hosted, monkeypatch):
+    from playwright.sync_api import Error
+    original = icims.ContentPage._read_document
+    _, job, state = hosted
+    failures = []
+    def read(document):
+        if state['finals'] and not failures:
+            failures.append(True)
+            raise Error('ElementHandle.content_frame: Element is not attached to the DOM')
+        return original(document)
+    monkeypatch.setattr(icims.ContentPage, '_read_document', read)
+    with browser_for(store, hosted) as browser:
+        assert browser.apply(job) == 'confirmed'
+    assert failures == [True] and state['finals'] == 1
+    assert not any(record['path'] == '/wrapper-trap' for record in state['records'])
 
 
 def test_unknown_question_in_a_hosted_step_is_held_before_the_final_action(store, hosted):
