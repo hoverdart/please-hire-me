@@ -954,3 +954,24 @@ def test_oversized_alias_search_never_reuses_a_completed_scan_or_drops_names(sto
 def test_an_unsuccessful_application_still_counts_when_its_stage_is_unclassified(store,optiver,body):
     assert prior.ingest(store,mail(optiver,subject=f'Your application for the {optiver["title"]} position at Optiver',body=body))
     assert prior.matches(store,optiver)
+
+
+@pytest.mark.parametrize('already_checked',[False,True])
+def test_application_start_refreshes_a_still_valid_but_nearly_expired_write_check(store,optiver,monkeypatch,already_checked):
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    prior.scan(store,company='Optiver',client_factory=factory);complete_catchup(store,service,'Optiver')
+    store.db.execute('UPDATE prior_application_scans SET completed=?',(time.time()-10*60,))
+    prior.require_recent_check(store,optiver)
+    before=len(service.lists)
+    store.prior_mail_checked={store.company('Optiver')} if already_checked else set()
+    store.prior_mail_failures={};store.prior_mail_check_limit=1
+    monkeypatch.setattr(prior,'GmailClient',factory)
+    prior.preflight(store,optiver)
+    assert len(service.lists)>before
+    completed=store.db.execute('SELECT completed FROM prior_application_scans').fetchone()[0]
+    assert 0<=time.time()-completed<=prior.START_FRESH_SECONDS
+    prior.require_recent_check(store,optiver)
+    store.db.execute('UPDATE prior_application_scans SET completed=?',(time.time()-prior.FRESH_SECONDS-1,))
+    with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)

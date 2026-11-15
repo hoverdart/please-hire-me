@@ -21,6 +21,7 @@ from .util import Blocked, application_identity, company_key, company_normalizer
 
 MAX_MESSAGES = 25
 FRESH_SECONDS = 15 * 60
+START_FRESH_SECONDS = 60
 MAX_QUERY_BYTES = 1200
 AUTO_SCAN_SECONDS = 30
 AUTO_SCAN_PAGES = 25
@@ -454,6 +455,15 @@ def preflight(store,job):
         raise error from None
 
 
+def _require_start_check(store,job):
+    require_recent_check(store,job)
+    if not store.settings()['gmail_prior_applications']:return
+    row=store.db.execute('SELECT completed FROM prior_application_scans WHERE owner_hash=? AND company_key=?',
+        (_owner(store),_scope(store,job['company']))).fetchone()
+    if not row or row['completed'] is None or not 0<=time.time()-row['completed']<=START_FRESH_SECONDS:
+        raise Blocked('prior_application_check_required','Refresh company email history before starting the application form')
+
+
 def _preflight(store,job):
     check_saved(store,job)
     if not store.settings()['gmail_prior_applications']: return
@@ -463,13 +473,15 @@ def _preflight(store,job):
     if checked is not None and scope in checked:
         failure=(getattr(store,'prior_mail_failures',None) or {}).get(scope)
         if failure:raise Blocked(*failure)
-        require_recent_check(store,job);return
-    if checked is not None and len(checked)>=getattr(store,'prior_mail_check_limit',store.settings()['max_attempts_per_cycle']):
+        try:_require_start_check(store,job);return
+        except Blocked as error:
+            if error.reason!='prior_application_check_required':raise
+    if checked is not None and scope not in checked and len(checked)>=getattr(store,'prior_mail_check_limit',store.settings()['max_attempts_per_cycle']):
         raise Blocked('prior_application_check_budget','This batch reached its company email-check limit. Saved scan progress will continue next cycle.')
     if checked is not None:checked.add(scope)
     resolve_company(store,job)
     check_saved(store,job)
-    try: require_recent_check(store,job);return
+    try: _require_start_check(store,job);return
     except Blocked: pass
     deadline=time.monotonic()+AUTO_SCAN_SECONDS
     failures=rate_failures=0
@@ -496,7 +508,7 @@ def _preflight(store,job):
             continue
         check_saved(store,job)
         if not result['more_available']:
-            try:require_recent_check(store,job);return
+            try:_require_start_check(store,job);return
             except Blocked as error:
                 # Only a successfully completed but stale scan can start an
                 # overlapping catch-up here. Other failures must remain held.
@@ -504,7 +516,7 @@ def _preflight(store,job):
                 phase=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(_owner(store),scope)).fetchone()
                 catching_up=phase and phase[0]==_protocol(store)+':backfill'
                 if (error.reason!='prior_application_check_required' or not row or row['completed'] is None
-                        or time.time()-row['completed']<=FRESH_SECONDS and not catching_up):raise
+                        or time.time()-row['completed']<=START_FRESH_SECONDS and not catching_up):raise
     raise Blocked('prior_application_scan_incomplete','More application mail remains to scan for this company. Continue the scan before applying.')
 
 
