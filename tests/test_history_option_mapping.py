@@ -63,3 +63,32 @@ def test_joint_field_classification_does_not_invent_a_degree_or_choose_between_t
     field={'label':label,'type':'combobox','required':False,'section':'education',
            'history_entry_id':entry['id'],'history_key':'field_of_study','options':options}
     with pytest.raises(Blocked,match='mapping_review'):resolve_field(store,field)
+
+
+def _primary_gpa_fixture(store):
+    values={'institution':'Fixture University','degree':'B.S.','field_of_study':'Computer Science',
+            'start':'2024-08','expected_end':'2028-05'}
+    store.put_facts({'school':'Fixture University','degree':'B.S.','major':'Computer Science',
+                     'college_start':'2024-08','graduation':'2028-05','gpa':'3.76/4.00'})
+    entry=put(store,'education',values,source='Confirmed synthetic primary college',confirmed=True)
+    return entry,{'label':'Overall Result (GPA)*','type':'text','required':True,'section':'education',
+                  'history_entry_id':entry['id'],'history_key':'gpa','options':[]}
+
+
+def test_primary_college_can_use_confirmed_profile_gpa_without_rewriting_history(store):
+    entry,field=_primary_gpa_fixture(store);answer=resolve_field(store,field)
+    assert answer['value']=='3.76' and 'gpa_fact_revision' in answer['provenance']
+    validate_answer(store,answer)
+    assert store.history_entries('education')[0]['revision']==entry['revision']
+    assert 'gpa' not in store.history_entries('education')[0]['values']
+    store.put_facts({'gpa':'3.90/4.00'})
+    with pytest.raises(Blocked,match='history_changed'):validate_answer(store,answer)
+
+
+@pytest.mark.parametrize('key,value',[
+    ('school','Another University'),('degree','MS'),('major','History'),
+    ('college_start','2025-08'),('graduation','2029-05'),
+])
+def test_profile_gpa_cannot_transfer_to_another_school_degree_or_study_period(store,key,value):
+    _,field=_primary_gpa_fixture(store);store.put_facts({key:value})
+    with pytest.raises(Blocked,match='history_confirmation_required'):resolve_field(store,field)

@@ -118,15 +118,37 @@ def _joint_discipline(value,field):
     return matches[0] if len(matches)==1 else None
 
 
+def _primary_gpa(store,row):
+    """Borrow a confirmed GPA only for the exact matching primary college."""
+    if row['kind']!='education':return None
+    facts=store.facts();values=row['values']
+    keys={'institution':'school','degree':'degree','field_of_study':'major','start':'college_start','expected_end':'graduation'}
+    normal=lambda value:re.sub(r'[^a-z0-9]','',value.casefold())
+    for history_key,fact_key in keys.items():
+        fact=facts.get(fact_key)
+        if not fact or history_key not in values:return None
+        expected=fact['value'][:7] if history_key in {'start','expected_end'} else fact['value']
+        if normal(values[history_key])!=normal(expected):return None
+    gpa=facts.get('gpa')
+    if not gpa or not re.fullmatch(r'\d+(?:\.\d+)?(?:\s*/\s*4(?:\.0+)?)?',gpa['value']):return None
+    value=gpa['value'].split('/',1)[0].strip()
+    if not 0<=float(value)<=4:return None
+    return value,{'gpa_fact_revision':gpa['revision'],
+        'gpa_college_binding':digest({key:facts[key] for key in (*keys.values(),'gpa')})}
+
+
 def resolve_field(store, field, provider=None):
     """Bind each answer to a confirmed entry/key; a DOM row cannot create a claim."""
     entry_id, key = field.get('history_entry_id'), field.get('history_key')
     row = next((row for row in entries(store) if row['id'] == entry_id), None)
-    if not row or key not in row['values'] or field.get('section') != row['kind']:
+    if not row or field.get('section') != row['kind']:
+        raise Blocked('history_confirmation_required', field.get('label', 'History entry'))
+    borrowed=_primary_gpa(store,row) if key=='gpa' and key not in row['values'] else None
+    if key not in row['values'] and borrowed is None:
         raise Blocked('history_confirmation_required', field.get('label', 'History entry'))
     if field.get('type') not in {'text', 'textarea', 'number', 'select', 'combobox', 'checkbox', 'radio'}:
         raise Blocked('unsupported_widget', field.get('label', 'History entry'))
-    value = row['values'][key]
+    value = borrowed[0] if borrowed else row['values'][key]
     if key == 'current':
         value = 'Yes' if value else 'No'
     elif key in {'start', 'end', 'expected_end'}:
@@ -161,7 +183,8 @@ def resolve_field(store, field, provider=None):
     from .field_context import validate_numeric
     validate_numeric(value, field)
     return {'field': field, 'value': value, 'provenance': {'history_entry_id': entry_id,
-        'history_key': key, 'revision': row['revision'], 'entry_hash': digest(row['values'])}}
+        'history_key': key, 'revision': row['revision'], 'entry_hash': digest(row['values']),
+        **(borrowed[1] if borrowed else {})}}
 
 
 def validate_answer(store, answer):
