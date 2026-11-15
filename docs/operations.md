@@ -20,6 +20,10 @@ Health checks storage, the latest cycle, report delivery, model subscription log
 
 A paused cycle is healthy when it is expected. Unknown outcomes, pending verification and intentionally held historical reports stay visible in the counts; they do not authorize retries. A stalled or overdue cycle, missing scheduler, expired model login, overdue report or low storage needs attention.
 
+Check both submission control and the application rollout in `doctor`. A saved schedule does no application work while paused. With submissions enabled, a `dry_run` rollout prepares drafts and a `controlled` rollout requires one explicitly selected posting; neither enables unattended applications. A `restricted` rollout requires native acceptance evidence for each enabled ATS and retains small attempt limits and stop-on-uncertainty. Commission it with the installed runtime after verifying the selected scope; code updates invalidate the previous rollout pin.
+
+Report delivery can resume independently of applications. Combined emails identify their original batch dates in the applicant timezone, and a paused reminder labels outstanding work as earlier history. A newly delivered saved report does not establish that the current schedule attempted those applications.
+
 The worker refuses to start new application work below 512 MiB free. Backups and restoration reserve that headroom too. `release-check` additionally flags low storage below 10% of the volume, or 1 GiB, whichever is larger. These checks cannot reserve space against unrelated programs writing at the same time.
 
 Pi health also checks that the kernel exposes the v2 memory controller. Service `MemoryMax` settings are ineffective without it. Follow the [Pi guide](pi.md) to enable the controller and verify the active kernel limit before relying on memory isolation.

@@ -532,6 +532,8 @@ def test_combined_batches_render_one_html_document_with_each_batch(store, mailbo
     assert flush_reports(store, mailbox)['batches'] == 2
     (subject, body, html), = mailbox.accepted.values()
     assert html.count('<!DOCTYPE html>') == 1 and 'Batch run-0' in html and 'Batch run-1' in html
+    assert 'Delayed delivery: 2 saved batch reports' in html and 'Delayed delivery: 2 saved batch reports' in body
+    assert 'not applications made by the current schedule' in html
     assert re.search(r'>2</div>\s*<div[^>]*>Confirmed by the employer', html)
     assert {row['delivery'] for row in report_status(store)} == {'provider_accepted'}
 
