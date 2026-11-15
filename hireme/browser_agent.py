@@ -502,6 +502,11 @@ class AdaptiveBrowser(Browser):
                         listed=_discovery_answer(field['label'],field['options'],self.job) if discovery else None
                     except Blocked:discovery=None;listed=None
                     if discovery and not listed:
+                        position=self._scroll_prompt_options(field)
+                        if position:
+                            choices.append({'id':'scroll_options:'+field['ui_id']+':'+digest(position),
+                                'kind':'scroll_options','label':'Inspect more choices for '+field['label'],'field':field})
+                            continue
                         lookup=self._lookup_choice(field,answers)
                         if lookup:
                             choices.append(lookup)
@@ -512,7 +517,8 @@ class AdaptiveBrowser(Browser):
                     # Virtualized prompts initially expose only a small slice
                     # of their choices. Search the confirmed name before using
                     # a catch-all that would discard a known institution.
-                    lookup=self._lookup_choice(field,answers) if field.get('workday_prompt') and field.get('options_visible') and answer['value'].casefold()=='other' else None
+                    lookup=self._lookup_choice(field,answers) if (field.get('workday_prompt') and field.get('options_visible')
+                        and answer['value'].casefold()=='other' and 'job_source' not in answer.get('provenance',{})) else None
                     if lookup and lookup['answer']['value'].casefold()!='other':
                         choices.append(lookup)
                         continue
@@ -570,10 +576,10 @@ class AdaptiveBrowser(Browser):
     def _choose(self,view,choices):
         # Filling resolved facts is a deterministic tool operation. The planner
         # is used for navigation/competing actions, not to invent field values.
-        immediate=[a for a in choices if a['kind'] in {'options','expand','close_options','search','fill','upload','add'}]
+        immediate=[a for a in choices if a['kind'] in {'options','expand','scroll_options','close_options','search','fill','upload','add'}]
         if immediate:
-            priority={'options':0,'expand':0,'close_options':0,'search':1,'fill':2,'add':3,'upload':4}
-            return min(immediate,key=lambda action:-1 if action['kind']=='expand' or
+            priority={'options':0,'expand':0,'scroll_options':0,'close_options':0,'search':1,'fill':2,'add':3,'upload':4}
+            return min(immediate,key=lambda action:-1 if action['kind'] in {'expand','scroll_options'} or
                 action['kind'] in {'fill','search'} and action['field'].get('options_visible') else priority[action['kind']])
         if len(choices)==1:return choices[0]
         if not choices:return None
@@ -642,8 +648,42 @@ class AdaptiveBrowser(Browser):
         # stable when typing re-renders controls ahead of the original DOM index.
         return inputs.nth(indices[0]) if indices else control
 
+    def _scroll_prompt_options(self,field,*,perform=False):
+        """Inspect the current prompt's own scroll area, without selecting a value."""
+        fresh=observe(self.page)
+        actual=next((f for f in fresh['fields'] if f['ui_id']==field['ui_id']),None)
+        if not actual or not actual.get('workday_prompt') or not actual.get('option_indices'):return None
+        option=self.page.locator('[role=option]').nth(actual['option_indices'][0])
+        return option.evaluate('''(option,perform)=>{
+          const menu=option.closest('[role=listbox]');if(!menu)return null;
+          const boundary=menu.parentElement?.parentElement;
+          for(let node=option.parentElement;node&&node!==boundary;node=node.parentElement){
+            if(node.clientHeight>0&&node.scrollHeight>node.clientHeight+1&&
+                /auto|scroll/.test(getComputedStyle(node).overflowY)){
+              const end=node.scrollHeight-node.clientHeight,top=node.scrollTop;
+              if(end-top<=1)return null;
+              const next=Math.min(end,top+Math.max(1,node.clientHeight*.8));
+              if(perform)node.scrollTop=next;
+              return {top,next,end};
+            }
+          }return null;
+        }''',perform)
+
     def _perform(self,choice,view,answers,documents):
         kind=choice['kind']
+        if kind=='scroll_options':
+            self._check()
+            if not self._scroll_prompt_options(choice['field'],perform=True):raise Blocked('browser_no_progress')
+            self.option_cache.pop(choice['field']['ui_id'],None)
+            deadline=time.monotonic()+5
+            before=(choice['field'].get('options',[]),choice['field'].get('option_groups',[]))
+            while time.monotonic()<deadline:
+                self._check();fresh=observe(self.page)
+                field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
+                if field and (field.get('options',[]),field.get('option_groups',[]))!=before:break
+                self.page.wait_for_timeout(100)
+            self.memory.append({'action':choice['label'],'result':'more choices inspected'})
+            return
         if kind=='expand':
             self._prompt_option(choice['field'],choice['value'],group=True).click()
             self.option_cache.pop(choice['field']['ui_id'],None)

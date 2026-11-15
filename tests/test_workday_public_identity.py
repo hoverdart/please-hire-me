@@ -25,6 +25,23 @@ def test_official_identity_resolves_title_and_requisition_variant():
     assert not received_record(job,'remote',{'application':application})
 
 
+@pytest.mark.parametrize('req',['R_2121','R_DEPT_2121'])
+def test_requisition_underscores_are_verified_as_a_complete_authoritative_suffix(req):
+    anchor='Software-Intern_'+req
+    url=URL.rsplit('/',1)[0]+'/'+anchor
+    info=copy.deepcopy(INFO)
+    info['jobPostingInfo'].update(externalUrl=url,jobPostingId=anchor,jobReqId=req)
+    identity=public_identity({'url':url},info)
+    assert identity and identity['requisition_id']==req
+    job={'url':url,'title':identity['title'],'_workday_public_identity':identity}
+    record={'applicationId':'remote','jobPostingAnchorId':anchor,'jobRequisitionId':req,
+        'postingTitle':identity['title'],'draft':False,'active':True,'applicationType':'EXTERNAL',
+        'status':'Application Received','dateApplied':'November 15, 2026'}
+    assert received_record(job,'remote',{'application':record})
+    record['jobRequisitionId']='R_OTHER_2121'
+    assert not received_record(job,'remote',{'application':record})
+
+
 @pytest.mark.parametrize('field,value',[
     ('externalUrl',URL.replace('R123-2','R123-3')),('jobReqId','R12'),
     ('jobPostingSiteId','Other'),('jobPostingId','Compiler-Intern_R123'),

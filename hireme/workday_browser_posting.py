@@ -9,7 +9,7 @@ from .browser_observation import observe
 from .util import Blocked,digest
 from .workday_site import site_for_url
 
-VERSION=3
+VERSION=4
 
 
 def public_identity(job,data):
@@ -20,8 +20,8 @@ def public_identity(job,data):
         req=info['jobReqId'];title=info['title']
         if (current!=expected or info.get('jobPostingId')!=anchor or info.get('jobPostingSiteId')!=expected.site
                 or info.get('posted') is not True or info.get('canApply') is not True
-                or not isinstance(req,str) or not re.fullmatch(r'[A-Za-z0-9-]{1,100}',req)
-                or not re.fullmatch(re.escape(req)+r'(?:-[0-9]+)?',anchor.rsplit('_',1)[-1])
+                or not isinstance(req,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,99}',req)
+                or not re.fullmatch(r'.+_'+re.escape(req)+r'(?:-[0-9]+)?',anchor)
                 or not isinstance(title,str) or not 1<=len(title.strip())<=500 or '<' in title or '>' in title):return None
         return {'host':expected.host,'site':expected.site,'posting_anchor':anchor,'requisition_id':req,
                 'title':title.strip(),'evidence_hash':digest(info)}
@@ -74,7 +74,7 @@ def inspect_posting(page,job,checkpoint,timeout=25,identity=None):
     expected=site_for_url(job['url'])
     normalize=lambda text:' '.join(text.casefold().split())
     requisition=identity['requisition_id'] if identity else expected.path.rsplit('_',1)[-1]
-    if not re.fullmatch(r'[A-Za-z0-9-]+',requisition):raise Blocked('posting_inspection_review')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,99}',requisition):raise Blocked('posting_inspection_review')
     deadline=time.monotonic()+timeout
     while time.monotonic()<deadline:
         checkpoint()
@@ -90,7 +90,7 @@ def inspect_posting(page,job,checkpoint,timeout=25,identity=None):
         if descriptions.count()==1:
             if normalize(job['title']) not in {normalize(title) for title in view['headings']}:
                 raise Blocked('posting_changed_review','The employer posting title changed')
-            if not re.search(r'(?<![A-Za-z0-9])'+re.escape(requisition)+r'(?![A-Za-z0-9])',view['text']):
+            if not re.search(r'(?<![A-Za-z0-9_])'+re.escape(requisition)+r'(?![A-Za-z0-9_])',view['text']):
                 raise Blocked('posting_inspection_review','The rendered posting does not identify the saved requisition')
             description=descriptions.inner_text().strip()
             if description:return description

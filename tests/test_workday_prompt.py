@@ -279,6 +279,32 @@ def test_virtualized_referral_search_keeps_recorded_source_and_selects_only_a_re
         assert choices[0]['kind']=='fill'
 
 
+def test_virtualized_referral_scroll_reads_only_its_current_category_before_selecting_other(store,job,monkeypatch):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.job={**job,'answer_scope':job['host'],'source':'simplify:internships'}
+        browser.preparing=False;browser.provider=None;browser.opened=set();browser.searched=set();browser.option_cache={};browser.memory=[]
+        monkeypatch.setattr(browser,'_check',lambda:None)
+        browser.page.set_content('''<h1>My Information</h1><div data-automation-id=formField-source>
+          <label for=source>How Did You Hear About Us?*</label><div data-automation-id=multiSelectContainer>
+          <input id=source data-uxi-widget-type=selectinput data-uxi-multiselect-id=source-widget aria-required=true></div></div>
+          <div id=menu role=listbox style="height:100px;overflow-y:auto"><div id=options></div><div style="height:500px"></div></div>
+          <div id=unrelated role=listbox style="height:100px;overflow-y:auto"><div style="height:500px">Another prompt</div></div>
+          <script>function render(label){options.innerHTML='<div role=option><div data-uxi-multiselect-id=source-widget><p data-automation-id=promptOption>'+label+'</p></div></div>';}
+          render('LinkedIn');menu.onscroll=()=>render('Other');</script>''')
+        view=observe(browser.page);choices,answers,_,pending=browser._choices(view)
+        assert not answers and not pending and choices[0]['kind']=='scroll_options'
+        assert browser._choose(view,[{'kind':'fill','field':{},'id':'fill-other'},*choices])==choices[0]
+        browser._perform(choices[0],view,[],[])
+        assert browser.page.locator('#menu').evaluate('e=>e.scrollTop')>0
+        assert browser.page.locator('#unrelated').evaluate('e=>e.scrollTop')==0
+        assert browser.page.locator('#source').input_value()==''
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not pending and len(answers)==1 and answers[0]['value']=='Other'
+        assert answers[0]['provenance']=={'job_source':'simplify:internships'}
+        assert choices[0]['kind']=='fill'
+        assert not store.db.execute('SELECT 1 FROM draft_operations').fetchone()
+
+
 def test_prefilled_workday_chip_is_validated_without_opening_virtualized_choices(store,job,monkeypatch):
     store.put_facts({'phone':'+1 555 123 4567','country':'United States'})
     with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
