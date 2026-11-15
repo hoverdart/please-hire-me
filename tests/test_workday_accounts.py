@@ -196,7 +196,7 @@ def test_workday_account_to_verified_application_uses_production_browser_flow(st
         # Public posting has a native entry button; sign-in appears only after it.
         return original+'''<div data-automation-id=jobPostingDescription>Build Python and TypeScript software in San Francisco, United States.</div><p>R12345</p>
           <button id=entry data-automation-id=utilityButtonSignIn>Apply Manually</button><style>[data-automation-id=signInContent]{display:none}</style>
-          <script>entry.onclick=()=>{document.querySelector('[data-automation-id=signInContent]').style.display='block';entry.remove();};</script>'''
+          <script>entry.onclick=()=>{fetch('/wday/calypso/cxs/jobapplication/acme/External/seek/v2/button',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({applicationUri:location.href,hirerId:'synthetic-seek',redirectUri:location.href,seekHirerJobReference:null})}).catch(()=>{});document.querySelector('[data-automation-id=signInContent]').style.display='block';entry.remove();};</script>'''
     monkeypatch.setattr('tests.test_workday_accounts.auth_html',html)
     # Existing fixture transport remains the network boundary for account writes.
     # These exact official posting/receipt reads and finalizer add the application.

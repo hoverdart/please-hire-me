@@ -235,7 +235,7 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
         data['materials']=[tuple(r) for r in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
     if kind=='account':
         if job.get('host','').endswith('.myworkdayjobs.com'):
-            data['workday_account_executor']=4
+            data['workday_account_executor']=5
             policy_revision=store.db.execute("SELECT seq FROM events WHERE kind IN ('workday_registration_configured','workday_registration_disabled') ORDER BY seq DESC LIMIT 1").fetchone()
             if policy_revision:data['workday_registration_revision']=policy_revision['seq']
         login=store.db.execute("SELECT seq FROM events WHERE kind='browser_login_completed' AND subject=? ORDER BY seq DESC LIMIT 1",(job['host'],)).fetchone()

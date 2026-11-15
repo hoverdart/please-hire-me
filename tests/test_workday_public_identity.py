@@ -57,3 +57,19 @@ def test_verified_official_record_refreshes_canonical_title_before_dom_check(mon
     monkeypatch.setattr('hireme.workday_browser_posting.inspect_posting',inspect)
     current=verified_posting(page,JOB,lambda:None)
     assert current['description']=='Official description' and JOB['title']=='Old listing title'
+
+
+@pytest.mark.parametrize('change,ignored',[
+    ('none',True),('tenant',False),('site',False),('host',False),('query',False),('resource',False),('method',False),
+])
+def test_optional_seek_bootstrap_is_suppressed_only_for_exact_current_site(change,ignored):
+    from types import SimpleNamespace
+    from hireme.workday_site import optional_provider_bootstrap
+    url='https://synthetic.wd5.myworkdayjobs.com/wday/calypso/cxs/jobapplication/synthetic/External/seek/v2/button'
+    if change=='tenant':url=url.replace('/synthetic/','/other/')
+    if change=='site':url=url.replace('/External/','/Other/')
+    if change=='host':url=url.replace('synthetic.wd5','other.wd5')
+    if change=='query':url+='?different=true'
+    if change=='resource':url=url.replace('/button','/submit')
+    request=SimpleNamespace(url=url,method='GET' if change=='method' else 'POST')
+    assert optional_provider_bootstrap(JOB,request) is ignored

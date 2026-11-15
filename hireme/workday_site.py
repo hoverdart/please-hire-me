@@ -39,6 +39,15 @@ def is_workday_url(url):
     except (ValueError,TypeError):return False
 
 
+def optional_provider_bootstrap(job,request):
+    """Suppress the optional SEEK button lookup, never grant a provider write."""
+    try:site=site_for_url(job['url']);parsed=urlsplit(request.url)
+    except (ValueError,TypeError,KeyError):return False
+    return (request.method=='POST' and parsed.scheme=='https' and parsed.netloc==site.host
+        and not parsed.query and not parsed.fragment
+        and parsed.path==f'/wday/calypso/cxs/jobapplication/{site.tenant}/{site.site}/seek/v2/button')
+
+
 def asset_read(host,request):
     """The Workday client fetches translations as JSON, not script resources."""
     match=HOST.fullmatch(host or '')

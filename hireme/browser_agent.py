@@ -94,6 +94,8 @@ class AdaptiveBrowser(Browser):
                 if parsed.hostname not in self.host_cache:self.host_cache[parsed.hostname]=public_host(parsed.hostname)
                 safe=bool(self.host_cache[parsed.hostname])
             if not safe:return route.abort()
+            from .workday_site import optional_provider_bootstrap
+            if self.job and optional_provider_bootstrap(self.job,request):return route.abort()
             from .workday_accounts import nonce_read,remember_nonce
             if same and nonce_read(self,request):
                 response=route.fetch(max_redirects=0,max_retries=0,timeout=10000)
