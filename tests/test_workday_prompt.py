@@ -254,6 +254,31 @@ def test_virtualized_school_prompt_searches_confirmed_institution_before_other(s
         assert not answers and not pending
 
 
+def test_virtualized_referral_search_keeps_recorded_source_and_selects_only_a_returned_other_choice(store,job,monkeypatch):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.job={**job,'answer_scope':job['host'],'source':'simplify:internships'}
+        browser.preparing=False;browser.provider=None;browser.opened=set();browser.searched=set();browser.option_cache={}
+        monkeypatch.setattr(browser,'_check',lambda:None)
+        html='''<h1>My Information</h1><div data-automation-id=formField-source>
+          <label for=source>How Did You Hear About Us?*</label><div data-automation-id=multiSelectContainer>
+          <input id=source data-uxi-widget-type=selectinput data-uxi-multiselect-id=source-widget aria-required=true></div></div>
+          <div role=option><div data-uxi-multiselect-id=source-widget><p data-automation-id=promptOption>LinkedIn</p></div></div>'''
+        browser.page.set_content(html)
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not answers and not pending
+        assert len(choices)==1 and choices[0]['kind']=='search' and choices[0]['query_text']=='Simplify'
+        field=choices[0]['field'];browser.searched.add(field['ui_id'])
+        browser.search_queries={field['ui_id']:{'Simplify'}}
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not answers and not pending and choices[0]['query_text']=='Other'
+        browser.search_queries[field['ui_id']].add('Other')
+        browser.page.set_content(html.replace('LinkedIn','Other'))
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not pending and len(answers)==1 and answers[0]['value']=='Other'
+        assert answers[0]['provenance']=={'job_source':'simplify:internships'}
+        assert choices[0]['kind']=='fill'
+
+
 def test_prefilled_workday_chip_is_validated_without_opening_virtualized_choices(store,job,monkeypatch):
     store.put_facts({'phone':'+1 555 123 4567','country':'United States'})
     with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:

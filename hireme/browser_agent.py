@@ -372,8 +372,13 @@ class AdaptiveBrowser(Browser):
             if error.reason in {'paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'}:raise
             return None
         provenance=query.get('provenance',{}) if query else {}
-        if provenance.get('fact_key') not in {'school','degree','major','city','location','country','state'} and 'history_entry_id' not in provenance:return None
-        candidates=[query['value']]
+        discovery=(isinstance(provenance.get('job_source'),str)
+            and provenance['job_source']==self.job.get('source')
+            and provenance['job_source'].startswith(('gh:','ash:','lv:','portal:','simplify:')))
+        if not discovery and provenance.get('fact_key') not in {'school','degree','major','city','location','country','state'} and 'history_entry_id' not in provenance:return None
+        # These are read-only menu queries, never approved selections. Resolve
+        # the returned exact choices again before a value can be saved.
+        candidates=(['Simplify','Other'] if provenance['job_source'].startswith('simplify:') else ['Other']) if discovery else [query['value']]
         if field.get('workday_prompt') and (provenance.get('fact_key')=='major' or provenance.get('history_key')=='field_of_study'):
             # Search terms narrow a menu; only the original confirmed value
             # can authorize a selected answer. Native prompts often cannot
@@ -490,6 +495,17 @@ class AdaptiveBrowser(Browser):
                     continue
             if field['type']=='combobox' and field['options']:
                 self.option_cache[field['ui_id']]={k:field[k] for k in ('options','option_values') if k in field}
+                if field.get('workday_prompt') and field.get('options_visible'):
+                    from .answers import _discovery_answer
+                    try:
+                        discovery=_discovery_answer(field['label'],[],self.job)
+                        listed=_discovery_answer(field['label'],field['options'],self.job) if discovery else None
+                    except Blocked:discovery=None;listed=None
+                    if discovery and not listed:
+                        lookup=self._lookup_choice(field,answers)
+                        if lookup:
+                            choices.append(lookup)
+                            continue
             try:
                 answer=self._resolve(field,answers)
                 if answer:
