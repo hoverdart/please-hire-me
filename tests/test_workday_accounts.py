@@ -284,3 +284,18 @@ def test_native_account_controls_have_time_to_finish_mounting(store,account_brow
     browser.page.goto(URL)
     assert authenticate(browser)
     assert state['writes']==['register','login']
+
+
+@pytest.mark.parametrize('data,expected',[
+    ({'type':'ERROR','message':'Private error'},'rejected'),
+    ({'type':'SUCCESS'},'accepted'),({'widget':'root'},'accepted'),
+    ({'widget':{'unknown':'shape'}},None),({'type':'INFO','message':'Unverified'},None),
+])
+def test_native_account_response_diagnostics_exclude_messages(store,account_browser,data,expected):
+    from hireme.workday_accounts import AuthGrant
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser;grant=AuthGrant(browser,'login',credentials(store,browser.job,create=True))
+    grant.capture(200,data)
+    assert grant.result==expected
+    detail=store.db.execute("SELECT detail FROM events WHERE kind='workday_account_native_response' ORDER BY seq DESC LIMIT 1").fetchone()[0]
+    assert not any(value in detail for value in ('Private error','Unverified',SECRET))

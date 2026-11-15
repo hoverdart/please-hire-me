@@ -92,15 +92,22 @@ class AuthGrant:
             try:data=json.loads(raw)
             except (ValueError,UnicodeError):data=None
             self.capture(response.status,data)
-        except Exception:return
+        except Exception as error:
+            self.store.event('workday_account_response_unreadable',self.key,{'operation':self.kind,'error':type(error).__name__})
+            return
 
     def capture(self,status,data):
         self.status=status
         if not isinstance(data,dict):return
+        marker=data.get('type');widget=data.get('widget')
+        self.store.event('workday_account_native_response',self.key,{
+            'operation':self.kind,'status':status,'has_message':'message' in data,
+            'response_type':marker if isinstance(marker,str) and marker in {'ERROR','SUCCESS','ALERT','INFO','WARNING'} else 'other',
+            'widget':widget if isinstance(widget,str) and widget in {'root','redirect'} else 'other'})
         # Interpret only fixed protocol markers. Raw messages may contain the
         # applicant email or credential material and never leave this object.
         if data.get('type')=='ERROR':self.result='rejected'
-        elif 200<=status<300 and (data.get('type')=='SUCCESS' or data.get('widget') in {'root','redirect'}):self.result='accepted'
+        elif 200<=status<300 and (data.get('type')=='SUCCESS' or data.get('widget') in ('root','redirect')):self.result='accepted'
         self.data=data
 
 
