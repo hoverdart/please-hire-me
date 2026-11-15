@@ -830,3 +830,19 @@ def test_ten_job_email_regression_reuses_confirmed_facts_and_keeps_real_manual_b
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='submit_intent'").fetchone()[0] == 5
     assert not network.unexpected
     assert len(network.mailbox.messages_sent) == 1
+
+
+@pytest.mark.parametrize('apostrophe',["'",'’'])
+def test_native_ashby_pipeline_accepts_fresh_contracted_employer_receipt_without_retry(store,monkeypatch,apostrophe):
+    import sys
+    from hireme.application_evidence import snapshot
+    monkeypatch.setattr(sys.modules[__name__],'RECEIPT',
+        f'Thank you for your interest in Acme! We{apostrophe}ve received your application, and our team will review it.')
+    posting=Posting('ashby','Synthetic contracted success receipt')
+    network=harness(store,monkeypatch,[posting]);result=network.run()
+    assert result['confirmed']==result['attempts']==1,result
+    app=store.db.execute('SELECT id,state FROM applications').fetchone()
+    assert app['state']=='confirmed' and snapshot(store,app['id'])['verification_method']=='native_ats_acknowledgement'
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='submission_receipt_verified'").fetchone()[0]==1
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
+    assert network.run()['attempts']==0 and not network.unexpected

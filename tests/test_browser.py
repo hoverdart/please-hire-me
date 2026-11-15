@@ -1751,3 +1751,24 @@ def test_employer_privacy_notice_cannot_mask_an_application_restriction(store,at
         with pytest.raises(Blocked,match='human_work_sample'):browser.apply(local_job(store,ats))
     assert not ats[1]
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('apostrophe',["'",'’'])
+def test_contracted_received_receipt_is_fresh_but_not_a_paraphrase_of_old_evidence(apostrophe):
+    text=f'Thank you for your interest in Acme! We{apostrophe}ve received your application, and our recruiting team will review it.'
+    assert submission_receipt(text,'Name\nEmail\nSubmit application')
+    for before in ('We received your application.','We have received your application.',
+                   'We have successfully received your application.'):
+        assert not submission_receipt(text,before)
+
+
+@pytest.mark.parametrize('text',[
+    "Thank you for applying. We've not received your application.",
+    'Thank you for applying. We’ve not yet received your application.',
+    "Thank you for applying. We haven't received your application.",
+    'Thank you for applying. We have never received your application.',
+    'Thank you for applying. We did not receive your application.',
+    "When we've received your application, we'll contact you.",
+])
+def test_unreceived_or_conditional_application_never_counts_as_a_receipt(text):
+    assert not submission_receipt(text)

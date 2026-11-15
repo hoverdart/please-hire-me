@@ -207,9 +207,10 @@ CONFIRMED=re.compile(
     r"(?:^|[.!?\n])\s*(?:"
     r"thank you for (?:applying\b|submitting (?:your |the |an )?application\b)|"
     r"(?:your |the )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b|"
-    r"we (?:have |have successfully |successfully )?received your application\b|"
+    r"we(?: (?:have |have successfully |successfully )?|['’]ve (?:successfully )?)received your application\b|"
     r"you have successfully applied\b)",re.I)
 INCOMPLETE_SUBMISSION=re.compile(
+    r"\bwe(?:(?: have (?:not(?: yet)?|never)|['’]ve (?:not(?: yet)?|never)| haven['’]t(?: yet)?) (?:successfully )?received| (?:did not|didn['’]t|never) receive) your application\b|"
     r"\b(?:your |the )?application (?:(?:has |was |is )?(?:not |never )|(?:hasn|wasn|isn)['’]t )(?:been )?(?:successfully )?(?:submitted|received|complete)\b|"
     r"\b(?:your |the )?application (?:could not|couldn['’]t|cannot|can['’]t) be (?:successfully )?(?:submitted|received|processed)\b|"
     r"\b(?:application )?submission (?:has |was |is )?(?:failed|unsuccessful)\b|"
@@ -225,7 +226,13 @@ def submission_receipt(text,before=''):
     if INCOMPLETE_SUBMISSION.search(text):return False
     # Text already present in the posting cannot prove that this click succeeded.
     # Compare acknowledged phrases, ignoring layout and capitalization changes.
-    markers=lambda value:{' '.join(match[0].lstrip('.!?\n').casefold().split()) for match in CONFIRMED.finditer(value)}
+    def markers(value):
+        result=set()
+        for match in CONFIRMED.finditer(value):
+            marker=' '.join(match[0].lstrip('.!?\n').casefold().split())
+            if re.match(r"^we(?: |['’]ve )",marker):marker='we have received your application'
+            result.add(marker)
+        return result
     return bool(markers(text)-markers(before) or (
         re.search(r"thanks again for applying[!.]",text,re.I) and
         re.search(r"our talent team will carefully review your qualifications and experience",text,re.I) and
