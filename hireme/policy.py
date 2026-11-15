@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 13
+ELIGIBILITY_VERSION = 14
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -196,6 +196,17 @@ def _summer_2027(job):
     title=job.get('title','')
     seasons=set(re.findall(r'\b(winter|spring|summer|fall|autumn)\b',title,re.I))
     if seasons:
+        description=job.get('description','')
+        # A slash title can advertise separate cohorts. Require the employer's
+        # explicit, separate session lengths and dates before choosing summer;
+        # incidental summer prose or a combined placement cannot qualify.
+        if ({s.casefold() for s in seasons}=={'spring','summer'}
+                and re.search(r'\bspring\s*/\s*summer\s+2027\b',title,re.I)
+                and set(re.findall(r'\b20[0-9]{2}\b',title))=={'2027'}
+                and re.search(r'(?im)^[ \t]*Spring:[ \t]*(?:Around[ \t]+)?16[ \t]+weeks?[ \t]*\(January[ \t]*[-–][ \t]*April\)[ \t]*$',description)
+                and re.search(r'(?im)^[ \t]*Summer:[ \t]*(?:Around[ \t]+)?12[ \t]+weeks?[ \t]*\(May[ \t]*[-–][ \t]*August\)[ \t]*$',description)
+                and not re.search(r'(?:must|required|commit).{0,80}\bboth\b.{0,40}\bspring\b.{0,25}\bsummer\b',description,re.I|re.S)):
+            return True
         # Title intent wins over a different program mentioned in body prose:
         # "Software Intern (2027 Start) - Winter" is not a summer posting.
         return {s.casefold() for s in seasons}=={'summer'} and bool(re.search(r'\b2027\b',title))

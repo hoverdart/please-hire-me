@@ -296,3 +296,24 @@ def test_next_internship_motivation_uses_writing_sources_not_fact_matching(store
     field={'label':'What are you most excited to work on in your next internship?','type':'textarea','required':True,'options':[],'maxlength':-1}
     assert category(field['label'])=='motivation'
     assert resolve(store,job['host'],field,Model(),context=job)['provenance']['tailored']
+
+
+def test_separate_explicit_spring_and_summer_cohorts_can_select_summer_only(store,job):
+    store.update_settings({'seniority':['summer-internship']})
+    store.put_facts({'earliest_start':'2027-05','latest_start':'2027-06'})
+    candidate={**job,'title':'Software Engineering Intern - Spring/Summer 2027',
+        'description':job['description']+'\nSpring: Around 16 weeks (January - April)\nSummer: Around 12 weeks (May - August)\n'}
+    assert eligible(candidate,store.settings(),store.facts())[0]>0
+
+
+@pytest.mark.parametrize('title,description',[
+    ('Spring/Summer 2027','Learn about our Summer 2027 program.'),
+    ('Spring & Summer 2027','Spring: Around 16 weeks (January - April)\nSummer: Around 12 weeks (May - August)'),
+    ('Spring/Summer 2026','Spring: Around 16 weeks (January - April)\nSummer: Around 12 weeks (May - August)'),
+    ('Spring/Summer 2027','Spring: Around 16 weeks (January - April)\nSummer: Around 12 weeks (May - August)\nMust commit to both Spring and Summer.'),
+    ('Spring/Summer 2027','Spring: Around 16 weeks (January - April)\nSummer: Around 24 weeks (May - October)'),
+])
+def test_season_choices_require_exact_separate_summer_cohort_evidence(store,job,title,description):
+    store.update_settings({'seniority':['summer-internship']})
+    with pytest.raises(Blocked,match='internship_out_of_scope'):
+        eligible({**job,'title':'Software Intern - '+title,'description':job['description']+'\n'+description},store.settings(),store.facts())
