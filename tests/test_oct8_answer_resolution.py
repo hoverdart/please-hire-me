@@ -119,6 +119,7 @@ def test_source_rejection_is_a_model_failure_instead_of_missing_personal_informa
 def test_new_confirmed_answers_are_independent_and_replayable(store,job,package):
     store.put_facts({'over_18':'Yes','fulltime_start':'2028-05-19','nights_weekends':'Yes','robots_experience':'Yes','humanoids_experience':'No'})
     pairs=[(field('At the time of application, are you 18+ years of age?','combobox',['Yes','No']),'Yes'),
+           (field('Are you at least 18 years of age?','combobox',['Yes','No']),'Yes'),
            (field('When will you be available to work as a full-time, permanent employee? Full-time means working 40 hours per week while being based in San Mateo, CA headquarters.','combobox',['Summer 2027','Spring 2028','Summer 2028']),'Spring 2028'),
            (field('Are you willing and able to work nights and weekends?','yesno',['Yes','No']),'Yes'),
            (field('Do you have experience working with robots?','yesno',['Yes','No']),'Yes'),

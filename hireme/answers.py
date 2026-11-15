@@ -7,7 +7,7 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 9
+AUTOMATIC_ANSWER_VERSION = 10
 WRITING_SOURCE_VERSION = 4
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
@@ -98,7 +98,7 @@ def field_key(label):
     if re.fullmatch(r'are you (?:currently )?registered with finra',label):return 'finra_registered'
     if re.fullmatch(r'(?:are you actively maintaining|do you (?:actively )?(?:hold|maintain)) (?:any )?securities licenses',label):return 'securities_licenses'
     if re.fullmatch(r'(?:alternate|alternative|secondary|additional|other|backup) e-?mail(?: address)?',label):return 'alternate_email'
-    if re.fullmatch(r'(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)',label):return 'over_18'
+    if re.fullmatch(r'(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years (?:old|of age))',label):return 'over_18'
     if re.fullmatch(r'are you willing and able to work nights and weekends',label):return 'nights_weekends'
     if re.fullmatch(r'do you have experience working with robots',label):return 'robots_experience'
     if re.fullmatch(r'have you worked with humanoids',label):return 'humanoids_experience'
@@ -816,7 +816,7 @@ def _compatible_binding(key, label):
         'government_official':r'government official|public (?:position|function)|politically exposed|holding such a position',
         'finra_registered':r'^are you (?:currently )?registered with finra[? *]*$',
         'securities_licenses':r'^(?:are you actively maintaining|do you (?:actively )?(?:hold|maintain)) (?:any )?securities licenses[? *]*$',
-        'over_18':r'^(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years old)[? *]*$',
+        'over_18':r'^(?:at the time of application,? )?are you (?:18\+ years of age|18 or older|at least 18 years (?:old|of age))[? *]*$',
         'fulltime_start':r'^when will you be available to work as a full.time,? permanent employee\?|^if offered a full.time position upon graduation,? what is your earliest available start date[? *]*$|^if given a return offer(?: \(not guaranteed\))?,? what year would you be able to start[? *]*$',
         'nights_weekends':r'^are you willing and able to work nights and weekends[? *]*$',
         'robots_experience':r'^do you have experience working with robots[? *]*$',

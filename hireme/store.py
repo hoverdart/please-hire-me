@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS report_dispatch (report_id TEXT PRIMARY KEY, message_
  outcome TEXT, checked TEXT);
 CREATE TABLE IF NOT EXISTS mail_consumptions (message_id TEXT PRIMARY KEY, challenge_id TEXT NOT NULL,
  consumed REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS gmail_api_quota (id INTEGER PRIMARY KEY CHECK(id=1), next_allowed REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS recruiting_feedback (id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL,
  message_id TEXT NOT NULL, received TEXT NOT NULL, sender TEXT NOT NULL, subject TEXT NOT NULL,
  excerpt TEXT NOT NULL, category TEXT NOT NULL, candidates TEXT NOT NULL, match_reason TEXT NOT NULL,
