@@ -476,6 +476,13 @@ class AdaptiveBrowser(Browser):
                         if error.reason in {'paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'}:raise
                         group=None
                     if group:
+                        key=(field['ui_id'],group['value'],tuple(field['option_groups']))
+                        if key in getattr(self,'expanded_groups',set()):
+                            lookup=self._lookup_choice(field,answers)
+                            if lookup:choices.append(lookup)
+                            elif field['required']:
+                                pending.append(({**field,**self.option_cache.get(field['ui_id'],{})},'required_answer_missing'))
+                            continue
                         choices.append({'id':'expand:'+field['ui_id']+':'+digest(group['value']),
                             'kind':'expand','label':'Inspect '+group['value']+' choices for '+field['label'],
                             'field':field,'value':group['value']})
@@ -692,17 +699,34 @@ class AdaptiveBrowser(Browser):
             self.memory.append({'action':choice['label'],'result':'more choices inspected'})
             return
         if kind=='expand':
-            self._prompt_option(choice['field'],choice['value'],group=True).click()
+            before=(choice['field'].get('options',[]),choice['field'].get('option_groups',[]))
+            option=self._prompt_option(choice['field'],choice['value'],group=True)
+            # Workday arms the nested menu on pointer entry. Let that native
+            # focus settle; an immediate pointer move and click can lose the
+            # expansion. Some versions open children on hover alone.
+            option.hover();self.page.wait_for_timeout(700)
+            fresh=observe(self.page)
+            field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
+            current=(field.get('options',[]),field.get('option_groups',[])) if field else ([],[])
+            expanded=any(current) and current!=before
+            if not expanded:
+                option=self._prompt_option(choice['field'],choice['value'],group=True)
+                arrow=option.locator('svg.wd-icon-chevron-right-small').filter(visible=True)
+                if arrow.count()>1:raise Blocked('option_mismatch',choice['field']['label'])
+                (arrow if arrow.count()==1 else option).click()
             self.option_cache.pop(choice['field']['ui_id'],None)
             deadline=time.monotonic()+5
-            before=(choice['field'].get('options',[]),choice['field'].get('option_groups',[]))
-            while time.monotonic()<deadline:
+            while not expanded and time.monotonic()<deadline:
                 self._check();fresh=observe(self.page)
                 field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
                 if field:
                     current=(field.get('options',[]),field.get('option_groups',[]))
-                    if any(current) and current!=before:break
+                    expanded=any(current) and current!=before
+                    if expanded:break
                 self.page.wait_for_timeout(100)
+            if not expanded:raise Blocked('unsupported_widget','The native choice group did not expose its child options')
+            if not hasattr(self,'expanded_groups'):self.expanded_groups=set()
+            self.expanded_groups.add((choice['field']['ui_id'],choice['value'],tuple(choice['field'].get('option_groups',[]))))
             self.memory.append({'action':choice['label'],'result':'choices expanded'})
             return
         if kind=='close_options':
@@ -1019,7 +1043,7 @@ class AdaptiveBrowser(Browser):
                 raise Blocked('unapproved_destination')
         self.allowed_origin=origin(self.test_url or entry);self.current_host=urlsplit(self.allowed_origin).hostname
         self.stopped_reason=None;self.completed_steps=[];self.uploads={};self.staged_documents={};self.memory=[];self.opened=set();self.searched=set();self.search_queries={};self.option_cache={}
-        self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={};self.frame_entries=0
+        self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={};self.frame_entries=0;self.expanded_groups=set()
         self.workday_application_hash=None
         self.account_operation=None;self.account_posting_verified=False;self.workday_account_attempted=False;self.account_tokens={}
         self.job['answer_scope']=job.get('answer_scope') or job['host']+'|'+self.store.company(job['company'])

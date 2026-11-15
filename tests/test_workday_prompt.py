@@ -470,3 +470,64 @@ def test_recorded_simplify_listing_uses_exact_platform_or_career_website_group()
     assert _discovery_answer(question,['LinkedIn','SimplifyJobs','Other'],context)['value']=='SimplifyJobs'
     assert _discovery_answer(question,groups,{'source':'user'}) is None
     assert _discovery_answer(question,groups,{'source':'gh:fixture'}) is None
+
+
+def test_group_expansion_clicks_its_visible_native_chevron_once(store):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content(PROMPT)
+        browser.page.locator('#source').click()
+        field=observe(browser.page)['fields'][0]
+        browser.page.get_by_role('option',name='Website not checked',exact=True).evaluate('''node=>{
+          node.onclick=null;
+          const arrow=document.createElementNS('http://www.w3.org/2000/svg','svg');
+          arrow.classList.add('wd-icon-chevron-right-small');
+          arrow.setAttribute('width','24');arrow.setAttribute('height','24');
+          arrow.style.background='black';
+          arrow.addEventListener('click',()=>{window.groupClicks=(window.groupClicks||0)+1;
+            menu.replaceChildren(option('Company Website',false));});
+          node.querySelector('[data-uxi-multiselect-id]').append(arrow);
+        }''')
+        browser._check=lambda:None;browser.option_cache={};browser.memory=[]
+        browser._perform({'kind':'expand','field':field,'value':'Website','label':'Inspect Website'},
+            observe(browser.page),[],[])
+        assert browser.page.evaluate('window.groupClicks')==1
+        assert observe(browser.page)['fields'][0]['options']==['Company Website']
+
+
+@pytest.mark.parametrize('hover_opens',[False,True])
+def test_group_focus_settles_before_one_click_and_hover_opening_is_not_clicked_again(store,hover_opens):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content(PROMPT)
+        browser.page.locator('#source').click()
+        field=observe(browser.page)['fields'][0]
+        browser.page.get_by_role('option',name='Website not checked',exact=True).evaluate('''(node,hoverOpens)=>{
+          window.groupClicks=0;window.armed=false;
+          node.onmouseenter=()=>setTimeout(()=>{window.armed=true;
+            if(hoverOpens)menu.replaceChildren(option('Company Website',false));},200);
+          node.onclick=()=>{window.groupClicks++;
+            if(window.armed)menu.replaceChildren(option('Company Website',false));};
+        }''',hover_opens)
+        browser._check=lambda:None;browser.option_cache={};browser.memory=[]
+        browser._perform({'kind':'expand','field':field,'value':'Website','label':'Inspect Website'},
+            observe(browser.page),[],[])
+        assert browser.page.evaluate('window.groupClicks')==(0 if hover_opens else 1)
+        assert observe(browser.page)['fields'][0]['options']==['Company Website']
+
+
+def test_source_search_returning_parent_does_not_expand_the_same_exhausted_group_again(store,job):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content(PROMPT.replace("option('Website',true)","option('Career/Networking Website',true)"))
+        browser.page.locator('#source').click()
+        field=observe(browser.page)['fields'][0]
+        browser.job={**job,'answer_scope':job['host'],'source':'simplify:internships'}
+        browser.provider=None;browser._check=lambda:None
+        browser.opened={field['ui_id']};browser.searched={field['ui_id']}
+        browser.search_queries={field['ui_id']:{'Simplify','Other'}}
+        browser.expanded_groups={(field['ui_id'],'Career/Networking Website',tuple(field['option_groups']))}
+        browser.option_cache={field['ui_id']:{'options':['Glassdoor','LinkedIn'],'option_values':['Glassdoor','LinkedIn']}}
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not any(choice['kind']=='expand' for choice in choices)
+        assert not any(answer['field']['ui_id']==field['ui_id'] for answer in answers)
+        missing=[(f,reason) for f,reason in pending if f['ui_id']==field['ui_id']]
+        assert missing[0][0]['options']==['Glassdoor','LinkedIn']
+        assert missing[0][1]=='required_answer_missing'
