@@ -157,3 +157,24 @@ def test_empty_draft_requires_its_exact_acknowledged_native_creation(store,saved
     proof=verify(agent,job,info)
     assert bool(proof) is allowed
     if not allowed:assert not reads
+
+
+def test_acknowledged_empty_owned_draft_continues_via_candidate_home_without_reusing_preview_answers(store,saved):
+    from hireme.browser_agent import AdaptiveBrowser
+    agent,job,info,_,_,operation=saved
+    packet=json.loads(store.db.execute('SELECT package FROM applications WHERE job_id=?',(job['id'],)).fetchone()[0])
+    packet['browser_agent']['completed_steps']=[]
+    store.prepare(job,packet)
+    store.db.execute("UPDATE draft_operations SET operation='ui:entry' WHERE id=?",(operation,))
+    job['_workday_saved_application']=verify(agent,job,info)
+    agent.allowed_origin='https://acme.wd12.myworkdayjobs.com';agent.resume_workday=False
+    assert AdaptiveBrowser._restore_package(agent) is None
+    assert agent.resume_workday is True
+
+
+def test_known_owned_record_cannot_initialize_another_workday_application(store,saved):
+    agent,operation=operation_for(store,saved,'entry')
+    request=SimpleNamespace(url='https://acme.wd12.myworkdayjobs.com/wday/cxs/acme/jobpostings/opaque-posting/jobapplications',
+        method='POST',headers={'content-type':'application/json'},post_data_buffer=b'{}')
+    assert operation.allow(request) is False
+    assert operation.denied and operation.record is None and not operation.requests

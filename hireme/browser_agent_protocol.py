@@ -259,8 +259,10 @@ class UIOperation:
     def _workday_path(self,request,tail):
         if not self.job.get('host','').endswith('.myworkdayjobs.com'):return None
         from .workday_site import site_for_url
-        site=site_for_url(self.job['url']);parsed=urlsplit(request.url)
-        if parsed.scheme!='https' or parsed.netloc!=site.host:return None
+        parsed=urlsplit(request.url)
+        if parsed.scheme!='https' or parsed.netloc!=self.job['host']:return None
+        site=site_for_url(self.job['url'])
+        if parsed.netloc!=site.host:return None
         return re.fullmatch(r'/wday/(?:calypso/)?cxs/(?:jobapplication/)?'+re.escape(site.tenant)+tail,parsed.path)
 
     def allow(self,request):
@@ -300,6 +302,10 @@ class UIOperation:
             self.upload_sent=self.upload_sent or carries_file
         request_key=request_identity(request)
         if request_key in self.requests:
+            self.denied=True
+            return False
+        creation=self._workday_path(request,r'/jobpostings/[A-Za-z0-9._~-]+/jobapplications')
+        if creation and getattr(self.agent,'workday_application_hash',None):
             self.denied=True
             return False
         record=self._workday_path(request,r'/jobapplication/([A-Za-z0-9._~-]+)/[^/]+(?:/.*)?')

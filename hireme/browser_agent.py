@@ -933,6 +933,10 @@ class AdaptiveBrowser(Browser):
             # No answer, upload or completed step will be reused. A newly
             # confirmed value can invalidate the old local preview; resolve a
             # fresh package instead of requiring its stale answers to validate.
+            remote=metadata.get('remote_application_hash')
+            if (transient and remote and remote==getattr(self,'workday_application_hash',None)
+                    and self.job.get('_workday_saved_application',{}).get('remote_application_hash')==remote):
+                self.resume_workday=True
             return None
         # Adding a newly confirmed fact must not strand otherwise unchanged
         # saved steps. Each recorded answer/document is revalidated against
