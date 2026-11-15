@@ -107,6 +107,17 @@ def _reviewed_option(store,row,key,value,field,provider):
     return choice
 
 
+def _joint_discipline(value,field):
+    """Classify a joint program without changing its confirmed full name."""
+    if not re.fullmatch(r'field of study\s*[*✱]?',field.get('label','').strip(),re.I):return None
+    parts=re.split(r'\s+(?:and|&)\s+',value,flags=re.I)
+    if not 2<=len(parts)<=4:return None
+    normal=lambda text:re.sub(r'[^a-z0-9]','',re.sub(r'\bsciences\b','science',text.casefold()))
+    allowed={normal(part) for part in parts}
+    matches=[option for option in field.get('options',[]) if normal(option) in allowed]
+    return matches[0] if len(matches)==1 else None
+
+
 def resolve_field(store, field, provider=None):
     """Bind each answer to a confirmed entry/key; a DOM row cannot create a claim."""
     entry_id, key = field.get('history_entry_id'), field.get('history_key')
@@ -137,7 +148,8 @@ def resolve_field(store, field, provider=None):
             try:mapped=_option_value({'degree':'degree','institution':'school','field_of_study':'major'}[key],value,options)
             except Blocked as error:
                 if error.reason!='option_mismatch':raise
-                mapped=_reviewed_option(store,row,key,value,field,provider)
+                mapped=_joint_discipline(value,field) if key=='field_of_study' else None
+                if mapped is None:mapped=_reviewed_option(store,row,key,value,field,provider)
             matches=[mapped] if mapped in options else []
         if len(matches) != 1:
             raise Blocked('mapping_review', field.get('label', 'History entry'))

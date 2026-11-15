@@ -7,7 +7,7 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 14
+AUTOMATIC_ANSWER_VERSION = 15
 WRITING_SOURCE_VERSION = 4
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
@@ -376,6 +376,15 @@ def _discovery_answer(label, options, context):
         if len(matches)==1:return {'value':matches[0],'provenance':{'job_source':source}}
     if len(unions)==1:return {'value':unions[0],'provenance':{'job_source':source}}
     return None
+
+
+def _adult_or_permit_answer(store,field):
+    label=' '.join(field['label'].split()).rstrip(' *✱')
+    if not re.fullmatch(r'Are you at least 18 years of age\? Or, if you are under age 18, can you provide necessary work permits\?',label,re.I):return None
+    fact=store.facts().get('over_18')
+    if not fact or fact['value']!='Yes':return None
+    if field.get('options') and field['options'].count('Yes')!=1:return None
+    return {'value':'Yes','provenance':{'adult_disjunction_revision':fact['revision']}}
 
 
 def _phone_country_answer(store,field):
@@ -1139,7 +1148,7 @@ def resolve(store, host, field, provider=None, context=None):
     graduation_confirmation=_graduation_confirmation(store,field)
     saved=None if graduation_confirmation or student_confirmation else store.saved_answer(host,label,options,field=field,context=context)
     if not saved:
-        ordinary=_phone_country_answer(store,field) or _employer_authorization_support(store,field,context) or _us_eeo_ethnicity(store,field,context)
+        ordinary=_adult_or_permit_answer(store,field) or _phone_country_answer(store,field) or _employer_authorization_support(store,field,context) or _us_eeo_ethnicity(store,field,context)
         if ordinary:
             store.resolve_known_question(host,label,options,field=field,context=context)
             return {'field':field,**ordinary}

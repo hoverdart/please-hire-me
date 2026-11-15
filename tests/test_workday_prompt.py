@@ -553,3 +553,14 @@ def test_simplify_can_use_an_observed_other_career_site_without_claiming_another
     answer=_discovery_answer('How Did You Hear About Us?*',options,{'source':'simplify:internships'})
     assert answer=={'value':'Other Career Site','provenance':{'job_source':'simplify:internships'}}
     assert _discovery_answer('How Did You Hear About Us?*',['Simply Hired','Other Recruitment Marketing'],{'source':'simplify:internships'}) is None
+
+
+def test_adult_satisfies_age_or_minor_permit_question_without_inventing_permit_status(store,job):
+    from hireme.answers import resolve
+    field={'label':'Are you at least 18 years of age? Or, if you are under age 18, can you provide necessary work permits?*',
+           'type':'select','required':True,'options':['Yes','No']}
+    store.put_facts({'over_18':'Yes'})
+    answer=resolve(store,job['host'],field,context=job)
+    assert answer['value']=='Yes' and 'adult_disjunction_revision' in answer['provenance']
+    store.put_facts({'over_18':'No'})
+    with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],field,context=job)
