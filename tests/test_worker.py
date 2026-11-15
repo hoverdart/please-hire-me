@@ -147,11 +147,11 @@ def test_time_budget_stops_discovery_before_the_next_source(store, monkeypatch):
     clock = [100.0]; visited = []
     monkeypatch.setattr('hireme.worker.time.monotonic', lambda: clock[0])
     store.update_settings({'cycle_timeout_seconds': 1})
-    def lists(s):
+    def lists(s,net=None):
         visited.append('lists'); clock[0] += 1
     monkeypatch.setattr('hireme.worker.sweep_lists', lists)
-    monkeypatch.setattr('hireme.worker.sweep_portals', lambda s: visited.append('portals'))
-    monkeypatch.setattr('hireme.worker.sweep_boards', lambda s, r: visited.append('boards'))
+    monkeypatch.setattr('hireme.worker.sweep_portals', lambda s,net=None: visited.append('portals'))
+    monkeypatch.setattr('hireme.worker.sweep_boards', lambda s,r,**kwargs: visited.append('boards'))
     with pytest.raises(Blocked, match='cycle_timeout'):
         cycle(store, Path('.'))
     run = store.db.execute('SELECT * FROM runs').fetchone()
@@ -196,3 +196,69 @@ def test_expired_budget_cannot_reserve_a_model_request_and_pause_has_priority(st
     store.run_generation = store.control_generation()
     store.update_settings({'live_enabled': False})
     with pytest.raises(Blocked, match='paused'): store.checkpoint()
+
+
+def test_discovery_budget_leaves_cached_candidates_available_for_applications(store,job,monkeypatch):
+    clock=[100.0];visited=[]
+    monkeypatch.setattr('hireme.worker.time.monotonic',lambda:clock[0])
+    def lists(s,net):
+        assert net.deadline==400
+        visited.append('lists');clock[0]=401
+    monkeypatch.setattr('hireme.worker.sweep_lists',lists)
+    def forbidden(*args,**kwargs):pytest.fail('Discovery exceeded its shared budget')
+    monkeypatch.setattr('hireme.worker.sweep_portals',forbidden)
+    monkeypatch.setattr('hireme.worker.sweep_boards',forbidden)
+    monkeypatch.setattr('hireme.platform_connections.sweep_connections',forbidden)
+    class Reader:
+        def __init__(self,s):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def apply(self,j,live=True):
+            assert not live;visited.append(j['id']);return 'prepared'
+    result=cycle(store,Path('.'),live=False,limit=1,browser_factory=Reader)
+    assert result['prepared']==1 and visited==['lists',job['id']]
+    assert result['shortfall']==0 and store.run_deadline is None
+
+
+def test_restricted_board_discovery_uses_enabled_ats_and_remaining_budget(store,monkeypatch):
+    clock=[100.0];nets=[];probes=[]
+    store.update_settings({'rollout_stage':'restricted','allowed_application_ats':['ashby']})
+    monkeypatch.setattr('hireme.rollout.check',lambda s,**kwargs:kwargs['live'])
+    monkeypatch.setattr('hireme.worker.time.monotonic',lambda:clock[0])
+    def lists(s,net):nets.append(net);clock[0]+=20
+    def portals(s,net):nets.append(net);clock[0]+=30
+    def boards(s,repo,**kwargs):probes.append(kwargs);clock[0]+=5
+    monkeypatch.setattr('hireme.worker.sweep_lists',lists)
+    monkeypatch.setattr('hireme.worker.sweep_portals',portals)
+    monkeypatch.setattr('hireme.worker.sweep_boards',boards)
+    def connections(s):
+        assert s.run_deadline==400
+        clock[0]=401;s.checkpoint()
+    monkeypatch.setattr('hireme.platform_connections.sweep_connections',connections)
+    result=cycle(store,Path('.'),limit=0)
+    assert result['mode']=='live' and result['attempts']==0
+    assert nets[0] is nets[1] and nets[0].deadline==400
+    assert probes==[{'ats':['ash'],'deadline_seconds':250}]
+    assert store.run_deadline is None
+
+
+def test_disabled_ats_never_consumes_detail_reads_or_application_attempts(store,job,monkeypatch):
+    enabled={**job,'id':digest('enabled-ashby'),'url':'https://jobs.ashbyhq.com/acme/enabled',
+             'host':'jobs.ashbyhq.com'}
+    store.upsert_job(enabled)
+    store.update_settings({'allowed_application_ats':['ashby']})
+    seen=[]
+    def refresh(s,rows,settings,limit):
+        assert [row['id'] for row in rows]==[enabled['id']]
+    monkeypatch.setattr('hireme.posting_inspection.refresh_candidates',refresh)
+    class Reader:
+        def __init__(self,s):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def apply(self,j,live=True):
+            assert not live;seen.append(j['id']);return 'prepared'
+    result=cycle(store,Path('.'),discover=False,live=False,limit=1,browser_factory=Reader)
+    assert seen==[enabled['id']] and result['prepared']==1 and result['attempts']==1
+    assert result['reasons']=={'ats_out_of_scope':1}
+    assert not store.db.execute('SELECT 1 FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+    assert store.db.execute('SELECT status FROM jobs WHERE id=?',(job['id'],)).fetchone()[0]=='discovered'

@@ -29,8 +29,16 @@ def diagnose(store, verify=False, *, checks=None):
     items.append({'name': 'Worker history', 'ready': not worker['recovery_needed'],
                   'detail': 'A batch is running.' if worker['running'] else 'Interrupted work needs recovery.' if worker['recovery_needed'] else 'No interrupted work.',
                   'action': 'Run: .venv/bin/python -m hireme recover. Applications stay paused while uncertain outcomes await verification.' if worker['recovery_needed'] else ''})
-    items.append({'name': 'Submission control', 'ready': True,
-                  'detail': 'Automatic submissions enabled.' if settings['live_enabled'] else 'Submissions paused.',
+    stage = settings['rollout_stage']
+    control = ('Submissions paused.' if not settings['live_enabled'] else
+               'Dry-run rollout: applications are prepared locally; nothing is submitted.' if stage == 'dry_run' else
+               'Controlled rollout: only an explicitly selected posting can be submitted; scheduled batches cannot apply.' if stage == 'controlled' else
+               'Automatic submissions enabled.')
+    items.append({'name': 'Submission control', 'ready': True, 'detail': control, 'action': ''})
+    items.append({'name': 'Application rollout', 'ready': True,
+                  'detail': f"{stage}; enabled ATS: {', '.join(settings['allowed_application_ats']) or 'none'}."
+                            + (' Scheduled runs only prepare drafts.' if stage == 'dry_run' else
+                               ' Scheduled submissions require a restricted rollout.' if stage == 'controlled' else ''),
                   'action': ''})
     return {'ready': all(item['ready'] for item in items), 'verified_login': verify,
             'checks': items, 'note': 'No model requests or applications were sent. API connectivity is checked on the first model request.'}

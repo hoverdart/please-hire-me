@@ -41,6 +41,7 @@ def mail_check_failed(row):
 # Each exclusion is already a proven blocker. Other profile/preferences edits
 # cannot make that blocker pass and must not release it for another browser run.
 ELIGIBILITY_INPUTS = {
+    'ats_out_of_scope': (set(),{'allowed_application_ats'}),
     'seniority_mismatch': (set(),set()),
     'role_mismatch': (set(),{'roles'}),
     'internship_out_of_scope': (set(),{'seniority'}),
@@ -236,6 +237,20 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
         # A scoped revision, never a password or a hash of password contents.
         if row:data['supplied_credentials_revision']=row['seq']
     return digest(data)
+
+
+def upgrade_scope_holds(store):
+    """Repair legacy policy exclusions without clearing any application fence."""
+    rows=list(store.db.execute("SELECT h.job_id,h.evidence,j.payload FROM job_holds h JOIN jobs j ON j.id=h.job_id WHERE h.reason='ats_out_of_scope' AND h.category!='eligibility'"))
+    if not rows:return 0
+    with store.transaction():
+        for row in rows:
+            job=json.loads(row['payload']);evidence=json.loads(row['evidence'])
+            evidence['category']='eligibility';evidence['next_action']=REASON_GUIDANCE['ats_out_of_scope'][1]
+            store.db.execute("UPDATE job_holds SET category='eligibility',dependency=?,evidence=? WHERE job_id=? AND reason='ats_out_of_scope'",
+                             (dependency(store,job,'eligibility','ats_out_of_scope'),json.dumps(evidence),row['job_id']))
+        store.event('ats_scope_holds_upgraded','worker',{'count':len(rows)})
+    return len(rows)
 
 
 def upgrade_information_holds(store):

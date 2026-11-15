@@ -208,7 +208,14 @@ def queue_report(store, run_id):
     attention=bool(outstanding or held_outcomes or recruiting)
     attention_signature=digest({'manual':[(key,item['dependency']) for key,item in sorted(outstanding.items())],
         'uncertain':[(key,item['state'],item['updated']) for key,item in sorted(held_outcomes.items())],'recruiting':recruiting})
+    paused = run['status'] == 'paused' and detail.get('attempts') == 0
+    control_notice = ('Applications are paused. This schedule made no application attempts. '
+                      'The outstanding items below come from earlier batches.' if paused else
+                      'Preparation mode: this batch could only prepare drafts; no applications were submitted.'
+                      if detail.get('mode') == 'prepare' else '')
+    if control_notice:notices = [control_notice, *notices]
     body = (f"Confirmed submissions: {run['submitted']}\nHuman interventions: {human}\nUnconfirmed results to verify: {unconfirmed}\n\n"
+            + (control_notice+'\n\n' if control_notice else '')
             + ('\n\n'.join(recruiting)+'\n\n' if recruiting else '')
             + f"Application batch {run_id}\nStarted: {run['started']}\nFinished: {run['finished']}\n"
             f"Status: {run['status']}\nMode: {detail.get('mode', 'live')}\n"
@@ -248,8 +255,11 @@ def queue_report(store, run_id):
     if idle and attention and not already_reported:idle=False
     state='suppressed' if idle else 'pending' if enabled else 'disabled'
     with store.transaction():
+        subject = ("Applications paused — earlier items need review" if paused else
+                   "Draft preparation update" if detail.get('mode') == 'prepare' else
+                   f"Application update: {run['submitted']} confirmed; {human} need you; {unconfirmed} to verify")
         inserted=store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
-                         (run_id, email, f"Application update: {run['submitted']} confirmed; {human} need you; {unconfirmed} to verify",
+                         (run_id, email, subject,
                           body, f'<{uuid.uuid4().hex}@please-hire-me.local>', state, now()))
         if inserted.rowcount:store.db.execute('INSERT OR REPLACE INTO report_models VALUES(?,?)',(run_id,json.dumps(model)))
         if inserted.rowcount and state=='pending' and attention:store.event('batch_attention_report',run_id,{'signature':attention_signature})
@@ -334,12 +344,22 @@ def _combined(store, rows):
     """One message for every batch finished since the last report, oldest first."""
     if len(rows) == 1:
         return rows[0]['subject'], rows[0]['body']
-    confirmed = sum(r[0] for r in store.db.execute(
-        'SELECT submitted FROM runs WHERE id IN (' + ','.join('?' for _ in rows) + ')', [r['id'] for r in rows]))
+    runs = list(store.db.execute(
+        'SELECT submitted,started FROM runs WHERE id IN (' + ','.join('?' for _ in rows) + ')', [r['id'] for r in rows]))
+    confirmed = sum(r['submitted'] for r in runs)
+    period, notice = _delivery_period(store, runs, len(rows))
     sections = [r['body'][:-len(FOOTER)] if r['body'].endswith(FOOTER) else r['body'].rstrip() for r in rows]
-    body = (f'Confirmed submissions: {confirmed}\nReview the next actions below.\n\n'
+    body = (f'Confirmed submissions: {confirmed}\n{notice}\nReview the next actions below.\n\n'
             + ('\n\n' + '─' * 24 + '\n\n').join(sections) + FOOTER)
-    return f'Recruiting update: {confirmed} confirmed — review next actions', body
+    return f'Saved batch reports ({period}): {confirmed} confirmed', body
+
+
+def _delivery_period(store, runs, count):
+    zone = ZoneInfo(store.settings()['timezone'])
+    dates = sorted(datetime.fromisoformat(r['started'].replace('Z','+00:00')).astimezone(zone).date().isoformat() for r in runs)
+    period = (dates[0] if dates[0] == dates[-1] else dates[0]+' to '+dates[-1]) if dates else 'dates unavailable'
+    return period, (f'Delayed delivery: {count} saved batch reports from {period} ({zone.key}). '
+                    'These are earlier batch results, not applications made by the current schedule.')
 
 
 RECONCILE_AFTER_SECONDS = 900
@@ -359,6 +379,11 @@ def render_report_html(store, rows, subject):
     """HTML alternative for these outbox rows; older rows without a model stay plain text."""
     from .report_email import render_html
     models=_models(store,rows)
+    if models and len(rows)>1:
+        runs=list(store.db.execute('SELECT started FROM runs WHERE id IN ('+
+                                  ','.join('?' for _ in rows)+')',[row['id'] for row in rows]))
+        _,notice=_delivery_period(store,runs,len(rows))
+        models[0]['notices']=[notice,*models[0].get('notices',[])]
     return render_html(models,subject) if models else None
 
 

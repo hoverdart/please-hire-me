@@ -190,3 +190,19 @@ def test_adapter_repair_releases_only_a_new_bounded_transient_sequence(store,job
     job_holds.hold(store,job,'network_error',at=100)
     row=store.db.execute('SELECT retry_count,retry_at FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
     assert row['retry_count']==0 and row['retry_at']==1900
+
+
+def test_legacy_ats_scope_hold_is_quiet_and_tracks_scope_without_releasing_uncertainty(store,job,package):
+    from hireme.job_holds import hold,upgrade_scope_holds,ready
+    from hireme.reports import _outstanding
+    store.update_settings({'allowed_application_ats':['ashby']})
+    hold(store,job,'ats_out_of_scope',stage='screening')
+    store.db.execute("UPDATE job_holds SET category='review',dependency='legacy' WHERE job_id=?",(job['id'],))
+    assert upgrade_scope_holds(store)==1
+    row=store.db.execute('SELECT * FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+    assert row['category']=='eligibility' and job['id'] not in _outstanding(store)[0]
+    assert not ready(store,job) and upgrade_scope_holds(store)==0
+    store.update_settings({'allowed_application_ats':['lever']})
+    assert ready(store,job)
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
+    assert not ready(store,job)

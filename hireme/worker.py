@@ -24,6 +24,15 @@ def _recorded_outcome(store, job_id, fallback):
     return state if state in {'confirmed', 'not_submitted', 'unknown', 'awaiting_verification'} else fallback
 
 
+def _application_rows(store,query,selected,scope):
+    from .application_evidence import ats_for
+    rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+    if not scope:return rows,0
+    enabled=set(scope)
+    candidates=[row for row in rows if ats_for(row['url']) in enabled]
+    return candidates,len(rows)-len(candidates)
+
+
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
     with worker_lock(store.root):
         from .rollout import check as check_rollout
@@ -54,7 +63,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                 if missing or not s['onboarding_complete']:
                     raise Blocked('setup_incomplete',', '.join(missing))
                 raise Blocked('paused')
-            from .job_holds import upgrade_information_holds
+            from .job_holds import upgrade_information_holds,upgrade_scope_holds
+            upgrade_scope_holds(store)
             upgrade_information_holds(store)
             from .workday_commission_state import bind_run
             bind_run(store,rid,job_ids=job_ids,live=live,discover=discover,limit=limit,
@@ -67,22 +77,44 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             except ValueError:raise Blocked('storage_low','Free disk space before starting another application batch') from None
             jobs_before=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
             if discover:
-                store.checkpoint(); sweep_lists(store)
-                store.checkpoint(); sweep_portals(store)
-                store.checkpoint(); sweep_boards(store,repo)
-                from .platform_connections import sweep_connections
-                store.checkpoint(); sweep_connections(store)
+                # Leave time to process saved candidates. Discovery has its own
+                # shared budget instead of three independent long sweeps.
+                from .net import Network
+                discovery_deadline=min(store.run_deadline,time.monotonic()+300)
+                net=Network(discovery_deadline,checkpoint=store.checkpoint)
+                store.checkpoint(); sweep_lists(store,net)
+                store.checkpoint()
+                if time.monotonic()<discovery_deadline:sweep_portals(store,net)
+                store.checkpoint()
+                remaining=discovery_deadline-time.monotonic()
+                if remaining>0:
+                    # Restricted rollout discovery prioritizes sources that
+                    # this worker can actually submit to. Explicit discovery
+                    # remains available for the broader manual-review queue.
+                    ats=([key for name,key in (('ashby','ash'),('greenhouse','gh'),('lever','lv'))
+                          if name in s['allowed_application_ats']] if s['rollout_stage']=='restricted' else None)
+                    if ats is None or ats:sweep_boards(store,repo,ats=ats,deadline_seconds=remaining)
+                store.checkpoint()
+                if time.monotonic()<discovery_deadline:
+                    from .platform_connections import sweep_connections
+                    cycle_deadline=store.run_deadline
+                    store.run_deadline=discovery_deadline
+                    try:sweep_connections(store)
+                    except Blocked as error:
+                        if error.reason!='cycle_timeout' or time.monotonic()>=cycle_deadline:raise
+                    finally:store.run_deadline=cycle_deadline
             discovered_count=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]-jobs_before if discover else 0
             query="SELECT * FROM jobs WHERE status IN ('discovered','blocked','prepared') AND id NOT IN (SELECT job_id FROM job_decisions)"
             selected=tuple(job_ids or ())
             if selected:query+=' AND id IN ('+','.join('?' for _ in selected)+')'
-            rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            rows,excluded=_application_rows(store,query,selected,s['allowed_application_ats'])
+            if excluded:reasons['ats_out_of_scope']=excluded
             from .application_quality import rescreen_scope
             for reason,excluded in rescreen_scope(store,rows,s).items():reasons[reason]=reasons.get(reason,0)+excluded
             from .posting_inspection import refresh_candidates,needs_details
             # No browser/model work occurs inside the screening transactions.
             refresh_candidates(store,rows,s,0 if limit==0 else max_attempts)
-            rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            rows,_=_application_rows(store,query,selected,s['allowed_application_ats'])
             ranked=[]
             from .application_quality import relevance
             confirmed_history=store.history_entries()

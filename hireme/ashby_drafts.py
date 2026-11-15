@@ -9,7 +9,7 @@ from urllib.parse import urlsplit,parse_qsl
 from .util import Blocked, digest, textarea_value
 
 # Reevaluate only Ashby draft mapping holds when this reviewed protocol changes.
-VERSION = 3
+VERSION = 4
 
 # Reviewed public ApiSetFormValue operation, including its read-only fragments.
 # A vendor query change needs review instead of granting another mutation.
@@ -25,7 +25,18 @@ def same(left, right):
 
 
 def number_wire(value, label):
-    """Encode only a lossless, canonical nonnegative JavaScript integer."""
+    """Preserve canonical integers and round-tripping fractional decimals."""
+    if isinstance(value,str) and len(value)<=64 and re.fullmatch(r'(?:0|[1-9][0-9]*)\.[0-9]*[1-9]',value):
+        from decimal import Decimal
+        import math
+        exact=Decimal(value);number=float(value)
+        # JSON numbers use JavaScript's binary64 representation. Require its
+        # serialized decimal to equal the approved value, without rounding a
+        # GPA or changing large numbers. Integral encodings retain their
+        # existing strict integer path and acknowledgement checks below.
+        if (math.isfinite(number) and exact<=9007199254740991
+                and Decimal(json.dumps(number))==exact):return number
+        raise Blocked('ashby_draft_unsupported',label+' — Ashby number encoding needs review')
     if not isinstance(value,str) or not re.fullmatch(r'(?:0|[1-9][0-9]*)',value) or len(value)>16:
         raise Blocked('ashby_draft_unsupported',label+' — Ashby number encoding needs review')
     number=int(value)

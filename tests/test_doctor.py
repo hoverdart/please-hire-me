@@ -34,6 +34,23 @@ def test_doctor_cli_json_and_verification_flag(store, monkeypatch, capsys):
     assert result['ready'] and result['verified_login'] and seen == [True]
 
 
+@pytest.mark.parametrize('stage,enabled,expected',[
+    ('dry_run',True,'nothing is submitted'),
+    ('controlled',True,'scheduled batches cannot apply'),
+    ('restricted',True,'Automatic submissions enabled.'),
+    ('dry_run',False,'Submissions paused.'),
+])
+def test_doctor_explains_effective_submission_mode(store,stage,enabled,expected):
+    store.update_settings({'rollout_stage':stage,'live_enabled':enabled,'allowed_application_ats':['ashby']})
+    before=store.db.total_changes
+    result=diagnose(store,checks=readiness())
+    control=next(item for item in result['checks'] if item['name']=='Submission control')
+    rollout=next(item for item in result['checks'] if item['name']=='Application rollout')
+    assert expected in control['detail']
+    assert stage in rollout['detail'] and 'ashby' in rollout['detail']
+    assert store.db.total_changes==before
+
+
 def test_doctor_explains_interrupted_work_without_recovering_it(store, monkeypatch):
     monkeypatch.setattr('hireme.doctor.readiness', lambda s, verify=False: readiness())
     store.db.execute("INSERT INTO runs(id,started,status) VALUES('stale-run','2020-01-01T00:00:00+00:00','running')")

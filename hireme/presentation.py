@@ -6,13 +6,14 @@ NOT_MATCH_REASONS = frozenset({
     'seniority_mismatch', 'role_mismatch', 'internship_out_of_scope', 'fulltime_out_of_scope', 'parttime_out_of_scope',
     'location_mismatch', 'experience_mismatch', 'degree_mismatch', 'sponsorship_mismatch', 'citizenship_mismatch',
     'graduation_mismatch', 'start_window_mismatch', 'compensation_mismatch', 'company_blocked', 'low_fit',
-    'expired_posting',
+    'expired_posting', 'ats_out_of_scope',
 })
 WAIT_REASONS = frozenset({'company_cooldown', 'company_limit', 'company_same_day', 'daily_limit'})
 QUIET_REASONS = NOT_MATCH_REASONS | WAIT_REASONS
 
 # (Reason label, next useful step). Unknown reasons keep their exact evidence in the ledger.
 REASON_GUIDANCE = {
+    'ats_out_of_scope': ('Automatic applications are off for this ATS', 'No action is needed for this posting. Change the enabled ATS scope only after validating its submission path.'),
     'browser_draft_uncertain': ('An employer save needs review', 'An application step was sent without a verified result. Check the employer’s saved application before continuing; automatic retries are held.'),
     'browser_no_progress': ('The application browser needs help with this screen', 'Review the saved step and unresolved questions. Confirm any missing information, then recheck the job.'),
     'browser_operation_blocked': ('The employer requested an unexpected action', 'Review the application step. The browser blocked a write outside the approved action.'),
