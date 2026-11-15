@@ -9,7 +9,7 @@ from urllib.parse import urlsplit,parse_qsl
 from .util import Blocked, digest, textarea_value
 
 # Reevaluate only Ashby draft mapping holds when this reviewed protocol changes.
-VERSION = 4
+VERSION = 5
 
 # Reviewed public ApiSetFormValue operation, including its read-only fragments.
 # A vendor query change needs review instead of granting another mutation.

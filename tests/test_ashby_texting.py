@@ -342,3 +342,22 @@ def test_browser_keeps_phone_sms_and_final_submission_separate(store, monkeypatc
     assert len(consent) == int(mode != 'prepare')
     assert documents.operations == ([] if mode == 'prepare' else ['ApiCreateFileUploadHandle', 'signed-upload', 'ApiSetFormValueToFile'])
     assert store.db.execute("select count(*) from events where kind='submit_intent'").fetchone()[0] == int(mode == 'live')
+
+
+@pytest.mark.parametrize('preference,allowed',[('No',True),('Yes',False)])
+def test_additional_texting_terms_can_only_be_declined_with_exact_native_notice(store,job,package,preference,allowed):
+    d,proof,_=setup_consent(store,job,package,preference=preference)
+    terms=POLICY+'/terms'
+    d.texting_contexts['acme']['candidateTextingTermsAndConditionsUrl']=terms
+    field=proof['answers'][-1]['field']
+    field['help_text']+=' and our terms and conditions here: Terms and Conditions'
+    field['help_links'].append({'text':'Terms and Conditions','url':terms})
+    proof['answers'][-1]=resolve(store,d.job['host'],field)
+    if not allowed:
+        with pytest.raises(Blocked):d.enable(None,proof['answers'],proof)
+        return
+    d.enable(None,proof['answers'],proof)
+    request,data=native_request('given');assert not d.allow(request,data,'unapproved-opt-in')
+    request,data=native_request('notGiven');assert d.allow(request,data,'decline')
+    d.observe_save(response(consent_form('notGiven')),'decline')
+    assert d.texting.complete and d.texting.value=='notGiven'
