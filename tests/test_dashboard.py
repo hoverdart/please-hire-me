@@ -150,7 +150,7 @@ def launch_dashboard_preparation_fixture(root,repo,port):
     from hireme.util import digest
     worker.sweep_lists=lambda *args:None
     worker.sweep_portals=lambda *args:None
-    worker.sweep_boards=lambda *args:None
+    worker.sweep_boards=lambda *args,**kwargs:None
     class FakeBrowser:
         def __init__(self,store):self.store=store
         def __enter__(self):return self

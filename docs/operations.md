@@ -24,6 +24,8 @@ Check both submission control and the application rollout in `doctor`. A saved s
 
 Report delivery can resume independently of applications. Combined emails identify their original batch dates in the applicant timezone, and a paused reminder labels outstanding work as earlier history. A newly delivered saved report does not establish that the current schedule attempted those applications.
 
+Application batches share a five-minute discovery budget across lists, portals, boards and connected platforms, then process saved candidates. Restricted rollouts probe boards only for enabled ATS. Use the separate **Find jobs** action for broader discovery; a large backlog of speculative boards should not consume the application batch.
+
 The worker refuses to start new application work below 512 MiB free. Backups and restoration reserve that headroom too. `release-check` additionally flags low storage below 10% of the volume, or 1 GiB, whichever is larger. These checks cannot reserve space against unrelated programs writing at the same time.
 
 Pi health also checks that the kernel exposes the v2 memory controller. Service `MemoryMax` settings are ineffective without it. Follow the [Pi guide](pi.md) to enable the controller and verify the active kernel limit before relying on memory isolation.

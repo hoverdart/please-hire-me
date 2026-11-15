@@ -67,11 +67,32 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             except ValueError:raise Blocked('storage_low','Free disk space before starting another application batch') from None
             jobs_before=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
             if discover:
-                store.checkpoint(); sweep_lists(store)
-                store.checkpoint(); sweep_portals(store)
-                store.checkpoint(); sweep_boards(store,repo)
-                from .platform_connections import sweep_connections
-                store.checkpoint(); sweep_connections(store)
+                # Leave time to process saved candidates. Discovery has its own
+                # shared budget instead of three independent long sweeps.
+                from .net import Network
+                discovery_deadline=min(store.run_deadline,time.monotonic()+300)
+                net=Network(discovery_deadline,checkpoint=store.checkpoint)
+                store.checkpoint(); sweep_lists(store,net)
+                store.checkpoint()
+                if time.monotonic()<discovery_deadline:sweep_portals(store,net)
+                store.checkpoint()
+                remaining=discovery_deadline-time.monotonic()
+                if remaining>0:
+                    # Restricted rollout discovery prioritizes sources that
+                    # this worker can actually submit to. Explicit discovery
+                    # remains available for the broader manual-review queue.
+                    ats=([key for name,key in (('ashby','ash'),('greenhouse','gh'),('lever','lv'))
+                          if name in s['allowed_application_ats']] if s['rollout_stage']=='restricted' else None)
+                    if ats is None or ats:sweep_boards(store,repo,ats=ats,deadline_seconds=remaining)
+                store.checkpoint()
+                if time.monotonic()<discovery_deadline:
+                    from .platform_connections import sweep_connections
+                    cycle_deadline=store.run_deadline
+                    store.run_deadline=discovery_deadline
+                    try:sweep_connections(store)
+                    except Blocked as error:
+                        if error.reason!='cycle_timeout' or time.monotonic()>=cycle_deadline:raise
+                    finally:store.run_deadline=cycle_deadline
             discovered_count=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]-jobs_before if discover else 0
             query="SELECT * FROM jobs WHERE status IN ('discovered','blocked','prepared') AND id NOT IN (SELECT job_id FROM job_decisions)"
             selected=tuple(job_ids or ())
