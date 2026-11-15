@@ -194,6 +194,11 @@ def test_workday_account_to_verified_application_uses_production_browser_flow(st
         if(response.ok)document.body.innerHTML='&lt;h1>Your application has been received.&lt;/h1>';
       })()">Submit application</button>'''.replace('REMOTE',remote)
     def html():
+        if state['logged_in']:
+            return ('<h1>Software Engineer Intern Summer 2027</h1>'
+                '<div data-automation-id=jobPostingDescription>Build Python and TypeScript software in San Francisco, United States.</div><p>R12345</p>'
+                '<button id=entry>Apply Manually</button><script>window.workday={tenant:"acme",siteId:"External",token:"fixture-csrf"};'
+                'entry.onclick=()=>document.body.innerHTML='+json.dumps(app_html).replace('<',r'\u003c')+';</script>')
         original=old_html().replace("document.body.innerHTML='<h1>Your application</h1><p>Signed in</p>';",
             'document.body.innerHTML='+json.dumps(app_html).replace('<',r'\u003c')+';')
         # Public posting has a native entry button; sign-in appears only after it.

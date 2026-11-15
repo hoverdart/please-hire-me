@@ -1015,6 +1015,20 @@ class AdaptiveBrowser(Browser):
             self.job['description']=current_posting
             self.store.upsert_job(self.job)
             self.account_posting_verified=True
+            if (workday and not self.preparing and not self.owner_verified
+                    and self.store.settings()['employer_accounts']):
+                # Establish the account through the career page's own sign-in
+                # before an application entry can initialize employer drafts.
+                from .workday_accounts import authenticate
+                authenticate(self)
+                self.page.goto(self.job['url'],wait_until='domcontentloaded',timeout=45000)
+                self._check()
+                self.job.update(verified_posting(self.page,self.job,self.store.checkpoint))
+                eligible(self.job,self.store.settings(),self.store.facts())
+                self.store.upsert_job(self.job)
+                from .browser_identity import verify_workday_account
+                self.owner_verified=verify_workday_account(self)
+                if not self.owner_verified:raise Blocked('account_identity_unconfirmed')
             # A tailored resume binds the verified posting. Generating before
             # this refresh made an otherwise valid resume stale before its
             # first browser action (API HTML vs rendered text also differs).
