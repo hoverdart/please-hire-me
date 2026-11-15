@@ -50,8 +50,9 @@ def inspect(store,job):
                 reader.context.route('**/*',readonly)
                 reader.page.goto(navigation,wait_until='domcontentloaded',timeout=45000)
                 if job['host'].endswith('.myworkdayjobs.com'):
-                    from .workday_browser_posting import inspect_posting
-                    text=inspect_posting(reader.page,job,store.checkpoint)
+                    from .workday_browser_posting import verified_posting
+                    job=verified_posting(reader.page,job,store.checkpoint)
+                    text=job['description']
                 else:
                     reader.page.wait_for_function('()=>document.body&&document.body.innerText.trim().length>0',timeout=20000)
                     if canonical_url(reader.page.url)!=canonical_url(navigation):raise Blocked('posting_changed_review','The public posting moved to a different destination')

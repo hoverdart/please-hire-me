@@ -9,7 +9,7 @@ from .browser_observation import observe
 from .util import Blocked,digest
 from .workday_site import site_for_url
 
-VERSION=2
+VERSION=3
 
 
 def public_identity(job,data):
