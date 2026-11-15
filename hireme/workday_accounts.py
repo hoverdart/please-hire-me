@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 import json
 import re
 import secrets
@@ -38,6 +39,7 @@ class AuthGrant:
         self.agent=agent;self.store=agent.store;self.site=site_for_url(agent.job['url'])
         if kind not in {'login','register'}:raise ValueError('Unknown Workday account operation')
         self.kind=kind;self.credential=credential;self.used=False;self.status=None;self.result=None
+        self.request_signature=None
         self.key=account_key('https://'+self.site.host,self.site.tenant)
         self.boundary=ApprovalBoundary(self.store,agent.job,require_live=True)
         self.generation=self.store.control_generation()
@@ -76,7 +78,20 @@ class AuthGrant:
             if query and (self.kind!='register' or query!=[('redirect',self.context['location'])]):return False
         except (ValueError,UnicodeError,TypeError):return False
         self.used=True
+        self.request_signature=(request.url,request.method,hashlib.sha256(raw).hexdigest())
+        self.store.event('workday_account_write_dispatched',self.key,{'operation':self.kind})
         return True
+
+    def observe(self,response):
+        request=response.request
+        if self.status is not None or self.request_signature!=(request.url,request.method,hashlib.sha256(request.post_data_buffer or b'').hexdigest()):return
+        try:
+            raw=response.body()
+            if len(raw)>2*1024*1024:return
+            try:data=json.loads(raw)
+            except (ValueError,UnicodeError):data=None
+            self.capture(response.status,data)
+        except Exception:return
 
     def capture(self,status,data):
         self.status=status
@@ -191,7 +206,8 @@ def _submit(agent,kind,credential,key):
             _state(agent.store,key,'existing_account' if exists else 'rejected','workday_account_operation_rejected',{'operation':kind,'status':grant.status,'existing_account':exists})
             if exists:return grant
             raise Blocked('account_registration_rejected' if kind=='register' else 'account_signin_rejected','The employer rejected the account operation; verify its saved credentials')
-        _state(agent.store,key,'uncertain','workday_account_operation_uncertain',{'operation':kind})
+        _state(agent.store,key,'uncertain','workday_account_operation_uncertain',
+               {'operation':kind,'dispatched':grant.used,'http_status':grant.status,'result':grant.result})
         raise Blocked('account_result_uncertain','Workday did not acknowledge the account operation; another creation is held')
     except Blocked:
         row=agent.store.db.execute('SELECT state FROM employer_accounts WHERE id=?',(key,)).fetchone()
@@ -241,7 +257,7 @@ def _activate(agent,key,return_url):
     raise Blocked('account_verification_pending','Waiting for the employer account activation email; creation will not be repeated')
 
 
-def authenticate(agent):
+def authenticate(agent,*,reconcile=False):
     """Called only after exact posting verification and applicant eligibility."""
     _checkpoint(agent)
     if agent.preparing or not getattr(agent,'account_posting_verified',False):raise Blocked('account_blocked')
@@ -253,6 +269,21 @@ def authenticate(agent):
     return_url=agent.page.url
     row=agent.store.db.execute('SELECT state FROM employer_accounts WHERE id=?',(key,)).fetchone()
     if row and _owned(agent,key):return True
+    if row and row['state']=='uncertain' and reconcile:
+        # An explicitly requested sign-in can establish ownership after a lost
+        # registration response. It never repeats the registration. Reserve this
+        # one recovery before touching the login control; interrupted recovery
+        # remains held and cannot accumulate password attempts.
+        prior=agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind IN ('account_signin_intent','workday_account_recovery_requested') LIMIT 1",(key,)).fetchone()
+        intent=agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind='account_creation_intent' LIMIT 1",(key,)).fetchone()
+        if prior or not intent:raise Blocked('account_result_uncertain')
+        agent.store.event('workday_account_recovery_requested',key,{'action':'sign_in_only','registration_retried':False})
+        _entry(agent)
+        if _root(agent.page).locator('[data-automation-id="verifyPassword"]:visible').count():
+            _navigate_control(agent,'signInLink','Sign In')
+        _submit(agent,'login',credential,key)
+        if not _owned(agent,key):raise Blocked('account_identity_unconfirmed')
+        return True
     if row and row['state'] in {'uncertain','creating','signing_in','activating','rejected'}:
         raise Blocked('account_result_uncertain','The existing account operation needs verification; another creation is held')
     if row and row['state']=='activation_pending':

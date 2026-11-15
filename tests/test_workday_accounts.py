@@ -253,3 +253,23 @@ def test_unknown_account_agreement_is_held_before_registration(store,account_bro
     browser.page.goto(URL)
     with pytest.raises(Blocked,match='account_agreement_review'):authenticate(browser)
     assert state['writes']==[] and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
+
+
+def test_explicit_uncertain_registration_recovery_only_signs_in_once(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    state['mode']='normal';state['activated']=True
+    browser.workday_account_attempted=False
+    assert authenticate(browser,reconcile=True)
+    assert state['writes']==['register','login'] and state['activation_gets']==0
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
+
+
+def test_interrupted_recovery_never_accumulates_registration_or_password_attempts(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked):authenticate(browser)
+    browser.workday_account_attempted=False
+    with pytest.raises(Blocked):authenticate(browser,reconcile=True)
+    browser.workday_account_attempted=False
+    with pytest.raises(Blocked):authenticate(browser,reconcile=True)
+    assert state['writes']==['register','login']

@@ -75,7 +75,11 @@ class AdaptiveBrowser(Browser):
     def __enter__(self):
         super().__enter__()
         self.page.remove_listener('response',self._upload_response)
+        self.page.on('response',self._account_response)
         return self
+
+    def _account_response(self,response):
+        if self.account_operation:self.account_operation.observe(response)
 
     def _route(self,route):
         request=route.request
@@ -98,17 +102,7 @@ class AdaptiveBrowser(Browser):
                     except (ValueError,TypeError):pass
                 return route.fulfill(response=response)
             if same and self.account_operation and self.account_operation.allow(request):
-                operation=self.account_operation
-                try:
-                    response=route.fetch(max_redirects=0,max_retries=0,timeout=20000)
-                    raw=response.body()
-                    if len(raw)>2*1024*1024:raise ValueError('Oversized account response')
-                    try:data=json.loads(raw)
-                    except (ValueError,UnicodeError):data=None
-                    operation.capture(response.status,data)
-                    return route.fulfill(response=response)
-                except Exception:
-                    return route.abort()
+                return route.continue_()
             from .workday_site import asset_read
             if asset_read(self.current_host,request):return route.continue_()
             if same and re.fullmatch(r'/(?:vslog|telemetry|analytics|metrics)(?:/.*)?',parsed.path,re.I):
