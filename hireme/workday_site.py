@@ -54,7 +54,7 @@ def asset_read(host,request):
     if not match or request.method not in {'GET','HEAD','OPTIONS'}:return False
     parsed=urlsplit(request.url)
     return bool(parsed.scheme=='https' and parsed.port in (None,443) and not parsed.username and not parsed.password
-        and parsed.hostname in {match['shard']+'.myworkday.com',match['shard']+'.myworkdaycdn.com'}
+        and parsed.hostname in {match['shard']+'.myworkday.com',match['shard']+'.myworkdaycdn.com','www.myworkdaycdn.com'}
         and request.resource_type!='document' and not parsed.query
         and re.fullmatch(r'/wday/asset/[A-Za-z0-9._/-]+',parsed.path)
         and '..' not in parsed.path.split('/'))

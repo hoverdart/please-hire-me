@@ -7,7 +7,7 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 12
+AUTOMATIC_ANSWER_VERSION = 13
 WRITING_SOURCE_VERSION = 4
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
@@ -113,7 +113,7 @@ def field_key(label):
         return 'high_school' if not re.search(r'gpa|grade|year|date|graduat|degree|diploma',label) else None
     for pattern,key in RULES:
         if re.fullmatch(pattern,label): return key
-    if re.fullmatch(r'(?:phone )?(?:country|dial|calling) code|country phone code',label):return 'phone'
+    if re.fullmatch(r'(?:phone )?(?:country|dial|calling) code|country phone code|country\s*/\s*territory phone code',label):return 'phone'
     if re.fullmatch(r'(?:phone|telephone)(?: number| device)? type',label):return 'phone_type'
     if label=='consent to receiving text messages':return 'sms'
     if re.fullmatch(r'where are you (?:currently )?(?:located|based|living)',label):return 'location'
@@ -379,7 +379,7 @@ def _discovery_answer(label, options, context):
 
 
 def _phone_country_answer(store,field):
-    if not re.fullmatch(r'(?:phone )?(?:country|dial|calling) code|country phone code',field['label'].strip().rstrip(' *✱?:'),re.I):return None
+    if not re.fullmatch(r'(?:phone )?(?:country|dial|calling) code|country phone code|country\s*/\s*territory phone code',field['label'].strip().rstrip(' *✱?:'),re.I):return None
     facts=store.facts();phone=facts.get('phone');country=facts.get('country');location=facts.get('location')
     if not phone:return None
     from .field_context import present

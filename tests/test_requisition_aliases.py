@@ -109,3 +109,25 @@ def test_workday_locale_or_title_alias_cannot_repeat_a_recorded_requisition(stor
 def test_workday_alias_comparison_does_not_merge_unknown_tenants_sites_or_requisitions(url):
     known='https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Intern_JR2023495'
     assert application_identity(url)!=application_identity(known)
+
+
+@pytest.mark.parametrize('state',['confirmed','unknown','awaiting_verification','not_submitted','submitting'])
+def test_unconfigured_workday_case_locale_and_location_aliases_preserve_attempt_fences(store,job,package,state):
+    host='fixture-employer.wd1.myworkdayjobs.com'
+    first={**job,'id':digest('unconfigured-workday-original'),'host':host,
+           'url':f'https://{host}/External/job/US-CA/Software-Intern_R_123'}
+    store.upsert_job(first);aid=store.prepare(first,{**package,'job_id':first['id'],'url':first['url']})
+    store.db.execute("UPDATE applications SET state=?,attempted='2020-01-01T00:00:00+00:00' WHERE id=?",(state,aid))
+    second={**first,'id':digest('unconfigured-workday-alias'),'company':'Another feed label',
+            'url':f'https://{host}/en-US/external/job/Updated-Location/Software-Intern_R_123'}
+    store.upsert_job(second);before=dict(store.application_record(aid))
+    assert application_identity(first['url'])==application_identity(second['url'])
+    with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(second,store.settings())
+    assert dict(store.application_record(aid))==before
+
+
+def test_configured_workday_site_case_alias_keeps_the_existing_receipt_identity():
+    base='https://nvidia.wd5.myworkdayjobs.com'
+    canonical=base+'/NVIDIAExternalCareerSite/job/US/Software-Intern_JR2023495'
+    assert application_identity(canonical)==('workday','nvidia.wd5.myworkdayjobs.com','NVIDIAExternalCareerSite','JR2023495')
+    assert application_identity(canonical)==application_identity(base+'/en-US/nvidiaexternalcareersite/job/US/Software-Intern_JR2023495')

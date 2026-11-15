@@ -211,3 +211,24 @@ def test_degree_gate_runs_before_browser_or_model_and_before_final_intent(store,
     with pytest.raises(Blocked, match='degree_mismatch'): store.begin_submit(aid)
     assert store.application_record(aid)['state'] == 'prepared'
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('requirement',[
+    'Basic Qualifications:\nCurrently enrolled a graduate degree program and have one semester remaining.',
+    'Currently enrolled in a graduate program in Computer Science.',
+    'Applicants must be enrolled in a graduate degree program.',
+])
+def test_explicit_graduate_program_enrollment_requires_confirmed_graduate_study(store,job,requirement):
+    store.put_facts({'degree':'B.S.'})
+    with pytest.raises(Blocked,match='degree_mismatch'):
+        eligible({**job,'description':requirement+' Build Python software.'},store.settings(),store.facts())
+
+
+@pytest.mark.parametrize('text',[
+    'Currently enrolled in an undergraduate or graduate degree program.',
+    'Currently enrolled in a graduate degree program preferred.',
+    'Work with colleagues enrolled in a graduate program.',
+])
+def test_graduate_program_alternatives_and_preferences_do_not_require_graduate_study(store,job,text):
+    store.put_facts({'degree':'B.S.'})
+    assert eligible({**job,'description':text+' Build Python software.'},store.settings(),store.facts())[0]>0

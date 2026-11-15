@@ -142,3 +142,13 @@ def test_public_profile_read_failure_never_establishes_ownership(posting_page,st
     if expected=='blocked':
         with pytest.raises(Blocked,match='browser_identity_unverified'):initial_workday_account(agent)
     else:assert initial_workday_account(agent) is False
+
+
+@pytest.mark.parametrize('resource_type',['fetch','xhr'])
+def test_shared_workday_translation_cdn_is_a_read_only_asset_source(resource_type):
+    url='https://www.myworkdaycdn.com/wday/asset/candidate-experience-jobs/compiled-lang/cxs_account_creation/en-US.json'
+    assert asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url,method='GET',resource_type=resource_type))
+    assert not asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url,method='POST',resource_type=resource_type))
+    assert not asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url,method='GET',resource_type='document'))
+    assert not asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url.replace('/wday/asset/','/wday/cxs/'),method='GET',resource_type=resource_type))
+    assert not asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url.replace('www.myworkdaycdn.com','www.myworkdaycdn.com.attacker.invalid'),method='GET',resource_type=resource_type))

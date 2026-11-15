@@ -531,3 +531,13 @@ def test_source_search_returning_parent_does_not_expand_the_same_exhausted_group
         missing=[(f,reason) for f,reason in pending if f['ui_id']==field['ui_id']]
         assert missing[0][0]['options']==['Glassdoor','LinkedIn']
         assert missing[0][1]=='required_answer_missing'
+
+
+def test_country_territory_phone_code_uses_both_confirmed_phone_and_country(store,job):
+    from hireme.answers import resolve
+    store.put_facts({'phone':'+1 555 123 4567','country':'United States'})
+    field={'label':'Country / Territory Phone Code*','type':'combobox','required':True,
+           'options':['United States of America (+1)'],'value':''}
+    answer=resolve(store,job['host'],field,context=job)
+    assert answer['value']=='United States of America (+1)'
+    assert 'phone_country' in answer['provenance']

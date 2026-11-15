@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 15
+ELIGIBILITY_VERSION = 16
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -118,7 +118,8 @@ def _graduate_requirement(title, description):
     # MS can also name a software vendor. Require degree wording in prose,
     # and a degree position in titles, rather than interpreting "MS SQL".
     master_context=rf'{MASTER_ABBREVIATION}(?=\s*(?:degree\b|program\b|students?\b|candidates?\b|in\b|or\b|is\b|required\b|mandatory\b|[/,.!?]|$))'
-    graduate=rf'(?:{DOCTORAL}|{MASTER_WORD}|{master_context})'
+    graduate_program=r'\bgraduate\s+(?:degree\s+)?program\b'
+    graduate=rf'(?:{DOCTORAL}|{MASTER_WORD}|{master_context}|{graduate_program})'
     def exclusive(fragment):
         if (re.search(rf'\b(?:no|without requiring)\s+{graduate}',fragment,re.I)
                 or re.search(rf'{graduate}\s*(?:(?:degree|program|students?|candidates?)\s*)?(?:in\s+[^\n;.!?]{{0,80}}?)?(?:is\s+)?\(?\s*(?:not\s+(?:required|necessary)|preferred|optional|(?:is\s+)?a plus)',fragment,re.I)
@@ -135,6 +136,10 @@ def _graduate_requirement(title, description):
     # or MS ..."). Only a clause that addresses the applicant gets that rule;
     # collaborating with, or being mentored by, graduate researchers does not.
     description=re.sub(r'<[^>]+>','\n',description)
+    program_enrollment=rf'(?:^|[\n;:])\s*(?:[-*•]\s*)?(?:currently\s+)?enrolled\s+(?:in\s+)?(?:an?\s+)?{graduate_program}'
+    if any(exclusive(description[max(0,m.start()-30):m.end()+120])
+           for m in re.finditer(program_enrollment,description,re.I)):
+        return True
     study=r'(?:enrolled(?:\s+in)?|pursuing|working\s+(?:toward|towards|on)|studying|hold|have|possess)'
     prerequisite=rf'(?:(?:\bmust\s+|\brequired to\s+)(?:(?:be|currently)\s+){{0,2}}{study}\b|\blimited to\b|\bopen only to\b|\bonly\s+(?:accepting|considering)\b)'
     direct=rf'(?:^|[\n;:])\s*(?:[-*•]\s*)?(?:currently\s+)?(?:pursuing|enrolled\s+in|working\s+(?:toward|towards|on)|studying)\b'

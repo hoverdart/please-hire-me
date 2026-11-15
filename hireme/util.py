@@ -113,15 +113,22 @@ def application_identity(url: str):
         found = identity(normalized)
         if found: return found
     if host.endswith('.myworkdayjobs.com'):
+        from .workday_site import HOST
+        if parsed.scheme!='https' or not HOST.fullmatch(host):return ('url',normalized)
         from .portals import WORKDAY
         site=next((row[3] for row in WORKDAY if row[4]==host),None)
         if site:
-            match=re.fullmatch(r'/(?:en-US/)?'+re.escape(site)+
+            match=re.fullmatch(r'/(?:[a-z]{2}-[A-Z]{2}/)?(?i:'+re.escape(site)+')'+
                 r'/job/[A-Za-z0-9._~-]+/[A-Za-z0-9._~-]+_([A-Za-z0-9-]+)',path)
             if match:
                 # Duplicate comparison only. Keep original job IDs/URLs and
                 # require the native controller's separate transport evidence.
                 return ('workday',host,site,match[1])
+        posting=re.fullmatch(r'/(?:[a-z]{2}-[A-Z]{2}/)?([A-Za-z0-9_-]+)/job/[A-Za-z0-9._~-]+/([A-Za-z0-9._~-]+)',path)
+        if posting and not any(part in {'.','..'} for part in path.split('/')):
+            # Unconfigured tenants gain comparison only: the complete native
+            # posting anchor avoids guessing where an underscored req ID starts.
+            return ('workday-posting',host,posting[1].casefold(),posting[2])
     return ('url', normalized)
 
 
