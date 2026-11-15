@@ -564,3 +564,14 @@ def test_adult_satisfies_age_or_minor_permit_question_without_inventing_permit_s
     assert answer['value']=='Yes' and 'adult_disjunction_revision' in answer['provenance']
     store.put_facts({'over_18':'No'})
     with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],field,context=job)
+
+
+def test_primary_mobile_contact_uses_personal_cell_without_selecting_business_or_alternate_number(store,job):
+    from hireme.answers import resolve
+    store.put_facts({'phone_type':'Mobile'})
+    field={'label':'Phone Device Type*','type':'combobox','required':True,'options':[
+        'Alternate Business','Alternate Busn Fax','Alternate Busn Home','Alternate Cell - Personal',
+        'Business','Business Fax','Cell - Business','Cell - Personal','Home']}
+    answer=resolve(store,job['host'],field,context=job)
+    assert answer['value']=='Cell - Personal'
+    assert answer['provenance']['fact_key']=='phone_type'

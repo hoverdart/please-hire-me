@@ -7,7 +7,7 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 15
+AUTOMATIC_ANSWER_VERSION = 16
 WRITING_SOURCE_VERSION = 4
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
@@ -226,7 +226,7 @@ def _option_value(key, value, options, context=None):
         'country':{'unitedstates':{"us", "usa", "unitedstatesofamerica","unitedstates1"}},
         'state':{'ca':{'california'},'california':{'ca'}},
         'major':{'electricalengineeringandcomputersciences':{'electricalengineeringandcomputerscience'}},
-        'phone_type':{'mobile':{'cell','cellular','mobilephone','homecellular'},'landline':{'home','homephone','homelandline'}},
+        'phone_type':{'mobile':{'cell','cellular','mobilephone','homecellular','cellpersonal'},'landline':{'home','homephone','homelandline'}},
         'pronouns':{'hehim':{'hehimhis'},'sheher':{'sheherhers'},'theythem':{'theythemtheirs'}},
         'location':{'berkeleyca':{'berkeleycaliforniaunitedstates','berkeleycaunitedstates','berkeleycalifornia','berkeleycausa'}},
         'citizenship':{'unitedstates':{"us", "usa", "unitedstatesofamerica"}},
