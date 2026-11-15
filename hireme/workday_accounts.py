@@ -10,7 +10,7 @@ import time
 from urllib.parse import parse_qsl,urlsplit
 
 from .accounts import AccountVault,account_key
-from .approval_boundary import ApprovalBoundary
+from .approval_boundary import ApprovalBoundary,SETTINGS,source_fingerprint
 from .util import Blocked,digest,now
 from .workday_site import site_for_url
 
@@ -47,6 +47,33 @@ def remember_nonce(agent,request,data):
         agent.account_tokens[(site.host,site.site)]=value
 
 
+class SigninBoundary:
+    """Permit account access for readback while application writes stay fenced."""
+    def __init__(self,agent):
+        self.store=agent.store;self.job=dict(agent.job)
+        self.generation=self.store.control_generation()
+        current=self.store.settings()
+        self.settings={key:current.get(key) for key in SETTINGS}
+        self.sources=source_fingerprint(self.store)
+        row=self.store.db.execute('SELECT payload FROM jobs WHERE id=?',(self.job['id'],)).fetchone()
+        self.job_hash=digest(json.loads(row[0])) if row else None
+        self.check()
+
+    def check(self):
+        self.store.checkpoint();current=self.store.settings()
+        if (self.generation!=self.store.control_generation() or not current['live_enabled']
+                or not current['employer_accounts']
+                or any(current.get(key)!=value for key,value in self.settings.items())):
+            raise Blocked('paused','Account sign-in approval changed before transport')
+        self.store.check_job_decision(self.job['id'])
+        row=self.store.db.execute('SELECT payload FROM jobs WHERE id=?',(self.job['id'],)).fetchone()
+        if (digest(json.loads(row[0])) if row else None)!=self.job_hash:raise Blocked('application_changed')
+        if source_fingerprint(self.store)!=self.sources:raise Blocked('stale_answer')
+        from .policy import eligible
+        eligible(self.job,current,self.store.facts())
+        return True
+
+
 class AuthGrant:
     """One source-bound native login/register POST; no generic account access."""
     def __init__(self,agent,kind,credential):
@@ -55,7 +82,8 @@ class AuthGrant:
         self.kind=kind;self.credential=credential;self.used=False;self.status=None;self.result=None
         self.request_signature=None;self.request_guid=None
         self.key=account_key('https://'+self.site.host,self.site.tenant)
-        self.boundary=ApprovalBoundary(self.store,agent.job,require_live=True)
+        self.boundary=(SigninBoundary(agent) if kind=='login'
+            else ApprovalBoundary(self.store,agent.job,require_live=True))
         self.generation=self.store.control_generation()
         self.context=agent.page.evaluate('''()=>({tenant:workday.tenant,site:workday.siteId,
             secure:sessionStorage.getItem('sessionSecureToken'),location:location.pathname+location.search})''')

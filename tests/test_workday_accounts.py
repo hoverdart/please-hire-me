@@ -135,6 +135,38 @@ def test_known_account_signs_in_without_creating_or_activating_again(store,accou
     assert state['writes']==['register','login','login'] and state['activation_gets']==1
 
 
+def test_existing_account_can_sign_in_to_read_unknown_draft_without_reopening_application_writes(store,account_browser):
+    from hireme.draft_journal import DraftJournal
+    from hireme.workday_accounts import AuthGrant
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser
+    assert authenticate(browser)
+    journal=DraftJournal(store,browser.job)
+    operation=journal.intent([('ui','entry')],'ui:entry',{}, {})
+    store.db.execute("UPDATE draft_operations SET state='unknown' WHERE id=?",(operation,))
+    state['logged_in']=False;browser.owner_verified=False;browser.workday_account_attempted=False
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login','login']
+    assert store.db.execute('SELECT state FROM draft_operations WHERE id=?',(operation,)).fetchone()[0]=='unknown'
+    with pytest.raises(Blocked,match='browser_draft_uncertain'):
+        store._check_budget(browser.job,store.settings())
+    with pytest.raises(Blocked,match='browser_draft_uncertain'):
+        AuthGrant(browser,'register',credentials(store,browser.job))
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('change',['pause','facts','posting','disable'])
+def test_signin_boundary_rechecks_owner_approval_before_transport(store,account_browser,change):
+    from hireme.workday_accounts import SigninBoundary
+    browser,_=account_browser;boundary=SigninBoundary(browser)
+    if change=='pause':store.update_settings({'live_enabled':False})
+    elif change=='disable':store.update_settings({'employer_accounts':False})
+    elif change=='facts':store.put_facts({'email':'changed@candidate.invalid'})
+    else:store.upsert_job({**browser.job,'title':'Different Software Engineer Intern Summer 2027'})
+    with pytest.raises(Blocked):boundary.check()
+
+
 def test_lost_creation_acknowledgement_never_repeats_registration(store,account_browser):
     browser,state=account_browser;state['mode']='lost_ack'
     with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)

@@ -46,6 +46,17 @@ def test_contextual_workday_definition_reads_require_native_header_and_exact_sch
     assert not read_request(request(path.replace('/jobapplication/abc-123/','/profile/abc-123/'),data,headers={'form-definition':'true'}))
 
 
+def test_phone_type_definition_can_include_native_default_metadata_without_becoming_a_save():
+    path='/wday/calypso/cxs/jobapplication/synthetic/jobapplication/abc-123/phonenumber'
+    phone={'countryPhoneCode':{'id':'country','descriptor':'United States (+1)'},'phoneNumber':'',
+        'phoneType':{'id':'mobile','descriptor':'Mobile','default':True,
+            'metadataType':{'id':'type','descriptor':'Phone Type'}}}
+    assert read_request(request(path,phone,headers={'form-definition':'true'}))
+    assert not read_request(request(path,phone))
+    for invalid in ({'default':'true'},{'metadataType':{'id':'type'}},{'submit':True}):
+        assert not read_request(request(path,{**phone,'phoneType':{**phone['phoneType'],**invalid}},headers={'form-definition':'true'}))
+
+
 @pytest.mark.parametrize('source',[
     {'id':'source-id','descriptor':'Website','isSelected':'yes'},
     {'id':'source-id','descriptor':'Website','index':True},

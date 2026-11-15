@@ -107,11 +107,39 @@ def test_nested_workday_prompt_uses_its_own_options_and_verifies_selected_label(
         assert final['options']==[] and final['value']=='Company Website'
 
 
+def test_expansion_waits_for_native_child_choices_without_clicking_the_group_again(store):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content(PROMPT)
+        browser.page.locator('#source').click()
+        field=observe(browser.page)['fields'][0]
+        browser.page.get_by_role('option',name='Website not checked',exact=True).evaluate('''node=>{
+          node.onclick=()=>{window.groupClicks=(window.groupClicks||0)+1;menu.replaceChildren();
+            setTimeout(()=>menu.replaceChildren(option('Company Website',false)),700);};
+        }''')
+        browser._check=lambda:None
+        browser.option_cache={};browser.memory=[]
+        browser._perform({'kind':'expand','field':field,'value':'Website','label':'Inspect Website'},
+            observe(browser.page),[],[])
+        assert browser.page.evaluate('window.groupClicks')==1
+        assert observe(browser.page)['fields'][0]['options']==['Company Website']
+
+
 @pytest.mark.parametrize('source,expected',[('portal:Acme','Website'),('gh:Acme','Website'),('user',None),('simplify:internships',None)])
 def test_website_source_category_requires_known_employer_board_provenance(source,expected):
     from hireme.answers import _discovery_answer
     answer=_discovery_answer('How Did You Hear About Us?*',['Website','Employee Referral'],{'source':source,'company':'Acme'})
     assert (answer['value'] if answer else None)==expected
+
+
+def test_recorded_job_board_source_can_expand_combined_category_without_claiming_a_social_referral():
+    from hireme.answers import _discovery_answer
+    context={'source':'simplify:internships','company':'Acme'}
+    answer=_discovery_answer('How Did You Hear About Us?*',
+        ['Company Website','Job Board/ Social Media','Referral'],context)
+    assert answer=={'value':'Job Board/ Social Media','provenance':{'job_source':'simplify:internships'}}
+    assert _discovery_answer('How Did You Hear About Us?*',['LinkedIn','Indeed'],context) is None
+    assert _discovery_answer('How Did You Hear About Us?*',['LinkedIn','Indeed','Other'],context)['value']=='Other'
+    assert _discovery_answer('How Did You Hear About Us?*',['Job Board/ Social Media'],{'source':'user'}) is None
 
 
 def test_visible_menu_is_not_shared_with_unrelated_comboboxes(store):

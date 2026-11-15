@@ -631,7 +631,15 @@ class AdaptiveBrowser(Browser):
         if kind=='expand':
             self._prompt_option(choice['field'],choice['value'],group=True).click()
             self.option_cache.pop(choice['field']['ui_id'],None)
-            self.page.wait_for_timeout(200)
+            deadline=time.monotonic()+5
+            before=(choice['field'].get('options',[]),choice['field'].get('option_groups',[]))
+            while time.monotonic()<deadline:
+                self._check();fresh=observe(self.page)
+                field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
+                if field:
+                    current=(field.get('options',[]),field.get('option_groups',[]))
+                    if any(current) and current!=before:break
+                self.page.wait_for_timeout(100)
             self.memory.append({'action':choice['label'],'result':'choices expanded'})
             return
         if kind=='close_options':

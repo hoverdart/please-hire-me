@@ -86,6 +86,12 @@ def workday_definition_context(resource,data):
                 if type(item) is not int or not 0<=item<=100000:return False
             elif type(item) is not bool:return False
         return True
+    def phone_type(value):
+        if not isinstance(value,dict):return False
+        extra={'default','metadataType'}
+        return (reference({key:item for key,item in value.items() if key not in extra})
+            and ('default' not in value or type(value['default']) is bool)
+            and ('metadataType' not in value or reference(value['metadataType'])))
     if resource=='previousworker':
         if len(data)==1 and next(iter(data)) in {'currentlyWorkHere','candidateIsPreviousWorker'}:
             return type(next(iter(data.values()))) is bool
@@ -102,7 +108,7 @@ def workday_definition_context(resource,data):
     if resource=='phonenumber':
         return ({'countryPhoneCode','phoneNumber'}<=set(data)<={'id','descriptor','countryPhoneCode','extension','phoneNumber','phoneType'}
             and reference(data['countryPhoneCode']) and all(short(v) for k,v in data.items() if k not in {'countryPhoneCode','phoneType'})
-            and ('phoneType' not in data or reference(data['phoneType'])))
+            and ('phoneType' not in data or phone_type(data['phoneType'])))
     if resource=='socials':return set(data)=={'facebookAccount','linkedInAccount','twitterAccount'} and all(short(v) for v in data.values())
     if resource=='skills':return data=={'skills':None}
     if resource=='termsandconditions':
