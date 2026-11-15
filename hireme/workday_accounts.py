@@ -160,8 +160,10 @@ def _submit(agent,kind,credential,key):
     if kind=='register':
         _fill(root,'verifyPassword',credential['password'])
         agreement=root.locator('[data-automation-id="createAccountCheckbox"]:visible')
-        if agreement.count()!=1:raise Blocked('account_agreement_review','The account creation agreement changed')
-        agreement.check()
+        if agreement.count()>1:raise Blocked('account_agreement_review','The account creation agreement changed')
+        if agreement.count()==1:agreement.check()
+        elif root.locator('input[type=checkbox]:visible,[role=checkbox]:visible').count():
+            raise Blocked('account_agreement_review','An unrecognized account agreement needs review')
     # Never expose credential fields or the raw transport to the application
     # planner. The public click-filter runs Workday's own verification client.
     button=root.get_by_role('button',name='Create Account' if kind=='register' else 'Sign In',exact=True)

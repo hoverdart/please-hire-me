@@ -235,3 +235,21 @@ def test_workday_account_to_verified_application_uses_production_browser_flow(st
     assert len(finals)==1 and state['writes']==['register','login'] and state['activation_gets']==1
     from hireme.application_evidence import snapshot
     assert snapshot(store,browser.aid)['verification_method']=='verified_ui_application_readback'
+
+
+def test_employer_without_an_account_agreement_can_register(store,account_browser,monkeypatch):
+    browser,state=account_browser;original=auth_html
+    def without_agreement():
+        return original().replace('<label><input data-automation-id=createAccountCheckbox type=checkbox>I agree to creating this account</label>','').replace("if(create&&!root.querySelector('input[type=checkbox]').checked)return;",'')
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',without_agreement)
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and browser.owner_verified
+
+
+def test_unknown_account_agreement_is_held_before_registration(store,account_browser,monkeypatch):
+    browser,state=account_browser;original=auth_html
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',lambda:original().replace('data-automation-id=createAccountCheckbox','data-automation-id=unknownAgreement'))
+    browser.page.goto(URL)
+    with pytest.raises(Blocked,match='account_agreement_review'):authenticate(browser)
+    assert state['writes']==[] and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
