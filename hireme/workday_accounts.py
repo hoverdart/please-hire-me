@@ -84,8 +84,9 @@ class AuthGrant:
 
     def observe(self,response):
         request=response.request
-        if self.status is not None or self.request_signature!=(request.url,request.method,hashlib.sha256(request.post_data_buffer or b'').hexdigest()):return
+        if self.status is not None or not self.request_signature or self.request_signature[:2]!=(request.url,request.method):return
         try:
+            if self.request_signature[2]!=hashlib.sha256(request.post_data_buffer or b'').hexdigest():return
             raw=response.body()
             if len(raw)>2*1024*1024:return
             try:data=json.loads(raw)
@@ -191,8 +192,10 @@ def _submit(agent,kind,credential,key):
     if kind=='register':AccountVault(agent.store).begin_creation('https://'+grant.site.host,grant.site.tenant)
     else:_state(agent.store,key,'signing_in','account_signin_intent',{})
     agent.account_operation=grant
+    phase='click'
     try:
         _checkpoint(agent);grant.boundary.check();button.click()
+        phase='response'
         deadline=time.monotonic()+getattr(agent,'account_operation_timeout',20)
         while time.monotonic()<deadline:
             _checkpoint(agent)
@@ -213,12 +216,14 @@ def _submit(agent,kind,credential,key):
         _state(agent.store,key,'uncertain','workday_account_operation_uncertain',
                {'operation':kind,'dispatched':grant.used,'http_status':grant.status,'result':grant.result})
         raise Blocked('account_result_uncertain','Workday did not acknowledge the account operation; another creation is held')
-    except Blocked:
+    except Blocked as error:
         row=agent.store.db.execute('SELECT state FROM employer_accounts WHERE id=?',(key,)).fetchone()
-        if row and row['state'] in {'creating','signing_in'}:_state(agent.store,key,'uncertain','workday_account_operation_uncertain',{'operation':kind})
+        if row and row['state'] in {'creating','signing_in'}:_state(agent.store,key,'uncertain','workday_account_operation_uncertain',
+            {'operation':kind,'dispatched':grant.used,'http_status':grant.status,'result':grant.result,'phase':phase,'reason':error.reason})
         raise
-    except Exception:
-        _state(agent.store,key,'uncertain','workday_account_operation_uncertain',{'operation':kind})
+    except Exception as error:
+        _state(agent.store,key,'uncertain','workday_account_operation_uncertain',
+            {'operation':kind,'dispatched':grant.used,'http_status':grant.status,'result':grant.result,'phase':phase,'error':type(error).__name__})
         raise Blocked('account_result_uncertain','The account operation was interrupted; check the employer account before another creation') from None
     finally:
         agent.account_operation=None
