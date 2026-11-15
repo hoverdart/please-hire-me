@@ -989,8 +989,8 @@ class AdaptiveBrowser(Browser):
                 self.job.update(verified_posting(self.page,self.job,self.store.checkpoint))
                 posting_text=self.job['description']
                 dismiss_cookie_notice(self.page)
-                from .browser_identity import verify_workday_account
-                self.owner_verified=verify_workday_account(self)
+                from .browser_identity import initial_workday_account
+                self.owner_verified=initial_workday_account(self)
                 initial=observe(self.page)
             has_checkpoint=(self.store.db.execute('SELECT 1 FROM applications WHERE job_id=?',(job['id'],)).fetchone()
                 or self.store.db.execute("SELECT 1 FROM events WHERE kind='browser_agent_checkpoint' AND subject=? LIMIT 1",(job['id'],)).fetchone())

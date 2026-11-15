@@ -238,7 +238,11 @@ def _submit(agent,kind,credential,key):
 
 def _owned(agent,key):
     from .browser_identity import verify_workday_account
-    if not verify_workday_account(agent):return False
+    try:verified=verify_workday_account(agent)
+    except Blocked as error:
+        if error.reason=='browser_identity_unverified':return False
+        raise
+    if not verified:return False
     _state(agent.store,key,'confirmed','workday_account_owner_verified',{'owner_hash':digest(agent.store.facts()['email']['value'].casefold())})
     agent.owner_verified=True
     try:agent.page.wait_for_function("()=>![...document.querySelectorAll('input[type=password]')].some(e=>e.checkVisibility())",timeout=5000)

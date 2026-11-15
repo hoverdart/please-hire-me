@@ -67,6 +67,25 @@ def verify_workday_account(agent):
     return verify_email(agent.store,value)
 
 
+def initial_workday_account(agent):
+    """A public posting without a session token is a signed-out entry screen.
+
+    This never establishes ownership. The application and final readback still
+    require the authenticated profile response after sign-in.
+    """
+    from .workday_site import site_for_url
+    site=site_for_url(agent.job['url'])
+    context=agent.page.evaluate('''()=>({tenant:window.workday?.tenant,site:window.workday?.siteId,
+        token:!!window.workday?.token,user:!!window.workday?.user?.name})''')
+    if (context.get('tenant')==site.tenant and context.get('site')==site.site
+            and context.get('token') is False and context.get('user') is False):return False
+    try:return verify_workday_account(agent)
+    except Blocked as error:
+        if (error.reason=='browser_identity_unverified' and context.get('tenant')==site.tenant
+                and context.get('site')==site.site and context.get('user') is False):return False
+        raise
+
+
 def identity_read(request,connection_id):
     """Recognize an observed self read; never construct a platform endpoint."""
     from urllib.parse import urlsplit
