@@ -1413,7 +1413,7 @@ def test_demo_is_read_only_and_export_requires_auth(tmp_path):
             open_view(page, 'setup')
             page.locator('#setup-diagnostics').evaluate('(element)=>element.open=true')
             page.locator('#check-setup').click()
-            expect(page.locator('.diagnostic-check')).to_have_count(6)
+            expect(page.locator('.diagnostic-check')).to_have_count(7)
             expect(page.locator('#setup-check-status')).to_contain_text('Sample workspace')
             with page.expect_download() as report:
                 page.locator('#download-setup-report').click()
@@ -1424,7 +1424,7 @@ def test_demo_is_read_only_and_export_requires_auth(tmp_path):
             page.route('**/api/diagnostics', lambda route: route.fulfill(status=503, content_type='application/json', body='{"error":"Synthetic interrupted connection"}'))
             page.locator('#check-setup').click()
             expect(page.locator('#setup-check-error')).to_be_visible()
-            expect(page.locator('.diagnostic-check')).to_have_count(6)
+            expect(page.locator('.diagnostic-check')).to_have_count(7)
             expect(page.locator('#download-setup-report')).to_be_enabled()
             page.unroute('**/api/diagnostics')
             page.locator('#check-setup').click()
