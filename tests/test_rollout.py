@@ -104,6 +104,27 @@ def test_restricted_rollout_rejects_local_confirmed_flag_without_native_proof(st
     with pytest.raises(ValueError,match='verified native'):commission(store,'restricted')
 
 
+@pytest.mark.parametrize('limits,accepted',[
+    ({'max_per_cycle':3,'max_per_day':10,'max_attempts_per_cycle':8},True),
+    ({'max_per_cycle':4,'max_per_day':10,'max_attempts_per_cycle':8},False),
+    ({'max_per_cycle':3,'max_per_day':11,'max_attempts_per_cycle':8},False),
+    ({'max_per_cycle':3,'max_per_day':10,'max_attempts_per_cycle':9},False),
+])
+def test_ten_daily_rollout_retains_submission_and_attempt_ceilings(store,job,package,monkeypatch,limits,accepted):
+    store.update_settings({'allowed_application_ats':['lever'],'stop_on_uncertain_outcome':True,
+                           'target_per_cycle':3,'target_per_day':10,**limits})
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'confirmed','Synthetic receipt')
+    monkeypatch.setattr('hireme.application_evidence.snapshot',lambda s,identity:{'ats':'lever','verification_method':'native_ats_acknowledgement','attempt_id':identity})
+    if not accepted:
+        with pytest.raises(ValueError,match='ten submissions per day'):commission(store,'restricted')
+    else:
+        record=commission(store,'restricted')
+        assert record['proofs']=={'lever':aid}
+        monkeypatch.setattr('hireme.connections.status',lambda *a,**k:{'ready':True})
+        monkeypatch.setattr('hireme.gmail.check_connection',lambda s:None)
+        assert check(store,live=True,job_ids=None)
+
+
 def test_uncertain_outcome_pauses_before_next_role(store,job,package):
     store.update_settings({'stop_on_uncertain_outcome':True,'uncertain_application_scope':'posting'})
     other={**job,'id':digest('other'),'url':job['url']+'-other'};store.upsert_job(other)

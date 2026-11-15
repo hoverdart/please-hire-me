@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 from .util import Blocked,atomic_json,now,digest
 
+MAX_DAILY=10
+MAX_CYCLE=3
+MAX_ATTEMPTS=8
+
 
 def code_fingerprint():
     root=Path(__file__).parent
@@ -24,8 +28,8 @@ def commission(store, stage):
             if bundle['ats'] in scope and bundle['verification_method']=='native_ats_acknowledgement':
                 proofs.setdefault(bundle['ats'],bundle['attempt_id'])
         if set(proofs)!=set(scope):raise ValueError('A verified native submission is required for each enabled ATS')
-        if settings['max_per_cycle']>2 or settings['max_per_day']>4 or settings['max_attempts_per_cycle']>2:
-            raise ValueError('Restricted rollout allows at most two attempts per cycle and four per day')
+        if settings['max_per_cycle']>MAX_CYCLE or settings['max_per_day']>MAX_DAILY or settings['max_attempts_per_cycle']>MAX_ATTEMPTS:
+            raise ValueError('Restricted rollout allows at most three submissions and eight attempts per cycle, and ten submissions per day')
         if not settings['stop_on_uncertain_outcome']:raise ValueError('Enable stop-on-uncertainty first')
     record={'stage':stage,'code_fingerprint':code_fingerprint(),'ats':scope,'proofs':proofs,'commissioned_at':now()}
     atomic_json(store.root/'config/rollout.json',record)
@@ -48,8 +52,8 @@ def check(store, *, live, job_ids):
         raise Blocked('rollout_controlled','Select exactly one new posting for a controlled live run')
     if live and stage=='restricted':
         if (set(record.get('proofs',{}))!=set(settings['allowed_application_ats'])
-                or settings['max_per_cycle']>2 or settings['max_per_day']>4
-                or settings['max_attempts_per_cycle']>2 or not settings['stop_on_uncertain_outcome']):
+                or settings['max_per_cycle']>MAX_CYCLE or settings['max_per_day']>MAX_DAILY
+                or settings['max_attempts_per_cycle']>MAX_ATTEMPTS or not settings['stop_on_uncertain_outcome']):
             raise Blocked('rollout_limits','Restricted rollout limits or ATS evidence changed')
         for aid in record['proofs'].values():
             app=store.application_record(aid)
