@@ -317,3 +317,12 @@ def test_season_choices_require_exact_separate_summer_cohort_evidence(store,job,
     store.update_settings({'seniority':['summer-internship']})
     with pytest.raises(Blocked,match='internship_out_of_scope'):
         eligible({**job,'title':'Software Intern - '+title,'description':job['description']+'\n'+description},store.settings(),store.facts())
+
+
+@pytest.mark.parametrize('specialty,accepted',[('Software',True),('Hardware',False),('Software Sales',False)])
+def test_reverse_engineering_intern_title_preserves_exact_software_specialty(store,job,specialty,accepted):
+    store.update_settings({'roles':['software'],'seniority':['summer-internship']})
+    item={**job,'title':f'Engineer Intern - {specialty} (Summer 2027)'}
+    if accepted:assert eligible(item,store.settings(),store.facts())[0]>0
+    else:
+        with pytest.raises(Blocked,match='role_mismatch'):eligible(item,store.settings(),store.facts())

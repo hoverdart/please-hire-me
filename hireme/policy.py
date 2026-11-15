@@ -5,7 +5,7 @@ import re
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 14
+ELIGIBILITY_VERSION = 15
 CITIZENSHIP_VERSION = 2
 
 LOCATIONS = {
@@ -169,7 +169,7 @@ def fit_score(job,facts):
     return min(100,score),matches
 
 
-SOFTWARE_ROLE = r'\bsoftware\s+(?:engineer\w*|develop\w*|intern\w*|research\w*)\b|\bswe\b|\b(?:front[- ]?end|back[- ]?end|full[- ]?stack|platform)\s+(?:software\s+)?(?:engineer\w*|develop\w*|intern\w*)\b'
+SOFTWARE_ROLE = r'\bsoftware\s+(?:engineer\w*|develop\w*|intern\w*|research\w*)\b|\bswe\b|\b(?:front[- ]?end|back[- ]?end|full[- ]?stack|platform)\s+(?:software\s+)?(?:engineer\w*|develop\w*|intern\w*)\b|\bengineer(?:ing)?\s+intern(?:ship)?\s*[-–:]\s*software(?=\s*(?:[,(\[]|$))'
 TECHNICAL_RESEARCH = r'\b(?:software|computer science|machine learning|artificial intelligence|applied ai|ai for|deep learning|distributed systems|natural language|computer vision|llm|robotics)\b'
 
 
