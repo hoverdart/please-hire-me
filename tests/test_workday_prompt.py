@@ -51,6 +51,64 @@ def test_workday_date_navigation_help_does_not_change_field_identity(store):
         assert not after.get('help_text') and after['value']=='8'
 
 
+def test_questionnaire_numeric_month_and_year_use_confirmed_graduation_precision(store,job,package):
+    from hireme.answers import resolve,validate_package
+    from hireme.util import digest
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content('''<div data-automation-id=formField-graduation><label>What is your anticipated graduation date?*</label>
+            <input data-automation-id=dateSectionMonth-input maxlength=2>
+            <input data-automation-id=dateSectionYear-input maxlength=4></div>''')
+        fields=observe(browser.page)['fields']
+        answers=[resolve(store,job['host'],f,context=job) for f in fields]
+        assert [a['value'] for a in answers]==['05','2028']
+        for answer in answers:
+            browser._fill_ui(answer)
+            assert browser._matches(answer)
+        package.update(answers=answers,steps=[{'fields':fields}],facts_hash=digest(store.facts()))
+        validate_package(store,job,package)
+
+
+def test_month_only_graduation_cannot_fill_an_exact_day_component(store,job):
+    from hireme.answers import resolve
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content('''<div data-automation-id=formField-graduation><label>What is your anticipated graduation date?*</label>
+            <input data-automation-id=dateSectionDay-input maxlength=2></div>''')
+        field=observe(browser.page)['fields'][0]
+        assert field['history_date_part']=='day_number'
+        with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],field,context=job)
+        assert browser.page.locator('input').input_value()==''
+
+
+@pytest.mark.parametrize('options,expected',[(['April','May','June'],'May'),(['4','5','6'],'5')])
+def test_date_component_choices_keep_their_exact_native_month_encoding(store,job,options,expected):
+    from hireme.answers import resolve
+    field={'label':'What is your anticipated graduation date?* month','type':'combobox','required':True,
+        'options':options,'history_date_part':'month_number','value':''}
+    assert resolve(store,job['host'],field,context=job)['value']==expected
+
+
+def test_incomplete_date_group_waits_for_its_missing_day_before_typing_other_components(store,job,monkeypatch):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.job={**job,'answer_scope':job['host']};browser.preparing=False;browser.provider=None
+        browser.opened=set();browser.searched=set();browser.option_cache={};browser.completed_steps=[]
+        monkeypatch.setattr(browser,'_check',lambda:None)
+        browser.page.set_content('''<h1>My Information</h1><div data-automation-id=formField-graduation>
+          <label>What is your anticipated graduation date?*</label>
+          <input id=month data-automation-id=dateSectionMonth-input>
+          <input id=day data-automation-id=dateSectionDay-input>
+          <input id=year data-automation-id=dateSectionYear-input></div><button>Save and continue</button>''')
+        view=observe(browser.page);choices,answers,_,pending=browser._choices(view)
+        assert not choices and len(pending)==1 and pending[0][0]['history_date_part']=='day_number'
+        assert [browser.page.locator('#'+name).input_value() for name in ('month','day','year')]==['','','']
+        # This synthetic applicant explicitly supplies the missing day. It is
+        # an approval of one exact field, never a day inferred from May 2028.
+        field=pending[0][0]
+        qid=store.ask(job['id'],job['host'],field['label'],[],'missing_fact',field=field,context=job)
+        store.answer_question(qid,'19')
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not pending and [c['answer']['value'] for c in choices]==['05','19','2028']
+
+
 def test_workday_agreement_retains_surrounding_terms_and_links(store):
     with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
         browser.page.set_content('''<section data-fkit-id=termsAndConditions--null>

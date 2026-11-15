@@ -3,6 +3,7 @@ import json
 import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs,urlsplit
+from html import escape
 
 import pytest
 
@@ -214,7 +215,8 @@ def test_account_grant_requires_intent_exact_values_and_one_dispatch(store,accou
     assert not state['writes']
 
 
-def test_workday_account_to_verified_application_uses_production_browser_flow(store,account_browser,monkeypatch):
+@pytest.mark.parametrize('resume_saved',[False,True])
+def test_workday_account_to_verified_application_uses_production_browser_flow(store,account_browser,monkeypatch,resume_saved):
     """Closed HTTPS employer + Gmail; exercise the real auth and final UI grants."""
     browser,state=account_browser
     old_html=auth_html
@@ -225,10 +227,18 @@ def test_workday_account_to_verified_application_uses_production_browser_flow(st
         let response=await fetch('/wday/cxs/acme/jobapplication/REMOTE/finalize',{method:'POST',body:data});
         if(response.ok)document.body.innerHTML='&lt;h1>Your application has been received.&lt;/h1>';
       })()">Submit application</button>'''.replace('REMOTE',remote)
+    final_html=app_html
+    if resume_saved:
+        handler='''(async()=>{let response=await fetch('/wday/cxs/acme/jobapplication/REMOTE/name',{
+            method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:document.getElementById('full').value})});
+            if(response.ok)document.body.innerHTML=FINAL;})()'''.replace('REMOTE',remote).replace('FINAL',json.dumps(final_html))
+        app_html='<h1>My Information</h1><label>Full name<input id=full required></label><button type=button onclick="'+escape(handler,quote=True)+'">Save and continue</button>'
+    state['draft_saved']=False;state['name_saves']=0;state['final_sent']=False
     def html():
         if state['logged_in']:
             return ('<h1>Software Engineer Intern Summer 2027</h1>'
                 '<div data-automation-id=jobPostingDescription>Build Python and TypeScript software in San Francisco, United States.</div><p>R12345</p>'
+                '<button onclick="location.href=\'/External/userHome\'">Candidate Home</button>'
                 '<button id=entry>Apply Manually</button><script>window.workday={tenant:"acme",siteId:"External",token:"fixture-csrf"};'
                 'entry.onclick=()=>document.body.innerHTML='+json.dumps(app_html).replace('<',r'\u003c')+';</script>')
         original=old_html().replace("document.body.innerHTML='<h1>Your application</h1><p>Signed in</p>';",
@@ -241,8 +251,10 @@ def test_workday_account_to_verified_application_uses_production_browser_flow(st
     # Existing fixture transport remains the network boundary for account writes.
     # These exact official posting/receipt reads and finalizer add the application.
     def official(route):
-        route.fulfill(status=200,json={'jobPostingInfo':{'externalUrl':URL,'jobPostingId':'Synthetic_R12345',
-          'jobPostingSiteId':'External','jobReqId':'R12345','title':browser.job['title'],'posted':True,'canApply':True}})
+        info={'externalUrl':URL,'jobPostingId':'Synthetic_R12345',
+          'jobPostingSiteId':'External','jobReqId':'R12345','title':browser.job['title'],'posted':True,'canApply':not state['draft_saved']}
+        if state['draft_saved']:info['jobApplication']={'id':remote,'draft':True,'dateCompleted':None}
+        route.fulfill(status=200,json={'jobPostingInfo':info})
     browser.page.route(ORIGIN+'/wday/cxs/acme/External/job/US/Synthetic_R12345',official)
     finals=[]
     def final(route):
@@ -252,6 +264,7 @@ def test_workday_account_to_verified_application_uses_production_browser_flow(st
         doc=store.db.execute("SELECT filename FROM documents WHERE kind='resume'").fetchone()[0]
         assert (store.root/'documents'/doc).read_bytes() in raw
         finals.append(route.request.url)
+        state['final_sent']=True
         route.fulfill(status=200,json={'id':remote})
     # Route through production authorization before the closed upstream reply.
     final_url=ORIGIN+'/wday/cxs/acme/jobapplication/'+remote+'/finalize'
@@ -265,16 +278,42 @@ def test_workday_account_to_verified_application_uses_production_browser_flow(st
             def fulfill(self,*,response):real.fulfill(status=response.status,headers=response.headers,body=response.body())
         browser._route(Transport())
     browser.page.route(final_url,final_transport)
+    if resume_saved:
+        def name_transport(real):
+            class Transport:
+                request=real.request
+                def abort(self):real.abort()
+                def fetch(self,**kwargs):
+                    assert json.loads(self.request.post_data)=={'name':store.facts()['full_name']['value']}
+                    state['name_saves']+=1;state['draft_saved']=True
+                    return SimpleNamespace(status=200,headers={'content-type':'application/json'},body=lambda:b'{"saved":true}')
+                def fulfill(self,*,response):real.fulfill(status=response.status,headers=response.headers,body=response.body())
+            browser._route(Transport())
+        browser.page.route(ORIGIN+'/wday/cxs/acme/jobapplication/'+remote+'/name',name_transport)
+        home='<button id=related aria-label="Related Actions '+browser.job['title']+'">Actions</button><div id=menu hidden><a role=menuitem href="'+URL+'/apply">Continue Application</a></div><script>related.onclick=()=>menu.hidden=false;</script>'
+        browser.page.route(ORIGIN+'/External/userHome',lambda route:route.fulfill(content_type='text/html',body=home))
+        browser.page.route(URL+'/apply',lambda route:route.fulfill(content_type='text/html',body='<script>window.workday={tenant:"acme",siteId:"External",token:"fixture-csrf"};</script>'+final_html))
     browser.page.route(ORIGIN+'/wday/calypso/cxs/candidatehome/acme/External/application/'+remote+'/config',
       lambda route:route.fulfill(status=200,json={'application':{'applicationId':remote,'jobPostingAnchorId':'Synthetic_R12345',
-        'jobRequisitionId':'R12345','postingTitle':browser.job['title'],'draft':False,'active':True,
-        'applicationType':'EXTERNAL','status':'Application Received','dateApplied':'November 15, 2026'}}))
+        'jobRequisitionId':'R12345','postingTitle':browser.job['title'],'draft':not state['final_sent'],'active':True,
+        'applicationType':'EXTERNAL','status':'Application Received' if state['final_sent'] else None,'dateApplied':'November 15, 2026' if state['final_sent'] else None}}))
     store.update_settings({'remote_drafts':True})
     browser.operation_timeout=2;browser.receipt_timeout=2
+    if resume_saved:
+        save=browser._save_partial
+        def stop_after_saved(*args,**kwargs):
+            result=save(*args,**kwargs)
+            if state['draft_saved'] and browser.completed_steps:raise Blocked('missing_answers')
+            return result
+        monkeypatch.setattr(browser,'_save_partial',stop_after_saved)
+        with pytest.raises(Blocked,match='missing_answers'):browser.apply(browser.job)
+        assert not finals and state['name_saves']==1
+        monkeypatch.setattr(browser,'_save_partial',save)
     assert browser.apply(browser.job)=='confirmed'
     assert len(finals)==1 and state['writes']==['register','login'] and state['activation_gets']==1
     from hireme.application_evidence import snapshot
     assert snapshot(store,browser.aid)['verification_method']=='verified_ui_application_readback'
+    if resume_saved:assert state['name_saves']==1
 
 
 def test_employer_without_an_account_agreement_can_register(store,account_browser,monkeypatch):

@@ -120,6 +120,8 @@ def resolve_field(store, field, provider=None):
         value = 'Yes' if value else 'No'
     elif key in {'start', 'end', 'expected_end'}:
         label = field.get('label', '').casefold()
+        if field.get('history_date_part')=='day_number':
+            raise Blocked('history_confirmation_required','Confirmed history months do not establish an exact day')
         if field.get('history_date_part')=='month_number':
             value=str(int(value[5:])) if field['type']=='number' else value[5:]
         elif re.search(r'\byear\b', label) and not re.search(r'\bmonth\b', label):

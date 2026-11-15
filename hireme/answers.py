@@ -7,7 +7,7 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 10
+AUTOMATIC_ANSWER_VERSION = 11
 WRITING_SOURCE_VERSION = 4
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 

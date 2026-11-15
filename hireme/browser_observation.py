@@ -176,6 +176,7 @@ OBSERVE = r"""({controlsSelector,actionsSelector}) => {
    const automation=e.getAttribute('data-automation-id')||'';
    let datePart=null;
    if(/dateSectionMonth-input$/i.test(automation)){title=clean(title+' month');datePart='month_number';}
+   if(/dateSectionDay-input$/i.test(automation)){title=clean(title+' day');datePart='day_number';}
    if(/dateSectionYear-input$/i.test(automation)){title=clean(title+' year');datePart='year';}
    const descriptions=(e.getAttribute('aria-describedby')||'').split(/\s+/).filter(id=>id&&!/-(?:placeholder|error|live-region)$/.test(id))
      .map(id=>document.getElementById(id)).filter(n=>n&&!(datePart&&n.id.startsWith('helpText-'))&&
@@ -198,7 +199,9 @@ OBSERVE = r"""({controlsSelector,actionsSelector}) => {
      maxlength:e.maxLength>0?e.maxLength:-1,min:e.getAttribute('min'),max:e.getAttribute('max'),
      step:e.getAttribute('step'),pattern:e.getAttribute('pattern'),value:type==='textarea'?value:clean(value),multiple:!!e.multiple,
      ...(help?{help_text:help}:{}),...(helpLinks.length?{help_links:helpLinks}:{}),...history(e),
-     ...(datePart?{history_date_part:datePart}:{}),
+     ...(datePart?{history_date_part:datePart,date_group:JSON.stringify([
+       field?.getAttribute('data-fkit-id')||field?.getAttribute('data-automation-id')||'',
+       clean(title).replace(/\s+(?:month|day|year)$/i,'')])}:{}),
      ...(/--phoneNumber$/.test(e.id)&&document.getElementById(e.id.replace(/--phoneNumber$/,'--countryPhoneCode'))?{phone_component:'national'}:{}),
      ...(e.isContentEditable?{contenteditable:true}:{}),
      ...(type==='date'?{date_format:'YYYY-MM-DD'}:{}),

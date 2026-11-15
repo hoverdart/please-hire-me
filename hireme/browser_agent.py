@@ -288,6 +288,7 @@ class AdaptiveBrowser(Browser):
             'answers':old_answers+list(answers),'documents':list(docs.values()),'steps':steps,
             'browser_agent':{'version':VERSION,'profile_binding':self.binding,'last_url':_clean_url(self.page.url),
                 'complete':complete,'uploaded_documents':list(self.uploads.values()),
+                **({'remote_application_hash':self.workday_application_hash} if getattr(self,'workday_application_hash',None) else {}),
                 'completed_steps':self.completed_steps}}
 
     def _resolve(self,field,previous):
@@ -546,6 +547,12 @@ class AdaptiveBrowser(Browser):
                 if field.get('options_visible'):
                     choices.append({'id':'close_options:'+field['ui_id'],'kind':'close_options',
                         'label':'Close inspected choices for '+field['label'],'field':field})
+        # A native date controller can clear a year entered while its required
+        # day is unknown. Resolve the whole group before typing any component.
+        blocked_dates={field['date_group'] for field,_ in pending if field.get('date_group')}
+        if blocked_dates:
+            choices=[choice for choice in choices if not (choice['kind']=='fill'
+                and choice.get('field',{}).get('date_group') in blocked_dates)]
         # Add only enough visible history rows to represent confirmed entries.
         for action in view['actions']:
             section=action.get('section')
@@ -820,7 +827,8 @@ class AdaptiveBrowser(Browser):
                 self.uploads[checksum]={'hash':checksum,'kind':document['kind'],
                     'operation_id':operation.record,'profile_binding':self.binding}
             if kind=='next':
-                step={'fields':view['fields'],'answers':answers,'documents':documents,'url':_clean_url(view['url'])}
+                step={'fields':view['fields'],'answers':answers,'documents':documents,'url':_clean_url(view['url']),
+                    'operation_id':operation.record}
                 from .workday_site import HOST
                 if not HOST.fullmatch(self.job['host']) or _step_key(step) not in {_step_key(old) for old in self.completed_steps}:
                     self.completed_steps.append(step)
@@ -948,6 +956,11 @@ class AdaptiveBrowser(Browser):
         if HOST.fullmatch(self.job['host']):
             # Workday's apply router needs its own authenticated continuation;
             # a cold saved URL can initialize a new, empty client session.
+            remote=metadata.get('remote_application_hash')
+            if remote:
+                expected=getattr(self,'workday_application_hash',None)
+                if expected and expected!=remote:raise Blocked('browser_draft_review')
+                self.workday_application_hash=remote
             self.resume_workday=True
             return None
         return target
@@ -1003,6 +1016,7 @@ class AdaptiveBrowser(Browser):
         self.allowed_origin=origin(self.test_url or entry);self.current_host=urlsplit(self.allowed_origin).hostname
         self.stopped_reason=None;self.completed_steps=[];self.uploads={};self.staged_documents={};self.memory=[];self.opened=set();self.searched=set();self.search_queries={};self.option_cache={}
         self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={};self.frame_entries=0
+        self.workday_application_hash=None
         self.account_operation=None;self.account_posting_verified=False;self.workday_account_attempted=False;self.account_tokens={}
         self.job['answer_scope']=job.get('answer_scope') or job['host']+'|'+self.store.company(job['company'])
         self.store.check_job_decision(job['id']);guard_pending(self.store,job)
@@ -1052,7 +1066,9 @@ class AdaptiveBrowser(Browser):
             initial=observe(self.page)
             if workday and not self.test_url:
                 from .workday_browser_posting import verified_posting,dismiss_cookie_notice
-                self.job.update(verified_posting(self.page,self.job,self.store.checkpoint))
+                from .workday_browser_continuation import verify as verify_saved
+                self.job.update(verified_posting(self.page,self.job,self.store.checkpoint,
+                    saved_application=lambda current,info:verify_saved(self,current,info)))
                 posting_text=self.job['description']
                 dismiss_cookie_notice(self.page)
                 from .browser_identity import initial_workday_account
@@ -1087,7 +1103,8 @@ class AdaptiveBrowser(Browser):
                 authenticate(self)
                 self.page.goto(self.job['url'],wait_until='domcontentloaded',timeout=45000)
                 self._check()
-                self.job.update(verified_posting(self.page,self.job,self.store.checkpoint))
+                self.job.update(verified_posting(self.page,self.job,self.store.checkpoint,
+                    saved_application=lambda current,info:verify_saved(self,current,info)))
                 eligible(self.job,self.store.settings(),self.store.facts())
                 self.store.upsert_job(self.job)
                 from .browser_identity import verify_workday_account

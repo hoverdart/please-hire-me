@@ -37,6 +37,7 @@ def field_context(host, field, context=None):
             **({'communication_channel':field['ashby_texting_consent']} if field.get('ashby_texting_consent') else {}),
             **({'employment_country':employment_country} if GENERIC_WORK_COUNTRY.search(field['label']) and employment_country else {}),
             **({'employment_countries':sorted(context['employment_countries'])} if GENERIC_WORK_COUNTRY.search(field['label']) and context.get('employment_countries') else {}),
+            **({'date_component':field['history_date_part']} if field.get('history_date_part') else {}),
             'label': ' '.join(field['label'].casefold().split()).rstrip(' *?:'),
             **({'help_text':field['help_text']} if field.get('help_text') else {}),
             **({'help_links':field['help_links']} if field.get('help_links') else {}),
@@ -78,6 +79,19 @@ def save_binding(store, host, field, context, key=None, template_id=None):
 def present(key, value, field):
     """Format confirmed facts without deriving citizenship or legal status."""
     label = field['label'].casefold()
+    part=field.get('history_date_part')
+    if (part in {'month_number','year','day_number'} and key in {
+            'college_start','graduation','earliest_start','latest_start','high_school_graduation',
+            'fulltime_start','internship_start','internship_end'}
+            and re.fullmatch(r'\d{4}-\d{2}(?:-\d{2})?',value)):
+        from datetime import date
+        if part=='day_number' and len(value)==7:
+            raise Blocked('missing_fact','Confirm an exact day; the approved month does not establish it')
+        try:parsed=date.fromisoformat(value if len(value)==10 else value+'-01')
+        except ValueError:raise Blocked('invalid_date_answer',field['label']) from None
+        number={'month_number':parsed.month,'year':parsed.year,'day_number':parsed.day}[part]
+        if part=='month_number' and field.get('options'):return calendar.month_name[number]
+        return str(number) if field.get('type')=='number' or field.get('options') or part=='year' else f'{number:02d}'
     if field.get('date_format'):
         from datetime import datetime
         parsed=None
