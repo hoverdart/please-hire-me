@@ -828,8 +828,14 @@ class AdaptiveBrowser(Browser):
                 elif kind=='search':
                     condition=any(f['ui_id']==choice['field']['ui_id'] and f['options'] for f in fresh['fields'])
                     if choice['field'].get('workday_prompt'):
+                        field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
+                        returned=bool(field and field.get('options_visible') and field['options']
+                            and (field['options'],field.get('option_groups',[]))!=
+                                (choice['field']['options'],choice['field'].get('option_groups',[])))
+                        selected=bool(field and field.get('selected_options') and
+                            field['selected_options']!=choice['field'].get('selected_options',[]))
                         condition=(time.monotonic()-search_started>=2 and
-                            self._search_input(choice['field']).input_value()==query)
+                            (returned or selected or self._search_input(choice['field']).input_value()==query))
                 elif kind in {'entry','next'}:condition=changed and self._view_ready(fresh)
                 else:condition=changed
                 if condition and operation.complete and time.monotonic()-operation.last_activity>=.75:break

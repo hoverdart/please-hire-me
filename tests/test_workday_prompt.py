@@ -399,7 +399,8 @@ def test_workday_fkit_rows_and_empty_history_actions_have_scoped_identity(store)
         assert not fields[4].get('section')
 
 
-def test_workday_prompt_search_executes_enter_without_saving_an_answer(store,job,monkeypatch):
+@pytest.mark.parametrize('clears_query,returns_choices',[(False,True),(True,True),(True,False)])
+def test_workday_prompt_search_executes_enter_without_saving_an_answer(store,job,monkeypatch,clears_query,returns_choices):
     from hireme.draft_journal import DraftJournal
     from hireme.browser_agent_protocol import origin
     store.put_facts({'school':'Testville University'})
@@ -407,7 +408,7 @@ def test_workday_prompt_search_executes_enter_without_saving_an_answer(store,job
       <label for=school>School*</label><div data-automation-id=multiSelectContainer>
       <input id=school data-uxi-widget-type=selectinput data-uxi-multiselect-id=school-widget enterkeyhint=search>
       </div></div><div id=menu></div><script>
-      school.onkeydown=e=>{if(e.key==='Enter'){window.searchExecuted=true;menu.innerHTML=
+      school.onkeydown=e=>{if(e.key==='Enter'){window.searchExecuted=true;if(window.clearSearch)school.value='';if(!window.returnChoices)return;menu.innerHTML=
       '<div role=option><div data-uxi-multiselect-id=school-widget><p data-automation-id=promptOption>Testville University</p></div></div>';}};
       </script>'''
     with AdaptiveBrowser(store,test_url=job['url']) as browser:
@@ -422,9 +423,12 @@ def test_workday_prompt_search_executes_enter_without_saving_an_answer(store,job
         view=observe(browser.page);field=view['fields'][0]
         choice=browser._lookup_choice(field,[])
         assert field['search_on_enter'] and choice['answer']['value']=='Testville University'
-        browser._perform(choice,view,[],[])
+        browser.page.evaluate('flags=>{window.clearSearch=flags[0];window.returnChoices=flags[1]}',[clears_query,returns_choices])
+        if returns_choices:browser._perform(choice,view,[],[])
+        else:
+            with pytest.raises(Blocked,match='browser_no_progress'):browser._perform(choice,view,[],[])
         assert browser.page.evaluate('!!window.searchExecuted')
-        assert observe(browser.page)['fields'][0]['options']==['Testville University']
+        assert observe(browser.page)['fields'][0]['options']==(['Testville University'] if returns_choices else [])
         assert not store.db.execute('SELECT 1 FROM draft_operations').fetchone()
 
 
@@ -541,3 +545,11 @@ def test_country_territory_phone_code_uses_both_confirmed_phone_and_country(stor
     answer=resolve(store,job['host'],field,context=job)
     assert answer['value']=='United States of America (+1)'
     assert 'phone_country' in answer['provenance']
+
+
+def test_simplify_can_use_an_observed_other_career_site_without_claiming_another_named_source():
+    from hireme.answers import _discovery_answer
+    options=['Other Career Site','Other Recruitment Marketing']
+    answer=_discovery_answer('How Did You Hear About Us?*',options,{'source':'simplify:internships'})
+    assert answer=={'value':'Other Career Site','provenance':{'job_source':'simplify:internships'}}
+    assert _discovery_answer('How Did You Hear About Us?*',['Simply Hired','Other Recruitment Marketing'],{'source':'simplify:internships'}) is None
