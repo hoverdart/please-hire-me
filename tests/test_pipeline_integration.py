@@ -99,9 +99,9 @@ class Posting:
                                 'fields':[{'name':'resume','type':'input_file'}]}]}}}
 
     def form(self):
-        entries=[{'id': self.render + '_' + path, 'field': {'path': path, 'title': label, 'type': 'String'},
+        entries=[{'id': self.render + '_' + path, 'field': {'path': path, 'title': label, 'type': 'Number' if kind=='number' else 'String'},
                   'fieldValue': {'value': self.saved[path]} if path in self.saved else None}
-                 for path, label, _ in self.fields]
+                 for path, label, kind in self.fields]
         entries.append({'id':self.render+'__systemfield_resume',
                         'field':{'path':'_systemfield_resume','title':'Resume','type':'File','isMany':False},
                         'fieldValue':self.attached_file})
@@ -121,7 +121,7 @@ class Posting:
         controls = ''.join(
             f'<div data-field-path="{path}" data-field-entry-id="{self.render}_{path}">'
             f'<label for="{path}">{escape(label)}</label><input id="{path}" name="{path}" '
-            f'type="{kind}" required></div>' for path, label, kind in self.fields)
+            f'type="{kind}"'+(' step="any"' if kind=='number' else '')+' required></div>' for path, label, kind in self.fields)
         lever = (f'<input type="hidden" name="accountId" value="{self.account}">'
                  '<input type="hidden" name="resumeStorageId" value="">'
                  '<input type="hidden" name="h-captcha-response" value="synthetic-native-token">' if self.platform == 'lever' else '')
@@ -151,7 +151,7 @@ class Posting:
                 + (f'send({json.dumps(bootstrap)});\n' if self.platform == 'ashby' else '')
                 + "for(const el of document.querySelectorAll('input:not([type=file]):not([type=hidden])')){\n"
                 " if(platform==='ashby')el.addEventListener('input',()=>send({operationName:'ApiSetFormValue',"
-                "query:saveQuery,variables:{...base,path:el.id,value:el.value}}).catch(()=>{}));}\n"
+                "query:saveQuery,variables:{...base,path:el.id,value:el.type==='number'?Number(el.value):el.value}}).catch(()=>{}));}\n"
                 f"document.getElementById({json.dumps(resume_id)}).addEventListener('change',async e=>{{\n"
                 " const file=e.target.files[0];if(!file)return;let data=new FormData();\n"
                 " if(platform==='greenhouse'){const config=await(await fetch(ghLoader.root.ENV.JBEN_URL+'/uncacheable_attributes/presigned_fields?fields%5B%5D=resume')).json();\n"
@@ -415,6 +415,21 @@ def test_real_pipeline_confirms_and_reports_then_excludes_the_same_posting(store
     assert posting.requests == before and network.browser_starts == 1 and not network.unexpected
     assert len(network.mailbox.messages_sent) == 1
     assert {row[0] for row in store.db.execute('SELECT state FROM report_outbox')} == {'sent', 'suppressed'}
+
+
+def test_real_ashby_pipeline_saves_decimal_gpa_and_verifies_one_submission(store,monkeypatch):
+    store.put_facts({'gpa':'3.76/4.00'})
+    posting=Posting('ashby','Synthetic fractional GPA',questions=(('GPA','number'),))
+    network=harness(store,monkeypatch,[posting]);result=network.run()
+    assert result['confirmed']==result['attempts']==1,result
+    assert type(posting.saved['question-0']) is float and posting.saved['question-0']==3.76
+    app=store.db.execute('SELECT state,package FROM applications').fetchone()
+    answer=next(a for a in json.loads(app['package'])['answers'] if a['field']['label']=='GPA')
+    assert app['state']=='confirmed' and answer['value']=='3.76'
+    assert answer['provenance']['fact_key']=='gpa'
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
+    assert not network.unexpected and len(network.mailbox.messages_sent)==1
+    assert network.run()['attempts']==0
 
 
 @pytest.mark.parametrize('initial_company,outcome',[('','confirmed'),('Existing applicant entry','confirmed'),('','company_changed')])

@@ -240,3 +240,25 @@ def test_restricted_board_discovery_uses_enabled_ats_and_remaining_budget(store,
     assert nets[0] is nets[1] and nets[0].deadline==400
     assert probes==[{'ats':['ash'],'deadline_seconds':250}]
     assert store.run_deadline is None
+
+
+def test_disabled_ats_never_consumes_detail_reads_or_application_attempts(store,job,monkeypatch):
+    enabled={**job,'id':digest('enabled-ashby'),'url':'https://jobs.ashbyhq.com/acme/enabled',
+             'host':'jobs.ashbyhq.com'}
+    store.upsert_job(enabled)
+    store.update_settings({'allowed_application_ats':['ashby']})
+    seen=[]
+    def refresh(s,rows,settings,limit):
+        assert [row['id'] for row in rows]==[enabled['id']]
+    monkeypatch.setattr('hireme.posting_inspection.refresh_candidates',refresh)
+    class Reader:
+        def __init__(self,s):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def apply(self,j,live=True):
+            assert not live;seen.append(j['id']);return 'prepared'
+    result=cycle(store,Path('.'),discover=False,live=False,limit=1,browser_factory=Reader)
+    assert seen==[enabled['id']] and result['prepared']==1 and result['attempts']==1
+    assert result['reasons']=={'ats_out_of_scope':1}
+    assert not store.db.execute('SELECT 1 FROM job_holds WHERE job_id=?',(job['id'],)).fetchone()
+    assert store.db.execute('SELECT status FROM jobs WHERE id=?',(job['id'],)).fetchone()[0]=='discovered'

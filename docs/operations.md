@@ -26,6 +26,10 @@ Report delivery can resume independently of applications. Combined emails identi
 
 Application batches share a five-minute discovery budget across lists, portals, boards and connected platforms, then process saved candidates. Restricted rollouts probe boards only for enabled ATS. Use the separate **Find jobs** action for broader discovery; a large backlog of speculative boards should not consume the application batch.
 
+Postings outside the enabled ATS scope are filtered before detail reads and application screening. They do not consume application attempts or create manual-review tasks. Older ATS-scope holds are classified as policy exclusions; application and uncertain-draft records remain protected.
+
+Ashby number saves accept canonical fractional decimals such as a confirmed GPA of `3.76`. The serialized numeric value must preserve the approved decimal, match the official Number control, and receive an exact numeric acknowledgement. Rounded, ambiguous or differently typed values remain blocked. Updating this mapping can revalidate unsupported draft holds; it cannot release an uncertain submission or employer save.
+
 The worker refuses to start new application work below 512 MiB free. Backups and restoration reserve that headroom too. `release-check` additionally flags low storage below 10% of the volume, or 1 GiB, whichever is larger. These checks cannot reserve space against unrelated programs writing at the same time.
 
 Pi health also checks that the kernel exposes the v2 memory controller. Service `MemoryMax` settings are ineffective without it. Follow the [Pi guide](pi.md) to enable the controller and verify the active kernel limit before relying on memory isolation.

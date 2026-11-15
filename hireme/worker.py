@@ -24,6 +24,15 @@ def _recorded_outcome(store, job_id, fallback):
     return state if state in {'confirmed', 'not_submitted', 'unknown', 'awaiting_verification'} else fallback
 
 
+def _application_rows(store,query,selected,scope):
+    from .application_evidence import ats_for
+    rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+    if not scope:return rows,0
+    enabled=set(scope)
+    candidates=[row for row in rows if ats_for(row['url']) in enabled]
+    return candidates,len(rows)-len(candidates)
+
+
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
     with worker_lock(store.root):
         from .rollout import check as check_rollout
@@ -54,7 +63,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                 if missing or not s['onboarding_complete']:
                     raise Blocked('setup_incomplete',', '.join(missing))
                 raise Blocked('paused')
-            from .job_holds import upgrade_information_holds
+            from .job_holds import upgrade_information_holds,upgrade_scope_holds
+            upgrade_scope_holds(store)
             upgrade_information_holds(store)
             from .workday_commission_state import bind_run
             bind_run(store,rid,job_ids=job_ids,live=live,discover=discover,limit=limit,
@@ -97,13 +107,14 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             query="SELECT * FROM jobs WHERE status IN ('discovered','blocked','prepared') AND id NOT IN (SELECT job_id FROM job_decisions)"
             selected=tuple(job_ids or ())
             if selected:query+=' AND id IN ('+','.join('?' for _ in selected)+')'
-            rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            rows,excluded=_application_rows(store,query,selected,s['allowed_application_ats'])
+            if excluded:reasons['ats_out_of_scope']=excluded
             from .application_quality import rescreen_scope
             for reason,excluded in rescreen_scope(store,rows,s).items():reasons[reason]=reasons.get(reason,0)+excluded
             from .posting_inspection import refresh_candidates,needs_details
             # No browser/model work occurs inside the screening transactions.
             refresh_candidates(store,rows,s,0 if limit==0 else max_attempts)
-            rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            rows,_=_application_rows(store,query,selected,s['allowed_application_ats'])
             ranked=[]
             from .application_quality import relevance
             confirmed_history=store.history_entries()

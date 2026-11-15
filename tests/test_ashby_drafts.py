@@ -631,6 +631,38 @@ def test_number_wire_rejects_lossy_or_ambiguous_values(value):
     with pytest.raises(Blocked,match='ashby_draft_unsupported'):number_wire(value,'Number')
 
 
+@pytest.mark.parametrize('value,expected',[('3.76',3.76),('0.5',.5),('3.99',3.99)])
+def test_number_wire_preserves_fractional_decimal_values(value,expected):
+    assert number_wire(value,'GPA')==expected
+
+
+@pytest.mark.parametrize('value',['3.760','03.76','-0.5','NaN','Infinity','3.76000000000000001','9007199254740990.1'])
+def test_number_wire_rejects_ambiguous_or_rounded_decimals(value):
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):number_wire(value,'GPA')
+
+
+@pytest.mark.parametrize('ack',[3.76,'3.76',3.77,True])
+def test_decimal_gpa_save_requires_the_exact_numeric_acknowledgement(store,job,package,ack):
+    from hireme.answers import resolve
+    store.put_facts({'gpa':'3.76/4.00'})
+    d,_=draft(store,job,{**package,'facts_hash':digest(store.facts())})
+    field={'index':0,'indices':[0],'label':'GPA','type':'number','required':True,'options':[],
+           'maxlength':-1,'value':'','ashby_path':'fixture-gpa','ashby_entry_id':RENDER+'_fixture-gpa','step':'any'}
+    official=form();entry={'id':field['ashby_entry_id'],'field':{'path':'fixture-gpa','title':'GPA','type':'Number'},'fieldValue':None}
+    official['sections'][0]['fieldEntries'].append(entry);d._remember_form(official)
+    answer=resolve(store,d.job['host'],field,context=d.job)
+    assert answer['value']=='3.76' and answer['provenance']['fact_key']=='gpa'
+    proof={**d.package,'answers':[answer]};d.enable(None,proof['answers'],proof)
+    for changed in ('3.76',3.77,True):
+        r,data=request(changed,path='fixture-gpa');assert not d.allow(r,data,'changed')
+    r,data=request(3.76,path='fixture-gpa');assert d.allow(r,data,'gpa')
+    entry['fieldValue']={'value':ack}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'gpa')
+    assert d.complete is (type(ack) is float and ack==3.76)
+    assert d.failed is not d.complete
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('change',['none','wrong_metadata','unknown_format','wrong_control'])
 def test_date_save_uses_exact_calendar_encoding_without_changing_approved_display(store,job,package,change):
     from hireme.answers import resolve
