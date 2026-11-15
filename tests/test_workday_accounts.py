@@ -273,3 +273,14 @@ def test_interrupted_recovery_never_accumulates_registration_or_password_attempt
     browser.workday_account_attempted=False
     with pytest.raises(Blocked):authenticate(browser,reconcile=True)
     assert state['writes']==['register','login']
+
+
+def test_native_account_controls_have_time_to_finish_mounting(store,account_browser,monkeypatch):
+    browser,state=account_browser;original=auth_html
+    def delayed():
+        return original().replace("document.querySelector('[role=button]').onclick=async()=>{",
+          "const readyAt=performance.now()+500;document.querySelector('[role=button]').onclick=async()=>{if(performance.now()<readyAt)return;")
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',delayed)
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login']

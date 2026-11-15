@@ -183,6 +183,10 @@ def _submit(agent,kind,credential,key):
     # planner. The public click-filter runs Workday's own verification client.
     button=root.get_by_role('button',name='Create Account' if kind=='register' else 'Sign In',exact=True)
     if button.count()!=1:raise Blocked('unsupported_account_form')
+    # Allow native input/change handlers and the exposed control's mount-time
+    # readiness check to finish. Never alter or invoke verification internals.
+    agent.page.wait_for_timeout(750)
+    _checkpoint(agent)
     grant=AuthGrant(agent,kind,credential)
     if kind=='register':AccountVault(agent.store).begin_creation('https://'+grant.site.host,grant.site.tenant)
     else:_state(agent.store,key,'signing_in','account_signin_intent',{})
@@ -275,8 +279,13 @@ def authenticate(agent,*,reconcile=False):
         # one recovery before touching the login control; interrupted recovery
         # remains held and cannot accumulate password attempts.
         prior=agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind IN ('account_signin_intent','workday_account_recovery_requested') LIMIT 1",(key,)).fetchone()
+        unsent=agent.store.db.execute("SELECT detail FROM events WHERE subject=? AND kind='workday_account_operation_uncertain' ORDER BY seq DESC LIMIT 1",(key,)).fetchone()
+        try:unsent=json.loads(unsent['detail']) if unsent else {}
+        except (ValueError,TypeError):unsent={}
+        no_login_transport=(unsent.get('operation')=='login' and unsent.get('dispatched') is False
+            and not agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind='workday_account_write_dispatched' AND json_extract(detail,'$.operation')='login' LIMIT 1",(key,)).fetchone())
         intent=agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind='account_creation_intent' LIMIT 1",(key,)).fetchone()
-        if prior or not intent:raise Blocked('account_result_uncertain')
+        if prior and not no_login_transport or not intent:raise Blocked('account_result_uncertain')
         agent.store.event('workday_account_recovery_requested',key,{'action':'sign_in_only','registration_retried':False})
         _entry(agent)
         if _root(agent.page).locator('[data-automation-id="verifyPassword"]:visible').count():
