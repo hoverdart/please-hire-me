@@ -18,16 +18,17 @@ def code_fingerprint():
 def commission(store, stage):
     if stage not in {'dry_run','controlled','restricted'}:raise ValueError('Choose a rollout stage')
     settings=store.settings();scope=settings['allowed_application_ats']
-    if not scope or set(scope)-{'lever','ashby'}:raise ValueError('Restrict applications to Lever and/or Ashby first')
+    if not scope or set(scope)-{'lever','ashby','workday'}:raise ValueError('Restrict applications to Lever, Ashby and/or Workday first')
     if store.missing_setup() or not settings['onboarding_complete']:raise ValueError('Complete applicant setup first')
     proofs={}
     if stage=='restricted':
         from .application_evidence import snapshot
         for row in store.db.execute("SELECT id FROM application_records WHERE state='confirmed' ORDER BY attempted DESC"):
             bundle=snapshot(store,row['id'])
-            if bundle['ats'] in scope and bundle['verification_method']=='native_ats_acknowledgement':
+            required='verified_ui_application_readback' if bundle['ats']=='workday' else 'native_ats_acknowledgement'
+            if bundle['ats'] in scope and bundle['verification_method']==required:
                 proofs.setdefault(bundle['ats'],bundle['attempt_id'])
-        if set(proofs)!=set(scope):raise ValueError('A verified native submission is required for each enabled ATS')
+        if set(proofs)!=set(scope):raise ValueError('A verified native submission or owner-bound Workday application readback is required for each enabled ATS')
         if settings['max_per_cycle']>MAX_CYCLE or settings['max_per_day']>MAX_DAILY or settings['max_attempts_per_cycle']>MAX_ATTEMPTS:
             raise ValueError('Restricted rollout allows at most three submissions and eight attempts per cycle, and ten submissions per day')
         if not settings['stop_on_uncertain_outcome']:raise ValueError('Enable stop-on-uncertainty first')
@@ -55,9 +56,13 @@ def check(store, *, live, job_ids):
                 or settings['max_per_cycle']>MAX_CYCLE or settings['max_per_day']>MAX_DAILY
                 or settings['max_attempts_per_cycle']>MAX_ATTEMPTS or not settings['stop_on_uncertain_outcome']):
             raise Blocked('rollout_limits','Restricted rollout limits or ATS evidence changed')
-        for aid in record['proofs'].values():
+        from .application_evidence import snapshot
+        for ats,aid in record['proofs'].items():
             app=store.application_record(aid)
             if not app or app['state']!='confirmed':raise Blocked('rollout_evidence_changed')
+            bundle=snapshot(store,aid)
+            method='verified_ui_application_readback' if ats=='workday' else 'native_ats_acknowledgement'
+            if bundle['ats']!=ats or bundle['verification_method']!=method:raise Blocked('rollout_evidence_changed')
         from .connections import status
         from .gmail import check_connection
         if not status(store,verify=True)['ready']:raise Blocked('provider_unavailable')

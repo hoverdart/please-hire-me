@@ -18,7 +18,7 @@ KINDS = ('submit_intent','verification_intent','native_submission_write',
          'native_submission_response','ashby_submission_write','ashby_submission_response',
          'native_submission_not_dispatched','submission_response','submission_error',
          'unknown','confirmed','not_submitted','crash_recovered','human_reconciliation',
-         'post_submit_write_blocked','human_verification','submission_receipt_verified')
+         'post_submit_write_blocked','human_verification','submission_receipt_verified','workday_ui_submission_verified')
 
 
 def ats_for(url):
@@ -75,14 +75,33 @@ def native_verdict(events, url):
     return None
 
 
+def verified_ui_verdict(store,aid,job_id,url,events):
+    if ats_for(url)!='workday':return None
+    intents=[e for e in events if e['kind']=='submit_intent']
+    proofs=[e for e in events if e['kind']=='workday_ui_submission_verified']
+    if len(intents)!=1 or len(proofs)!=1 or proofs[0]['seq']<=intents[0]['seq']:return None
+    event=proofs[0];proof=event['detail']
+    if (proof.get('platform')!='workday' or proof.get('evidence_version')!=VERSION
+            or proof.get('posting_identity')!=list(application_identity(url))
+            or proof.get('owner_verified') is not True or proof.get('fresh') is not True):return None
+    if any(not isinstance(proof.get(k),str) or len(proof[k])!=64 for k in (
+            'request_hash','response_sha256','receipt_sha256','evidence_hash','remote_application_hash')):return None
+    operation=store.db.execute('SELECT * FROM draft_operations WHERE id=?',(proof.get('operation_id'),)).fetchone()
+    if (not operation or operation['job_id']!=job_id or operation['operation']!='ui:submit'
+            or operation['state']!='acknowledged' or not operation['acknowledgement']
+            or operation['request_commitment']!=proof['request_hash']):return None
+    return ('confirmed','verified_ui_application_readback',event['timestamp'])
+
+
 def snapshot(store, aid, *, include_mail=False):
     row=store.db.execute('''SELECT a.id,a.job_id,a.state,a.hash,a.attempted,a.updated,a.confirmation,a.screenshot,
         j.url,j.company,j.title FROM application_records a LEFT JOIN jobs j ON j.id=a.job_id WHERE a.id=?''',(aid,)).fetchone()
     if not row:raise ValueError('Unknown application attempt')
     row=dict(row);events=event_history(store,aid);url=row['url'] or ''
-    proof=native_verdict(events,url)
+    proof=native_verdict(events,url) or verified_ui_verdict(store,aid,row['job_id'],url,events)
     fields={'platform','acknowledged','evidence_version','posting_identity','http_status',
-            'response_sha256','request_hash','receipt_sha256','fresh','rejection_code','reason','stage','type','host','method','status','phase'}
+            'response_sha256','request_hash','receipt_sha256','fresh','rejection_code','reason','stage','type','host','method','status','phase',
+            'operation_id','owner_verified','evidence_hash','remote_application_hash'}
     # Never copy request bodies, CAPTCHA tokens, query strings or arbitrary paths.
     evidence={'events':[{'seq':e['seq'],'kind':e['kind'],'timestamp':e['timestamp'],
                          'detail':{k:v for k,v in e['detail'].items() if k in fields},

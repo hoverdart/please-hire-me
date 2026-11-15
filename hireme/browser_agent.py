@@ -70,6 +70,7 @@ class AdaptiveBrowser(Browser):
             self.profile_directory=profile_path(store,connection_id)
         self.planner=planner;self.operation=None;self.job=None;self.allowed_origin=None
         self.stopped_reason=None;self.journal=None;self.completed_steps=[];self.uploads={}
+        self.account_operation=None;self.account_posting_verified=False;self.workday_account_attempted=False;self.account_tokens={}
 
     def __enter__(self):
         super().__enter__()
@@ -89,6 +90,25 @@ class AdaptiveBrowser(Browser):
                 if parsed.hostname not in self.host_cache:self.host_cache[parsed.hostname]=public_host(parsed.hostname)
                 safe=bool(self.host_cache[parsed.hostname])
             if not safe:return route.abort()
+            from .workday_accounts import nonce_read,remember_nonce
+            if same and nonce_read(self,request):
+                response=route.fetch(max_redirects=0,max_retries=0,timeout=10000)
+                if response.status==200:
+                    try:remember_nonce(self,request,response.json())
+                    except (ValueError,TypeError):pass
+                return route.fulfill(response=response)
+            if same and self.account_operation and self.account_operation.allow(request):
+                operation=self.account_operation
+                try:
+                    response=route.fetch(max_redirects=0,max_retries=0,timeout=20000)
+                    raw=response.body()
+                    if len(raw)>2*1024*1024:raise ValueError('Oversized account response')
+                    try:data=json.loads(raw)
+                    except (ValueError,UnicodeError):data=None
+                    operation.capture(response.status,data)
+                    return route.fulfill(response=response)
+                except Exception:
+                    return route.abort()
             from .workday_site import asset_read
             if asset_read(self.current_host,request):return route.continue_()
             if same and re.fullmatch(r'/(?:vslog|telemetry|analytics|metrics)(?:/.*)?',parsed.path,re.I):
@@ -157,6 +177,12 @@ class AdaptiveBrowser(Browser):
         if self.connection_id and not getattr(self,'owner_verified',False):
             from .browser_identity import verify_observed_account
             self.owner_verified=verify_observed_account(self)
+        needs_account=bool(self.page.locator('input[type=password]:visible').count()
+            or not getattr(self,'owner_verified',True) and self.page.get_by_role('heading',name=re.compile(r'^sign in$',re.I)).count())
+        if (needs_account and self.job and self.job['host'].endswith('.myworkdayjobs.com')
+                and not self.preparing and self.account_posting_verified and self.store.settings()['employer_accounts']):
+            from .workday_accounts import authenticate
+            authenticate(self)
         if self.page.locator('input[type=password]:visible').count():
             raise Blocked('account_blocked','Sign in using the app’s dedicated employer browser, then resume this saved application')
         if not getattr(self,'owner_verified',True) and self.page.get_by_role('heading',name=re.compile(r'^sign in$',re.I)).count():
@@ -786,11 +812,16 @@ class AdaptiveBrowser(Browser):
             while time.monotonic()<deadline:
                 self._check();text=self._outcome_text()
                 receipt=self._receipt(text,before)
-                if operation.requests and operation.complete and receipt and not operation.accepted:
+                workday=(self.job['host'].endswith('.myworkdayjobs.com')
+                         and urlsplit(self.job['url']).hostname==self.job['host'])
+                if operation.requests and operation.complete and receipt and (not operation.accepted or workday and not getattr(operation,'verified_readback',None)):
                     from .workday_browser_receipt import verify_submission
                     operation.accepted=verify_submission(self,operation)
-                if operation.requests and operation.complete and operation.accepted and receipt:
+                if operation.requests and operation.complete and operation.accepted and receipt and (not workday or getattr(operation,'verified_readback',None)):
                     operation.acknowledge({'receipt':digest(text),'signature':observe(self.page)['signature']})
+                    if workday:
+                        from .workday_browser_receipt import record_verified_submission
+                        record_verified_submission(self,operation,text)
                     screenshot=self._outcome_screenshot(self.store.root/'screenshots'/(self.aid+'-after.jpg'))
                     self.store.finish(self.aid,'confirmed','Correlated employer UI acknowledgement and fresh application receipt',screenshot)
                     return 'confirmed'
@@ -912,6 +943,7 @@ class AdaptiveBrowser(Browser):
         self.allowed_origin=origin(self.test_url or entry);self.current_host=urlsplit(self.allowed_origin).hostname
         self.stopped_reason=None;self.completed_steps=[];self.uploads={};self.staged_documents={};self.memory=[];self.opened=set();self.searched=set();self.search_queries={};self.option_cache={}
         self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={};self.frame_entries=0
+        self.account_operation=None;self.account_posting_verified=False;self.workday_account_attempted=False;self.account_tokens={}
         self.job['answer_scope']=job.get('answer_scope') or job['host']+'|'+self.store.company(job['company'])
         self.store.check_job_decision(job['id']);guard_pending(self.store,job)
         if (self.store.db.execute("SELECT 1 FROM draft_operations WHERE job_id=? AND operation NOT LIKE 'ui:%'",(job['id'],)).fetchone()
@@ -959,8 +991,10 @@ class AdaptiveBrowser(Browser):
             if self._enter_frame():self._check()
             initial=observe(self.page)
             if workday and not self.test_url:
-                from .workday_browser_posting import inspect_posting
-                posting_text=inspect_posting(self.page,self.job,self.store.checkpoint)
+                from .workday_browser_posting import verified_posting,dismiss_cookie_notice
+                self.job.update(verified_posting(self.page,self.job,self.store.checkpoint))
+                posting_text=self.job['description']
+                dismiss_cookie_notice(self.page)
                 from .browser_identity import verify_workday_account
                 self.owner_verified=verify_workday_account(self)
                 initial=observe(self.page)
@@ -984,6 +1018,7 @@ class AdaptiveBrowser(Browser):
             eligible({**self.job,'description':current_posting},self.store.settings(),self.store.facts())
             self.job['description']=current_posting
             self.store.upsert_job(self.job)
+            self.account_posting_verified=True
             # A tailored resume binds the verified posting. Generating before
             # this refresh made an otherwise valid resume stale before its
             # first browser action (API HTML vs rendered text also differs).

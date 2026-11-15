@@ -12,6 +12,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .util import Blocked, atomic_json, digest, now, private_dir
 
+MIN_PASSWORD_LENGTH=12
+
 
 def account_key(origin, company):
     p = urlsplit(origin)
@@ -41,9 +43,9 @@ class AccountVault:
             raise ValueError('Provide the employer name, up to 200 characters')
         company=self.store.company(company)
         key=account_key(origin,company)
-        if (not isinstance(password,str) or not 20<=len(password)<=128
+        if (not isinstance(password,str) or not MIN_PASSWORD_LENGTH<=len(password)<=128
                 or any(c in password for c in ('\x00','\r','\n'))):
-            raise ValueError('Use a password of 20–128 characters without line breaks')
+            raise ValueError('Use a password of 12–128 characters without line breaks')
         try:password.encode('utf-8')
         except UnicodeError:raise ValueError('Use readable characters in the password') from None
         if confirmation!=password:raise ValueError('The passwords must match')
@@ -68,7 +70,7 @@ class AccountVault:
             self.store.event('account_credentials_saved',key,{'source':'user','account_created':False})
         return {'saved':True,'account_created':False}
 
-    def credentials(self, origin, company, *, create=False):
+    def credentials(self, origin, company, *, create=False, password=None):
         key = account_key(origin, company)
         path = self.directory / (key + '.json')
         if path.is_symlink():
@@ -83,7 +85,7 @@ class AccountVault:
                 value = json.loads(path.read_text())
                 valid = (isinstance(value, dict) and value.get('email') == email
                          and isinstance(value.get('password'), str)
-                         and 20 <= len(value['password']) <= 128)
+                         and MIN_PASSWORD_LENGTH <= len(value['password']) <= 128)
             except (OSError, ValueError):
                 valid = False
             if not valid:
@@ -94,7 +96,10 @@ class AccountVault:
         # A restored ledger must not silently generate a different password.
         if self.store.db.execute('SELECT 1 FROM employer_accounts WHERE id=?', (key,)).fetchone():
             raise Blocked('account_credentials_unavailable')
-        value = {'email': email, 'password': 'Aa1!' + secrets.token_urlsafe(24)}
+        if password is not None and (not isinstance(password,str) or not MIN_PASSWORD_LENGTH<=len(password)<=128
+                                    or any(c in password for c in ('\x00','\r','\n'))):
+            raise Blocked('account_credentials_unavailable')
+        value = {'email': email, 'password': password if password is not None else 'Aa1!' + secrets.token_urlsafe(24)}
         atomic_json(path, value)
         return value
 

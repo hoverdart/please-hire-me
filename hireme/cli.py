@@ -59,6 +59,9 @@ def main(argv=None):
     sub.add_parser('backup-stream',help='Stream a consistent history ZIP to stdout for an encrypted off-device backup')
     p=sub.add_parser('restore');p.add_argument('path',type=Path)
     p=sub.add_parser('account-vault');p.add_argument('action',choices=['export','import']);p.add_argument('path',type=Path)
+    p=sub.add_parser('workday-account',help='Configure private credentials for autonomous Workday accounts')
+    p.add_argument('action',choices=['set-password','status','disable'])
+    p.add_argument('--accept-account-terms',action='store_true',help='Authorize necessary employer account creation and privacy terms')
     p=sub.add_parser('pi');p.add_argument('action',choices=['configure','preflight','units','install']);p.add_argument('--directory',type=Path)
     p=sub.add_parser('resume-style',help='Show, preview or measure the resume and letter style')
     p.add_argument('action',choices=['show','preview','measure']);p.add_argument('--template',choices=['ats','modern','compact'])
@@ -82,7 +85,7 @@ def main(argv=None):
     p=sub.add_parser('revalidate-holds',help='Refresh held postings without submitting or replaying uncertain drafts')
     p.add_argument('--ats',action='append',choices=['lever','ashby']);p.add_argument('--output',type=Path)
     p.add_argument('--prepare',action='store_true',help='Re-extract and verify current forms without final submission')
-    p=sub.add_parser('rollout',help='Commission a staged Lever/Ashby rollout against this installed code')
+    p=sub.add_parser('rollout',help='Commission a staged Lever/Ashby/Workday rollout against this installed code')
     p.add_argument('stage',choices=['dry_run','controlled','restricted'])
     p=sub.add_parser('retry-not-submitted');p.add_argument('application_id');p.add_argument('--note',required=True);p.add_argument('--approved-package',type=Path)
     p=sub.add_parser('renew-retry');p.add_argument('application_id');p.add_argument('--note',required=True);p.add_argument('--approved-package',type=Path,required=True)
@@ -199,6 +202,17 @@ def main(argv=None):
         elif args.command=='backup-stream':
             from .remote_ops import stream_backup
             stream_backup(store,sys.stdout.buffer)
+        elif args.command=='workday-account':
+            from . import workday_account_policy
+            if args.action=='set-password':
+                import getpass
+                if not sys.stdin.isatty():raise ValueError('Use an interactive terminal to enter the account password privately')
+                password=getpass.getpass('Workday account password: ')
+                confirmation=getpass.getpass('Confirm password: ')
+                result=workday_account_policy.configure(store,password,confirmation,accept_account_terms=args.accept_account_terms)
+            elif args.action=='disable':result=workday_account_policy.disable(store)
+            else:result=workday_account_policy.status(store)
+            print(json.dumps(result))
         elif args.command=='account-vault':
             import getpass
             from .account_transfer import export_accounts,import_accounts

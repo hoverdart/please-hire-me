@@ -65,6 +65,8 @@ ELIGIBILITY_INPUTS = {
 }
 
 def category(reason):
+    if reason=='account_verification_pending':return 'transient'
+    if reason in {'workday_registration_not_configured','unsupported_account_form','account_registration_rejected','account_signin_rejected'}:return 'account'
     if reason=='browser_draft_uncertain':return 'review'
     if reason in {'browser_identity_unverified','browser_identity_mismatch','browser_profile_changed'}:return 'account'
     if reason in {'browser_no_progress','browser_operation_blocked','browser_step_limit','browser_preparation_incomplete'}:return 'mapping'
@@ -127,6 +129,10 @@ def information_dependency(store,job,reason,fields=None):
     return digest(data)
 
 def dependency(store, job, kind, reason=None, *, legacy_information=False, information_fields=None):
+    if reason in {'posting_changed_review','posting_inspection_review'} and job.get('host','').endswith('.myworkdayjobs.com'):
+        from .workday_browser_posting import VERSION
+        saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
+        return digest({'workday_posting':VERSION,'posting':json.loads(saved[0]) if saved else job})
     if reason=='company_uncertain':
         return digest({'scope':store.settings()['uncertain_application_scope'],
                        'history':[(r['id'],r['state'],sorted(r['company_keys'])) for r in store.application_history(store.settings(),('submitting','unknown'))]})
@@ -228,11 +234,19 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
         data['document_files']=[(r['filename'], (store.root/'documents'/r['filename']).stat().st_mtime_ns if (store.root/'documents'/r['filename']).is_file() else None) for r in store.db.execute('SELECT filename FROM documents ORDER BY kind')]
         data['materials']=[tuple(r) for r in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
     if kind=='account':
+        if job.get('host','').endswith('.myworkdayjobs.com'):
+            data['workday_account_executor']=1
+            policy_revision=store.db.execute("SELECT seq FROM events WHERE kind IN ('workday_registration_configured','workday_registration_disabled') ORDER BY seq DESC LIMIT 1").fetchone()
+            if policy_revision:data['workday_registration_revision']=policy_revision['seq']
         login=store.db.execute("SELECT seq FROM events WHERE kind='browser_login_completed' AND subject=? ORDER BY seq DESC LIMIT 1",(job['host'],)).fetchone()
         if login:data['browser_login_revision']=login['seq']
         data['accounts']=[tuple(r) for r in store.db.execute('SELECT id,state,updated FROM employer_accounts ORDER BY id')]
         from .accounts import account_key
-        key=account_key('https://'+job['host'],store.company(job['company']))
+        company=store.company(job['company'])
+        if job.get('host','').endswith('.myworkdayjobs.com'):
+            from .workday_site import site_for_url
+            company=site_for_url(job['url']).tenant
+        key=account_key('https://'+job['host'],company)
         row=store.db.execute("SELECT seq FROM events WHERE kind='account_credentials_saved' AND subject=? ORDER BY seq DESC LIMIT 1",(key,)).fetchone()
         # A scoped revision, never a password or a hash of password contents.
         if row:data['supplied_credentials_revision']=row['seq']
@@ -312,6 +326,8 @@ def ready(store, job, at=None, ashby_snapshot=None):
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':
+        if row['reason'] in {'posting_changed_review','posting_inspection_review'} and job.get('host','').endswith('.myworkdayjobs.com'):
+            return row['dependency']!=dependency(store,job,'review',row['reason'])
         if row['reason']=='graduation_window_review':
             # Older releases misread "undergraduate" as a graduation cutoff.
             # Recheck only screening evidence; an application-stage review or

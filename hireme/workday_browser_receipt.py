@@ -15,13 +15,16 @@ def received_record(job,remote,data):
     record=data.get('application')
     if not isinstance(record,dict):return False
     slug=site.path.rsplit('/',1)[-1]
+    public=job.get('_workday_public_identity',{})
+    req=(public.get('requisition_id') if isinstance(public,dict) and public.get('host')==site.host
+         and public.get('site')==site.site and public.get('posting_anchor')==slug else slug.rsplit('_',1)[-1])
     clean=lambda value:' '.join(value.casefold().split()) if isinstance(value,str) else None
     return (record.get('applicationId')==remote and record.get('jobPostingAnchorId')==slug
         and record.get('draft') is False and record.get('active') is True
         and record.get('applicationType')=='EXTERNAL' and record.get('status')=='Application Received'
         and bool(clean(job.get('title'))) and clean(record.get('postingTitle'))==clean(job.get('title'))
         and isinstance(record.get('dateApplied'),str) and bool(record['dateApplied'].strip())
-        and ('_' not in slug or record.get('jobRequisitionId')==slug.rsplit('_',1)[-1]))
+        and ('_' not in slug or record.get('jobRequisitionId')==req))
 
 
 def verify_submission(agent,operation):
@@ -63,4 +66,19 @@ def verify_submission(agent,operation):
     agent.store.event('browser_submission_readback_verified',agent.job['id'],{
         'owner_verified':True,'source':'exact_workday_application_config','evidence_hash':digest(result),
         'status':'Application Received','remote_application_hash':digest(remote)})
+    operation.verified_readback={'evidence_hash':digest(result),'remote_application_hash':digest(remote)}
     return True
+
+
+def record_verified_submission(agent,operation,text):
+    """Bind the fresh owner readback to the durable final operation and attempt."""
+    proof=getattr(operation,'verified_readback',None)
+    row=agent.store.db.execute('SELECT * FROM draft_operations WHERE id=?',(operation.record,)).fetchone()
+    if not proof or not row or row['job_id']!=agent.job['id'] or row['operation']!='ui:submit' or row['state']!='acknowledged':
+        raise Blocked('browser_draft_uncertain','The final Workday operation lacks verified receipt evidence')
+    from .util import application_identity
+    agent.store.event('workday_ui_submission_verified',agent.aid,{
+        'platform':'workday','evidence_version':1,'posting_identity':list(application_identity(agent.job['url'])),
+        'operation_id':operation.record,'request_hash':row['request_commitment'],
+        'response_sha256':digest(sorted(item['digest'] for item in operation.responses.values())),
+        'receipt_sha256':digest(text),'owner_verified':True,'fresh':True,**proof})
