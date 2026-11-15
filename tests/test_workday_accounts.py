@@ -77,6 +77,9 @@ def account_browser(store,monkeypatch):
             assert body=={'username':[owner],'password':[SECRET],'sessionSecureToken':['nonce-'+str(state['nonce'])]}
             assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]==('creating' if action=='register' else 'signing_in')
             state['writes'].append(action)
+            if state['mode']=='lost_ack_owned' and action=='register':
+                state['logged_in']=True;state['activated']=True
+                return Response(503,{'type':'SUCCESS'})
             if state['mode']=='lost_ack':return Response(503,{})
             if action=='login':
                 assert state['activated'];state['logged_in']=True
@@ -299,3 +302,46 @@ def test_native_account_response_diagnostics_exclude_messages(store,account_brow
     assert grant.result==expected
     detail=store.db.execute("SELECT detail FROM events WHERE kind='workday_account_native_response' ORDER BY seq DESC LIMIT 1").fetchone()[0]
     assert not any(value in detail for value in ('Private error','Unverified',SECRET))
+
+
+def test_redirect_response_uses_the_already_validated_request_identity(store,account_browser):
+    from urllib.parse import urlencode
+    from hireme.workday_accounts import AuthGrant
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser;credential=credentials(store,browser.job,create=True)
+    grant=AuthGrant(browser,'register',credential);AccountVault(store).begin_creation(ORIGIN,'acme')
+    request=SimpleNamespace(method='POST',url=ORIGIN+'/en-US/External/register',
+        headers={'content-type':'application/x-www-form-urlencoded'},
+        post_data_buffer=urlencode({'username':credential['email'],'password':credential['password']}).encode(),
+        _impl_obj=SimpleNamespace(_guid='exact-native-request'))
+    assert grant.allow(request)
+    class RedirectWrapper:
+        method=request.method;url=request.url
+        _impl_obj=SimpleNamespace(_guid='another-request')
+        @property
+        def post_data_buffer(self):raise AssertionError('Do not reread a disposed native credential body')
+    wrapped=RedirectWrapper();response=SimpleNamespace(request=wrapped,status=200,body=lambda:b'{"type":"SUCCESS"}')
+    grant.observe(response);assert grant.status is None
+    wrapped._impl_obj._guid='exact-native-request'
+    grant.observe(response);assert grant.result=='accepted'
+
+
+def test_lost_registration_response_can_settle_from_fresh_owner_without_another_write(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack_owned'
+    # No account row existed at entry; only the native operation creates its
+    # intent. A fresh authenticated self read then proves the usable owner.
+    assert authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==0
+    assert browser.owner_verified and store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
+    assert store.db.execute("SELECT 1 FROM events WHERE kind='workday_account_operation_reconciled'").fetchone()
+
+
+@pytest.mark.parametrize('message,expected',[
+    ('Execution context was destroyed private-owner@example.test','document_replaced'),
+    ('No resource with given identifier found private-password','response_body_unavailable'),
+    ('POST data is not available private-password','request_body_unavailable'),
+    ('An unknown error includes private-password','unclassified'),
+])
+def test_browser_failure_diagnostics_never_retain_private_exception_text(message,expected):
+    from hireme.workday_accounts import failure_code
+    assert failure_code(RuntimeError(message))==expected

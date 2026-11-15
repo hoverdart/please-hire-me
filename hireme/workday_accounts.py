@@ -15,6 +15,20 @@ from .util import Blocked,digest,now
 from .workday_site import site_for_url
 
 
+def failure_code(error):
+    """Fixed diagnostic categories; never persist browser exception text."""
+    message=str(error)
+    for code,markers in (
+        ('document_replaced',('Execution context was destroyed','Cannot find context with specified id')),
+        ('response_body_unavailable',('No resource with given identifier found','No data found for resource','Response body is unavailable for redirect')),
+        ('request_body_unavailable',('No post data available','POST data is not available')),
+        ('target_closed',('Target page, context or browser has been closed',)),
+        ('request_aborted',('net::ERR_ABORTED',)),
+    ):
+        if any(marker in message for marker in markers):return code
+    return 'timeout' if type(error).__name__=='TimeoutError' else 'unclassified'
+
+
 def nonce_read(agent,request):
     if not agent.job:return False
     try:site=site_for_url(agent.job['url']);parsed=urlsplit(request.url)
@@ -39,7 +53,7 @@ class AuthGrant:
         self.agent=agent;self.store=agent.store;self.site=site_for_url(agent.job['url'])
         if kind not in {'login','register'}:raise ValueError('Unknown Workday account operation')
         self.kind=kind;self.credential=credential;self.used=False;self.status=None;self.result=None
-        self.request_signature=None
+        self.request_signature=None;self.request_guid=None
         self.key=account_key('https://'+self.site.host,self.site.tenant)
         self.boundary=ApprovalBoundary(self.store,agent.job,require_live=True)
         self.generation=self.store.control_generation()
@@ -79,21 +93,27 @@ class AuthGrant:
         except (ValueError,UnicodeError,TypeError):return False
         self.used=True
         self.request_signature=(request.url,request.method,hashlib.sha256(raw).hexdigest())
+        self.request_guid=getattr(getattr(request,'_impl_obj',None),'_guid',None)
         self.store.event('workday_account_write_dispatched',self.key,{'operation':self.kind})
         return True
 
     def observe(self,response):
         request=response.request
         if self.status is not None or not self.request_signature or self.request_signature[:2]!=(request.url,request.method):return
+        phase='request_identity'
         try:
-            if self.request_signature[2]!=hashlib.sha256(request.post_data_buffer or b'').hexdigest():return
-            raw=response.body()
+            guid=getattr(getattr(request,'_impl_obj',None),'_guid',None)
+            if isinstance(self.request_guid,str) and isinstance(guid,str):
+                if self.request_guid!=guid:return
+            elif self.request_signature[2]!=hashlib.sha256(request.post_data_buffer or b'').hexdigest():return
+            phase='response_body';raw=response.body()
             if len(raw)>2*1024*1024:return
             try:data=json.loads(raw)
             except (ValueError,UnicodeError):data=None
             self.capture(response.status,data)
         except Exception as error:
-            self.store.event('workday_account_response_unreadable',self.key,{'operation':self.kind,'error':type(error).__name__})
+            self.store.event('workday_account_response_unreadable',self.key,{'operation':self.kind,
+                'error':type(error).__name__,'error_code':failure_code(error),'phase':phase,'status':response.status})
             return
 
     def capture(self,status,data):
@@ -112,6 +132,11 @@ class AuthGrant:
 
 
 def _checkpoint(agent):
+    from .browser_observation import retry_dom_read
+    return retry_dom_read(agent.page,lambda:_checkpoint_page(agent),checkpoint=agent.store.checkpoint)
+
+
+def _checkpoint_page(agent):
     agent.store.checkpoint()
     if not agent.store.settings()['live_enabled'] or not agent.store.settings()['employer_accounts']:
         raise Blocked('account_automation_disabled')
@@ -220,6 +245,7 @@ def _submit(agent,kind,credential,key):
             _state(agent.store,key,'existing_account' if exists else 'rejected','workday_account_operation_rejected',{'operation':kind,'status':grant.status,'existing_account':exists})
             if exists:return grant
             raise Blocked('account_registration_rejected' if kind=='register' else 'account_signin_rejected','The employer rejected the account operation; verify its saved credentials')
+        if grant.used and _settle_owned(agent,key,grant):return grant
         _state(agent.store,key,'uncertain','workday_account_operation_uncertain',
                {'operation':kind,'dispatched':grant.used,'http_status':grant.status,'result':grant.result})
         raise Blocked('account_result_uncertain','Workday did not acknowledge the account operation; another creation is held')
@@ -229,8 +255,10 @@ def _submit(agent,kind,credential,key):
             {'operation':kind,'dispatched':grant.used,'http_status':grant.status,'result':grant.result,'phase':phase,'reason':error.reason})
         raise
     except Exception as error:
+        if grant.used and _settle_owned(agent,key,grant):return grant
         _state(agent.store,key,'uncertain','workday_account_operation_uncertain',
-            {'operation':kind,'dispatched':grant.used,'http_status':grant.status,'result':grant.result,'phase':phase,'error':type(error).__name__})
+            {'operation':kind,'dispatched':grant.used,'http_status':grant.status,'result':grant.result,'phase':phase,
+             'error':type(error).__name__,'error_code':failure_code(error)})
         raise Blocked('account_result_uncertain','The account operation was interrupted; check the employer account before another creation') from None
     finally:
         agent.account_operation=None
@@ -243,10 +271,22 @@ def _owned(agent,key):
         if error.reason=='browser_identity_unverified':return False
         raise
     if not verified:return False
-    _state(agent.store,key,'confirmed','workday_account_owner_verified',{'owner_hash':digest(agent.store.facts()['email']['value'].casefold())})
-    agent.owner_verified=True
     try:agent.page.wait_for_function("()=>![...document.querySelectorAll('input[type=password]')].some(e=>e.checkVisibility())",timeout=5000)
     except Exception:raise Blocked('account_blocked','The confirmed Workday session did not leave its sign-in screen') from None
+    _state(agent.store,key,'confirmed','workday_account_owner_verified',{'owner_hash':digest(agent.store.facts()['email']['value'].casefold())})
+    agent.owner_verified=True
+    return True
+
+
+def _settle_owned(agent,key,grant):
+    """A lost response can settle only through fresh exact applicant ownership."""
+    try:
+        _checkpoint(agent)
+        if not _owned(agent,key):return False
+    except Exception:return False
+    grant.result='owner_verified'
+    agent.store.event('workday_account_operation_reconciled',key,{
+        'operation':grant.kind,'basis':'fresh_authenticated_owner_read','registration_retried':False})
     return True
 
 
@@ -306,7 +346,8 @@ def authenticate(agent,*,reconcile=False):
         _entry(agent)
         if _root(agent.page).locator('[data-automation-id="verifyPassword"]:visible').count():
             _navigate_control(agent,'signInLink','Sign In')
-        _submit(agent,'login',credential,key)
+        grant=_submit(agent,'login',credential,key)
+        if grant.result=='owner_verified':return True
         if not _owned(agent,key):raise Blocked('account_identity_unconfirmed')
         return True
     if row and row['state'] in {'uncertain','creating','signing_in','activating','rejected'}:
@@ -320,6 +361,7 @@ def authenticate(agent,*,reconcile=False):
         if not _root(agent.page).locator('[data-automation-id="verifyPassword"]:visible').count():
             _navigate_control(agent,'createAccountLink','Create Account')
         grant=_submit(agent,'register',credential,key)
+        if grant.result=='owner_verified':return True
         if _owned(agent,key):return True
         if grant.result!='rejected':
             _activate(agent,key,return_url)
@@ -328,6 +370,7 @@ def authenticate(agent,*,reconcile=False):
     root=_root(agent.page)
     if root.locator('[data-automation-id="verifyPassword"]:visible').count():
         _navigate_control(agent,'signInLink','Sign In')
-    _submit(agent,'login',credential,key)
+    grant=_submit(agent,'login',credential,key)
+    if grant.result=='owner_verified':return True
     if not _owned(agent,key):raise Blocked('account_identity_unconfirmed','The Workday session could not be bound to the confirmed applicant')
     return True
