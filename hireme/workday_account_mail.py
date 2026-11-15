@@ -79,6 +79,17 @@ def activation_link(message,recipient,job,since,*,clock=None):
 
 
 def find_activation(store,job,since,challenge_id,*,client=None):
+    try:return _find_activation(store,job,since,challenge_id,client=client)
+    except Blocked:raise
+    except Exception as error:
+        from .prior_applications import _scan_failure
+        diagnostic,_=_scan_failure(error)
+        store.event('workday_activation_mail_unavailable',challenge_id,{**diagnostic,'error':type(error).__name__})
+        raise Blocked('account_verification_pending',
+            'The account is waiting for activation mail access. Creation will not be repeated; the mailbox check can resume later.') from None
+
+
+def _find_activation(store,job,since,challenge_id,*,client=None):
     if not store.settings()['gmail_verification']:raise Blocked('account_verification_pending','Enable email verification to activate the new Workday account')
     from .gmail import GmailClient
     client=client or GmailClient(store)

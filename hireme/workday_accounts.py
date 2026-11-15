@@ -177,15 +177,17 @@ def _navigate_control(agent,automation,name):
 
 
 def _entry(agent):
-    deadline=time.monotonic()+8
+    deadline=time.monotonic()+8;header_clicked=False;email_choice_clicked=False
     while time.monotonic()<deadline:
         _checkpoint(agent)
         if agent.page.locator('[data-automation-id="email"]:visible').count():return
         choice=agent.page.get_by_role('button',name=re.compile(r'^sign in with email$',re.I))
-        if choice.count()==1:choice.click()
-        else:
+        if choice.count()==1 and not email_choice_clicked:
+            choice.click();email_choice_clicked=True
+        elif not header_clicked:
             entry=agent.page.locator('[data-automation-id="utilityButtonSignIn"]:visible')
-            if entry.count()==1:entry.click()
+            if entry.count()==1:
+                entry.click();header_clicked=True
         agent.page.wait_for_timeout(250)
     raise Blocked('unsupported_account_form','Workday did not present an email/password account form')
 
@@ -340,8 +342,11 @@ def authenticate(agent,*,reconcile=False):
         except (ValueError,TypeError):unsent={}
         no_login_transport=(unsent.get('operation')=='login' and unsent.get('dispatched') is False
             and not agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind='workday_account_write_dispatched' AND json_extract(detail,'$.operation')='login' LIMIT 1",(key,)).fetchone())
+        # Every credential POST requires the separately committed signin intent.
+        # A modal-loading failure before that gate can repeat UI preparation.
+        unstarted=not agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind='account_signin_intent' LIMIT 1",(key,)).fetchone()
         intent=agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind='account_creation_intent' LIMIT 1",(key,)).fetchone()
-        if prior and not no_login_transport or not intent:raise Blocked('account_result_uncertain')
+        if prior and not (no_login_transport or unstarted) or not intent:raise Blocked('account_result_uncertain')
         agent.store.event('workday_account_recovery_requested',key,{'action':'sign_in_only','registration_retried':False})
         _entry(agent)
         if _root(agent.page).locator('[data-automation-id="verifyPassword"]:visible').count():

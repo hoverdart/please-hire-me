@@ -204,7 +204,7 @@ def test_workday_account_to_verified_application_uses_production_browser_flow(st
         # Public posting has a native entry button; sign-in appears only after it.
         return original+'''<div data-automation-id=jobPostingDescription>Build Python and TypeScript software in San Francisco, United States.</div><p>R12345</p>
           <button id=entry data-automation-id=utilityButtonSignIn>Apply Manually</button><style>[data-automation-id=signInContent]{display:none}</style>
-          <script>entry.onclick=()=>{fetch('/wday/calypso/cxs/jobapplication/acme/External/seek/v2/button',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({applicationUri:location.href,hirerId:'synthetic-seek',redirectUri:location.href,seekHirerJobReference:null})}).catch(()=>{});document.querySelector('[data-automation-id=signInContent]').style.display='block';entry.remove();};</script>'''
+          <script>entry.onclick=()=>{fetch('/wday/calypso/cxs/jobapplication/acme/External/seek/v2/button',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({applicationUri:location.href,hirerId:'synthetic-seek',redirectUri:location.href,seekHirerJobReference:null})}).catch(()=>{});entry.disabled=true;setTimeout(()=>{document.querySelector('[data-automation-id=signInContent]').style.display='block';entry.remove();},900);};</script>'''
     monkeypatch.setattr('tests.test_workday_accounts.auth_html',html)
     # Existing fixture transport remains the network boundary for account writes.
     # These exact official posting/receipt reads and finalizer add the application.
@@ -350,3 +350,18 @@ def test_lost_registration_response_can_settle_from_fresh_owner_without_another_
 def test_browser_failure_diagnostics_never_retain_private_exception_text(message,expected):
     from hireme.workday_accounts import failure_code
     assert failure_code(RuntimeError(message))==expected
+
+
+def test_recovery_can_resume_modal_preparation_without_repeating_a_credential_post(store,account_browser,monkeypatch):
+    from hireme import workday_accounts
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked):authenticate(browser)
+    original=workday_accounts._entry
+    monkeypatch.setattr(workday_accounts,'_entry',lambda agent:(_ for _ in ()).throw(RuntimeError('Modal loading failed')))
+    browser.workday_account_attempted=False
+    with pytest.raises(RuntimeError):authenticate(browser,reconcile=True)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='account_signin_intent'").fetchone()
+    monkeypatch.setattr(workday_accounts,'_entry',original)
+    browser.workday_account_attempted=False;state['mode']='normal';state['activated']=True
+    assert authenticate(browser,reconcile=True)
+    assert state['writes']==['register','login']

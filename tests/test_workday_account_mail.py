@@ -67,3 +67,16 @@ def test_mail_reservation_precedes_activation_and_never_stores_the_link(store,mo
     assert store.db.execute('SELECT challenge_id FROM mail_consumptions').fetchone()[0]=='account-intent'
     assert TOKEN not in json.dumps(store.snapshot()) and TOKEN.encode() not in store.path.read_bytes()
     assert calls[0]['includeSpamTrash'] is True and 'otp.workday.com' in calls[0]['q']
+
+
+def test_activation_mail_service_failure_keeps_verification_resumable_without_leaking_error(store):
+    from hireme.util import Blocked
+    store.update_settings({'gmail_verification':True})
+    def unavailable():raise RuntimeError('private-mail-service-response')
+    messages=SimpleNamespace(list=lambda **kwargs:SimpleNamespace(execute=unavailable))
+    client=SimpleNamespace(email='test@candidate.invalid',service=SimpleNamespace(users=lambda:SimpleNamespace(messages=lambda:messages)))
+    with pytest.raises(Blocked,match='account_verification_pending'):
+        find_activation(store,JOB,1,'account-intent',client=client)
+    assert not store.db.execute('SELECT 1 FROM mail_consumptions').fetchone()
+    assert 'private-mail-service-response' not in json.dumps(store.snapshot())
+    assert store.db.execute("SELECT 1 FROM events WHERE kind='workday_activation_mail_unavailable'").fetchone()
