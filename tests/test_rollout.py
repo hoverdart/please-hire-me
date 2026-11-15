@@ -163,3 +163,74 @@ def test_queue_review_refreshes_then_requires_form_preparation(store,job,monkeyp
     assert seen==[job['id']] and report['forms_pending']==1
     assert not store.db.execute('SELECT 1 FROM applications').fetchone()
     assert not store.db.execute('SELECT 1 FROM job_holds').fetchone()
+
+
+def _restricted_proof(store,job,package,monkeypatch):
+    store.update_settings({'allowed_application_ats':['lever'],'stop_on_uncertain_outcome':True,
+                           'target_per_cycle':3,'target_per_day':10,'max_per_cycle':3,
+                           'max_per_day':10,'max_attempts_per_cycle':8})
+    aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'confirmed','Synthetic fixture receipt')
+    monkeypatch.setattr('hireme.application_evidence.snapshot',lambda s,identity:{
+        'ats':'lever','verification_method':'native_ats_acknowledgement','attempt_id':identity})
+    commission(store,'restricted')
+    return aid
+
+
+@pytest.mark.parametrize('outer_transaction',[False,True])
+def test_restricted_final_intent_paces_gmail_before_atomic_transaction(store,job,package,monkeypatch,outer_transaction):
+    from hireme.gmail_quota import reserve
+    _restricted_proof(store,job,package,monkeypatch)
+    other={**job,'id':digest('fresh restricted fixture'),'company':'Another fixture employer',
+           'url':'https://jobs.lever.co/fixture-employer/another-fixture-posting'}
+    store.upsert_job(other)
+    packet={**package,'job_id':other['id'],'url':other['url']}
+    aid=store.prepare(other,packet);calls=[]
+    monkeypatch.setattr('hireme.connections.status',lambda *a,**k:{'ready':True})
+    def paced_check(s):
+        assert not s.db.in_transaction
+        reserve(s,1);calls.append('gmail')
+    monkeypatch.setattr('hireme.gmail.check_connection',paced_check)
+    if outer_transaction:
+        from hireme.rollout import check_connections
+        check_connections(store)
+        with store.transaction():store.begin_submit(aid)
+    else:store.begin_submit(aid)
+    assert calls==['gmail'] and store.application_record(aid)['state']=='submitting'
+    assert store.db.execute('SELECT 1 FROM gmail_api_quota').fetchone()
+
+
+def test_restricted_outer_transaction_needs_fresh_unchanged_connection_proof(store,job,package,monkeypatch):
+    from hireme.rollout import check_connections
+    _restricted_proof(store,job,package,monkeypatch)
+    calls=[]
+    monkeypatch.setattr('hireme.connections.status',lambda *a,**k:{'ready':True})
+    monkeypatch.setattr('hireme.gmail.check_connection',lambda s:calls.append(s.db.in_transaction))
+    with store.transaction():
+        with pytest.raises(Blocked,match='rollout_connection_check_required'):check_connections(store)
+    assert calls==[]
+    check_connections(store)
+    with store.transaction():check_connections(store)
+    assert calls==[False]
+    proof=store.rollout_connection_proof
+    store.rollout_connection_proof=(proof[0]-61,proof[1])
+    with store.transaction():
+        with pytest.raises(Blocked,match='rollout_connection_check_required'):check_connections(store)
+    check_connections(store)
+    store.update_settings({'headless':False})
+    with store.transaction():
+        with pytest.raises(Blocked,match='rollout_connection_check_required'):check_connections(store)
+    assert calls==[False,False]
+
+
+def test_failed_connection_check_never_retains_a_reusable_atomic_proof(store,job,package,monkeypatch):
+    from hireme.rollout import check_connections
+    _restricted_proof(store,job,package,monkeypatch)
+    monkeypatch.setattr('hireme.connections.status',lambda *a,**k:{'ready':True})
+    monkeypatch.setattr('hireme.gmail.check_connection',lambda s:None)
+    check_connections(store)
+    def unavailable(s):raise Blocked('gmail_reconnect_required')
+    monkeypatch.setattr('hireme.gmail.check_connection',unavailable)
+    with pytest.raises(Blocked,match='gmail_reconnect_required'):check_connections(store)
+    assert store.rollout_connection_proof is None
+    with store.transaction():
+        with pytest.raises(Blocked,match='rollout_connection_check_required'):check_connections(store)

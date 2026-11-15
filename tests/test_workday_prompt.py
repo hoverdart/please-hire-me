@@ -457,3 +457,16 @@ def test_add_another_inserts_only_missing_confirmed_history_rows(store,job,monke
         browser.page.set_content('<h1>My Experience</h1><div data-automation-id=applyFlowMyExpPage><section><h2>Work Experience</h2>'+rows+'<button>Add Another</button></section></div>')
         choices,*_=browser._choices(observe(browser.page))
         assert bool([c for c in choices if c['kind']=='add']) is needs_add
+
+
+def test_recorded_simplify_listing_uses_exact_platform_or_career_website_group():
+    from hireme.answers import _discovery_answer
+    question='How Did You Hear About Us?*';context={'source':'simplify:internships'}
+    groups=['Arrowstreet Contacted Me','Campus Recruiting','Career/Networking Website',
+            'Career Event','Direct Applicant','Employee Referral']
+    assert _discovery_answer(question,groups,context)=={
+        'value':'Career/Networking Website','provenance':{'job_source':'simplify:internships'}}
+    assert _discovery_answer(question,['LinkedIn','Simplify','Other'],context)['value']=='Simplify'
+    assert _discovery_answer(question,['LinkedIn','SimplifyJobs','Other'],context)['value']=='SimplifyJobs'
+    assert _discovery_answer(question,groups,{'source':'user'}) is None
+    assert _discovery_answer(question,groups,{'source':'gh:fixture'}) is None

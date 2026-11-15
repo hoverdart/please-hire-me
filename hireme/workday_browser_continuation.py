@@ -21,7 +21,7 @@ def checkpoint(agent,job):
     if not isinstance(package,dict) or digest(package)!=checksum:raise Blocked('package_tampered')
     metadata=package.get('browser_agent',{})
     remote=metadata.get('remote_application_hash')
-    if (metadata.get('profile_binding')!=agent.binding or not metadata.get('completed_steps')
+    if (metadata.get('profile_binding')!=agent.binding
             or not isinstance(remote,str) or not re.fullmatch('[a-f0-9]{64}',remote)):return None
     package['facts_hash']=digest(agent.store.facts())
     validate_package(agent.store,job,package)
@@ -30,6 +30,11 @@ def checkpoint(agent,job):
         if not operation or operation['operation'] not in kinds:return False
         target=json.loads(operation['target'])
         return target.get('profile_binding')==agent.binding and target.get('remote_application_hash')==remote
+    if not metadata['completed_steps']:
+        # Native creation itself can be acknowledged before the first page is
+        # saved. Its exact remote-ID binding is sufficient for this empty draft.
+        entries=agent.store.db.execute("SELECT id FROM draft_operations WHERE job_id=? AND operation='ui:entry' AND state='acknowledged'",(job['id'],))
+        if not any(bound(row['id'],{'ui:entry'}) for row in entries):return None
     for step in metadata['completed_steps']:
         operation_id=step.get('operation_id')
         if not operation_id or not bound(operation_id,{'ui:next'}):return None

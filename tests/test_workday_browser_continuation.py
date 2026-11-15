@@ -141,3 +141,19 @@ def test_native_creation_response_binds_future_checkpoint_writes_without_retaini
     target=json.loads(store.db.execute('SELECT target FROM draft_operations WHERE id=?',(operation.record,)).fetchone()[0])
     assert target['remote_application_hash']==digest(REMOTE) and REMOTE not in json.dumps(target)
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('entry_state,remote_bound,allowed',[
+    ('acknowledged',True,True),('acknowledged',False,False),('failed',True,False),
+])
+def test_empty_draft_requires_its_exact_acknowledged_native_creation(store,saved,entry_state,remote_bound,allowed):
+    agent,job,info,_,reads,operation=saved
+    row=store.db.execute('SELECT package FROM applications WHERE job_id=?',(job['id'],)).fetchone()
+    packet=json.loads(row[0]);packet['browser_agent']['completed_steps']=[]
+    store.prepare(job,packet)
+    target={'profile_binding':BINDING,**({'remote_application_hash':digest(REMOTE)} if remote_bound else {})}
+    store.db.execute('UPDATE draft_operations SET operation=?,state=?,target=? WHERE id=?',
+                     ('ui:entry',entry_state,json.dumps(target),operation))
+    proof=verify(agent,job,info)
+    assert bool(proof) is allowed
+    if not allowed:assert not reads

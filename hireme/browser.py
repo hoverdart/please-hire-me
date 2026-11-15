@@ -1737,6 +1737,8 @@ class Browser:
             if self.write_boundary:self.write_boundary.check()
             if self.ashby_draft:
                 from .ashby_guard import check
+                from .rollout import check_connections
+                check_connections(self.store)
                 # Make the fence check and final submission intent atomic with
                 # respect to another process recovering an interrupted draft.
                 with self.store.transaction():

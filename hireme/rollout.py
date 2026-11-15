@@ -1,12 +1,33 @@
 """Explicit stages and code pinning for restricted unattended applications."""
 import hashlib
 import json
+import time
 from pathlib import Path
 from .util import Blocked,atomic_json,now,digest
 
 MAX_DAILY=10
 MAX_CYCLE=3
 MAX_ATTEMPTS=8
+
+
+def check_connections(store):
+    """Verify transport outside SQLite; consume only a fresh local proof inside."""
+    settings=store.settings()
+    if settings['rollout_stage']!='restricted':return
+    from .gmail import status as gmail_status,check_connection
+    identity=digest([settings,store.facts().get('email'),gmail_status(store),store.control_generation()])
+    if store.db.in_transaction:
+        proof=getattr(store,'rollout_connection_proof',None)
+        if not proof or proof[1]!=identity or not 0<=time.monotonic()-proof[0]<=60:
+            raise Blocked('rollout_connection_check_required','Verify connections before opening the submission transaction')
+        return
+    store.rollout_connection_proof=None
+    from .connections import status
+    if not status(store,verify=True)['ready']:raise Blocked('provider_unavailable')
+    check_connection(store)
+    # Health metadata can change during the successful check.
+    identity=digest([store.settings(),store.facts().get('email'),gmail_status(store),store.control_generation()])
+    store.rollout_connection_proof=(time.monotonic(),identity)
 
 
 def code_fingerprint():
@@ -63,9 +84,6 @@ def check(store, *, live, job_ids):
             bundle=snapshot(store,aid)
             method='verified_ui_application_readback' if ats=='workday' else 'native_ats_acknowledgement'
             if bundle['ats']!=ats or bundle['verification_method']!=method:raise Blocked('rollout_evidence_changed')
-        from .connections import status
-        from .gmail import check_connection
-        if not status(store,verify=True)['ready']:raise Blocked('provider_unavailable')
-        check_connection(store)
+        check_connections(store)
         if store.missing_setup():raise Blocked('setup_incomplete')
     return live

@@ -794,6 +794,9 @@ class Store:
     def begin_submit(self, aid):
         from .answers import validate_package
         from .policy import eligible
+        if not self.db.in_transaction:
+            from .rollout import check_connections
+            check_connections(self)
         with self.transaction():
             self.checkpoint()
             app=self.db.execute("SELECT * FROM applications WHERE id=?",(aid,)).fetchone()

@@ -7,7 +7,7 @@ from .field_context import binding as contextual_binding, save_binding, present,
 from .answer_context import GENERIC_WORK_COUNTRY, employment_country_question, work_country_location, us_city_location
 
 # Bump when deterministic resolution changes so unattempted holds can recheck.
-AUTOMATIC_ANSWER_VERSION = 11
+AUTOMATIC_ANSWER_VERSION = 12
 WRITING_SOURCE_VERSION = 4
 STUDENT_QUESTION=re.compile(r'(?:still student|are you (?:currently |still )?a student)[? *]*',re.I)
 
@@ -358,6 +358,8 @@ def _discovery_answer(label, options, context):
         return {'value':answer,'provenance':{'job_source':source}} if answer else None
     normal=lambda x:re.sub(r'[^a-z0-9]','',x.casefold())
     preferred=['companywebsite','companycareerssite','companycareerspage','careerswebsite','website'] if source.startswith(('gh:','ash:','lv:','portal:')) else ['jobboard','onlinejobboard','jobboardsocialmedia']
+    if source.startswith('simplify:'):
+        preferred=['simplify','simplifyjobs',*preferred,'careernetworkingwebsite']
     company=normal(context.get('company',''))
     if company and source.startswith(('gh:','ash:','lv:','portal:')):
         # ATS boards sometimes abbreviate their employer in the source choice:
