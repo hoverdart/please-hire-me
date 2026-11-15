@@ -6,10 +6,11 @@ resolves an uncertain attempt, follows an email link or enters model context.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from email.utils import getaddresses, parseaddr
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 import json
 import re
+import random
 import time
 import unicodedata
 from urllib.parse import urlsplit
@@ -322,8 +323,18 @@ def _scan_failure(error):
         except (ValueError,TypeError,AttributeError):pass
     if codes:diagnostic['reasons']=sorted(codes)
     if status==429 or status==403 and codes & {'rateLimitExceeded','userRateLimitExceeded','dailyLimitExceeded'}:
-        return diagnostic,Blocked('prior_application_mail_rate_limited',
-            'Gmail temporarily limited email-history checks. This batch will not repeat the request; saved progress and duplicate holds are preserved. Try again later.')
+        failure=Blocked('prior_application_mail_rate_limited',
+            'Gmail temporarily limited email-history checks. Saved progress and duplicate holds are preserved; try again after the provider limit clears.')
+        failure.rate_retry_allowed='dailyLimitExceeded' not in codes
+        failure.retry_after_seconds=None
+        response=getattr(error,'resp',None)
+        try:
+            value=response.get('retry-after') if hasattr(response,'get') else None
+            if isinstance(value,str) and len(value)<=256:
+                failure.retry_after_seconds=(int(value) if re.fullmatch(r'[0-9]{1,12}',value)
+                    else max(0,parsedate_to_datetime(value).timestamp()-time.time()))
+        except (ValueError,TypeError,OverflowError):pass
+        return diagnostic,failure
     if status in {401,403}:
         return diagnostic,Blocked('prior_application_mail_access_denied',
             'Gmail denied email-history access. Check Gmail permissions and API access in Connections before retrying; reconnecting may be required. No application was attempted.')
@@ -461,13 +472,22 @@ def _preflight(store,job):
     try: require_recent_check(store,job);return
     except Blocked: pass
     deadline=time.monotonic()+AUTO_SCAN_SECONDS
-    failures=0
+    failures=rate_failures=0
     for _ in range(AUTO_SCAN_PAGES):
         store.checkpoint()
         if time.monotonic()>=deadline:break
         try:
             result=scan(store,company=job['company'],work_deadline=deadline)
         except Blocked as error:
+            if (error.reason=='prior_application_mail_rate_limited' and getattr(error,'rate_retry_allowed',False)
+                    and rate_failures<3):
+                delay=max(2**rate_failures+random.uniform(0,.25),getattr(error,'retry_after_seconds',None) or 0)
+                if time.monotonic()+delay<deadline:
+                    store.checkpoint()
+                    store.event('prior_mail_rate_limit_wait',scope,{'seconds':round(delay,3),'retry':rate_failures+1})
+                    time.sleep(delay);store.checkpoint()
+                    rate_failures+=1
+                    continue
             # These are read-only, resumable mailbox operations. A transient
             # transport failure must not waste the whole six-hour cycle, but
             # the freshness proof remains mandatory after bounded retries.

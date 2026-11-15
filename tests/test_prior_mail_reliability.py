@@ -47,7 +47,9 @@ def test_batch_stops_repeated_service_failures_and_recovers_next_cycle(store,opt
     other={**optiver,'id':digest('second-company'),'company':'Another Company',
            'url':'https://job-boards.greenhouse.io/another/jobs/123'}
     store.upsert_job(other)
-    calls=[]
+    calls=[];waits=[]
+    monkeypatch.setattr(prior.random,'uniform',lambda *args:0)
+    monkeypatch.setattr(prior.time,'sleep',waits.append)
     def fail(_):
         calls.append(1)
         raise api_error(status,code)
@@ -55,12 +57,14 @@ def test_batch_stops_repeated_service_failures_and_recovers_next_cycle(store,opt
     result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
     assert result['attempts']==0 and result['confirmed']==0
     assert result['reasons']=={'prior_application_mail_'+reason:2}
-    assert len(calls)==1
+    expected_calls=4 if reason=='rate_limited' else 1
+    assert len(calls)==expected_calls
+    assert waits==([1,2,4] if reason=='rate_limited' else [])
     assert store.prior_mail_service_failure is None
     assert not store.db.execute('SELECT 1 FROM applications').fetchone()
     assert all(row[0] is None for row in store.db.execute('SELECT completed FROM prior_application_scans'))
     details=[row[0] for row in store.db.execute("SELECT detail FROM events WHERE kind='prior_mail_scan_error'")]
-    assert len(details)==1 and 'PRIVATE' not in details[0]
+    assert len(details)==expected_calls and all('PRIVATE' not in detail for detail in details)
     service=Mailbox(optiver);service.pages=[[]]
     monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
     # Manual recovery on the same Store must work without starting a new batch.
@@ -90,3 +94,43 @@ def test_standalone_failure_does_not_cache_after_an_earlier_batch(store,optiver,
     monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
     prior.preflight(store,optiver)
     prior.require_recent_check(store,optiver)
+
+
+def test_short_mail_throttle_recovers_a_fresh_check_with_bounded_backoff(store,optiver,monkeypatch):
+    store.update_settings({'gmail_prior_applications':True});calls=[];waits=[]
+    service=Mailbox(optiver);service.pages=[[]]
+    def client(_):
+        calls.append(1)
+        if len(calls)<=2:raise api_error(403,'rateLimitExceeded')
+        return SimpleNamespace(email='test@candidate.invalid',service=service)
+    monkeypatch.setattr(prior,'GmailClient',client)
+    monkeypatch.setattr(prior.random,'uniform',lambda *args:0)
+    monkeypatch.setattr(prior.time,'sleep',waits.append)
+    prior.preflight(store,optiver)
+    prior.require_recent_check(store,optiver)
+    assert waits==[1,2] and len(calls)==4
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+@pytest.mark.parametrize('daily,retry_after',[(True,None),(False,'120')])
+def test_daily_limits_and_long_retry_after_never_trigger_early_reads(store,optiver,monkeypatch,daily,retry_after):
+    store.update_settings({'gmail_prior_applications':True});calls=[];waits=[]
+    def client(_):
+        calls.append(1);error=api_error(403,'dailyLimitExceeded' if daily else 'rateLimitExceeded')
+        error.resp.get=lambda key:retry_after
+        raise error
+    monkeypatch.setattr(prior,'GmailClient',client)
+    monkeypatch.setattr(prior.time,'sleep',waits.append)
+    with pytest.raises(Blocked,match='prior_application_mail_rate_limited'):prior.preflight(store,optiver)
+    assert len(calls)==1 and waits==[]
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()
+
+
+def test_pause_during_mail_backoff_stops_before_another_read(store,optiver,monkeypatch):
+    store.update_settings({'gmail_prior_applications':True});calls=[]
+    def client(_):calls.append(1);raise api_error(403,'rateLimitExceeded')
+    monkeypatch.setattr(prior,'GmailClient',client)
+    monkeypatch.setattr(prior.time,'sleep',lambda delay:store.update_settings({'live_enabled':False}))
+    with pytest.raises(Blocked,match='paused'):
+        cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    assert len(calls)==1 and not store.db.execute('SELECT 1 FROM applications').fetchone()
