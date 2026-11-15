@@ -76,6 +76,7 @@ def inspect_posting(page,job,checkpoint,timeout=25,identity=None):
     requisition=identity['requisition_id'] if identity else expected.path.rsplit('_',1)[-1]
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,99}',requisition):raise Blocked('posting_inspection_review')
     deadline=time.monotonic()+timeout
+    identity_deadline=None;mismatch=None
     while time.monotonic()<deadline:
         checkpoint()
         parsed=urlsplit(page.url)
@@ -88,11 +89,16 @@ def inspect_posting(page,job,checkpoint,timeout=25,identity=None):
             raise Blocked('expired_posting','Workday no longer publishes this requisition')
         descriptions=page.locator('[data-automation-id="jobPostingDescription"]').filter(visible=True)
         if descriptions.count()==1:
-            if normalize(job['title']) not in {normalize(title) for title in view['headings']}:
-                raise Blocked('posting_changed_review','The employer posting title changed')
-            if not re.search(r'(?<![A-Za-z0-9_])'+re.escape(requisition)+r'(?![A-Za-z0-9_])',view['text']):
-                raise Blocked('posting_inspection_review','The rendered posting does not identify the saved requisition')
-            description=descriptions.inner_text().strip()
-            if description:return description
+            title_matches=normalize(job['title']) in {normalize(title) for title in view['headings']}
+            req_matches=re.search(r'(?<![A-Za-z0-9_])'+re.escape(requisition)+r'(?![A-Za-z0-9_])',view['text'])
+            if title_matches and req_matches:
+                description=descriptions.inner_text().strip()
+                if description:return description
+            else:
+                mismatch=('posting_changed_review','The employer posting title changed') if not title_matches else (
+                    'posting_inspection_review','The rendered posting does not identify the saved requisition')
+                if identity_deadline is None:identity_deadline=min(deadline,time.monotonic()+3)
+                if time.monotonic()>=identity_deadline:raise Blocked(*mismatch)
         page.wait_for_timeout(200)
+    if mismatch:raise Blocked(*mismatch)
     raise Blocked('posting_fetch_failed','The Workday browser did not finish loading the public posting')

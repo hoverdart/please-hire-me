@@ -28,6 +28,11 @@ def test_rendered_workday_identity_verifies_without_a_separate_http_api(posting_
     assert inspect_posting(posting_page,{'url':URL,'title':TITLE},lambda:None)==DESCRIPTION
 
 
+def test_posting_identity_waits_for_client_heading_to_settle_before_authorizing(posting_page):
+    posting_page.locator('h1').evaluate('(node,title)=>{node.textContent="Loading previous view";setTimeout(()=>node.textContent=title,600)}',TITLE)
+    assert inspect_posting(posting_page,{'url':URL,'title':TITLE},lambda:None)==DESCRIPTION
+
+
 @pytest.mark.parametrize('rendered,valid',[('R_2121',True),('R_2121_EXTRA',False),('PREFIX_R_2121',False)])
 def test_rendered_underscore_requisition_requires_its_complete_identifier(posting_page,rendered,valid):
     posting_page.locator('p').evaluate('(node,value)=>node.textContent=value',rendered)
