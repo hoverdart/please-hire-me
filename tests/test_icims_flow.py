@@ -265,9 +265,9 @@ def test_explicit_ats_scope_treats_icims_separately_from_other_forms(store):
         store._check_budget(job, store.settings())
     store.update_settings({'allowed_application_ats': ['icims']})
     store._check_budget(job, store.settings())
-    # Staged rollout covers Lever, Ashby and Workday; iCIMS stays independently gated.
+    # Staged rollout covers Lever, Ashby, Greenhouse and Workday; iCIMS stays independently gated.
     from hireme.rollout import commission
-    with pytest.raises(ValueError, match='Lever, Ashby and/or Workday'):
+    with pytest.raises(ValueError, match='Lever, Ashby, Greenhouse and/or Workday'):
         commission(store, 'controlled')
 
 
