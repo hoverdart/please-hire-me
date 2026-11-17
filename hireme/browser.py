@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, parse_qsl
 
 from .answers import resolve,page_requires_manual_work,field_key
 from .discovery import ATS_HOSTS,PORTAL_HOSTS
-from .util import Blocked,digest,private_dir,public_host,safe_document,textarea_value
+from .util import ASHBY_TENANT,Blocked,digest,private_dir,public_host,safe_document,textarea_value
 
 ASHBY_UPLOAD_HOST='ashbyhq-infra-prd-main-app-uploaded-files-us-east-1.s3.us-east-1.amazonaws.com'
 LEVER_VERIFICATION_TIMEOUT=5000
@@ -665,13 +665,18 @@ class Browser:
         return bool(self.test_url)
 
     def _record_native_receipt(self,job,text):
-        """Persist a verified fresh Ashby receipt without retaining its text."""
+        """Bind a fresh rendered receipt to its exact native request."""
         signature=getattr(self.ashby_submission,'request_signature',None)
-        if not signature:return
+        platform='ashby';request_hash=signature[2] if signature else None
+        if not request_hash:
+            from .greenhouse_submission import GreenhouseSubmission
+            if isinstance(self.native_submission,GreenhouseSubmission):
+                platform='greenhouse';request_hash=getattr(self.native_submission,'request_hash',None)
+        if not request_hash:return
         from .util import application_identity
         self.store.event('submission_receipt_verified',self.aid,{
-            'platform':'ashby','posting_identity':list(application_identity(job['url'])),
-            'request_hash':signature[2],'receipt_sha256':digest(text),'fresh':True})
+            'platform':platform,'posting_identity':list(application_identity(job['url'])),
+            'request_hash':request_hash,'receipt_sha256':digest(text),'fresh':True})
 
     @staticmethod
     def _request_key(request):
@@ -999,6 +1004,7 @@ class Browser:
         confirmed=(submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
                    and self._native_submission_acknowledged())
         outcome='confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
+        if outcome=='confirmed':self._record_native_receipt(job,text)
         self.store.finish(self.aid,outcome,text,screenshot_name)
         return outcome
 
@@ -1198,7 +1204,7 @@ class Browser:
         """The official Application tab is a posting-bound navigation link."""
         if self.current_host!='jobs.ashbyhq.com':return None
         posting=urlsplit(self.ashby_draft.navigation_url if self.ashby_draft else job['url'])
-        if not re.fullmatch(r'/[A-Za-z0-9_-]+/[0-9a-f-]{36}/?',posting.path,re.I):return None
+        if not re.fullmatch(r'/'+ASHBY_TENANT+r'/[0-9a-f-]{36}/?',posting.path,re.I):return None
         entry=self.page.get_by_role('tab',name='Application',exact=True)
         if entry.count()!=1:return None
         data=entry.evaluate('(e)=>({tag:e.tagName,href:e.href,form:!!e.closest("form")})')

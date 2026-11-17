@@ -245,6 +245,12 @@ def _submit(agent,kind,credential,key):
     # Never expose credential fields or the raw transport to the application
     # planner. The public click-filter runs Workday's own verification client.
     button=root.get_by_role('button',name='Create Account' if kind=='register' else 'Sign In',exact=True)
+    if kind=='login' and button.count()==0 and not root.locator('[data-automation-id="verifyPassword"]:visible').count():
+        # Some tenants label the exposed sign-in click-filter "Submit". Keep
+        # this fallback inside the identified account form and exact native
+        # control; the grant still permits only its single login request.
+        submit=root.get_by_role('button',name='Submit',exact=True)
+        if submit.count()==1 and submit.get_attribute('data-automation-id')=='click_filter':button=submit
     if button.count()!=1:raise Blocked('unsupported_account_form')
     # Allow native input/change handlers and the exposed control's mount-time
     # readiness check to finish. Never alter or invoke verification internals.
@@ -320,16 +326,19 @@ def _settle_owned(agent,key,grant):
     return True
 
 
-def _activate(agent,key,return_url):
+def _activate(agent,key,return_url,*,link=None):
     from .workday_account_mail import find_activation
+    boundary=SigninBoundary(agent)
     since=_since(agent.store,key)
     deadline=time.monotonic()+getattr(agent,'account_verification_timeout',min(180,max(30,agent.store.settings()['gmail_code_wait_seconds'])))
     while time.monotonic()<deadline:
         _checkpoint(agent)
-        link=find_activation(agent.store,agent.job,since,'workday-account:'+key)
+        link=link or find_activation(agent.store,agent.job,since,'workday-account:'+key)
         if link:
+            boundary.check()
             _state(agent.store,key,'activating','workday_account_activation_intent',{})
             try:
+                boundary.check()
                 response=agent.page.goto(link,wait_until='domcontentloaded',timeout=30000)
                 _checkpoint(agent)
                 if not response or not 200<=response.status<400:raise Blocked('account_verification_pending')
@@ -347,6 +356,31 @@ def _activate(agent,key,return_url):
     raise Blocked('account_verification_pending','Waiting for the employer account activation email; creation will not be repeated')
 
 
+def _recover_registration_mail(agent,key,return_url):
+    """An authenticated activation email can settle a lost registration reply.
+
+    This does not retry registration, an activation, or a credential POST.
+    Missing mail leaves the original uncertainty untouched.
+    """
+    row=agent.store.db.execute('SELECT state FROM employer_accounts WHERE id=?',(key,)).fetchone()
+    if not row or row['state']!='uncertain':return False
+    if agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND (kind='workday_account_activation_intent' OR kind='workday_account_write_dispatched' AND json_extract(detail,'$.operation')='login') LIMIT 1",(key,)).fetchone():return False
+    latest=agent.store.db.execute("SELECT detail FROM events WHERE subject=? AND kind='workday_account_operation_uncertain' ORDER BY seq DESC LIMIT 1",(key,)).fetchone()
+    try:data=json.loads(latest['detail']) if latest else {}
+    except (ValueError,TypeError):return False
+    if data.get('operation')!='register' or data.get('dispatched') is not True:return False
+    if not agent.store.db.execute("SELECT 1 FROM events WHERE subject=? AND kind='workday_account_write_dispatched' AND json_extract(detail,'$.operation')='register' LIMIT 1",(key,)).fetchone():return False
+    boundary=SigninBoundary(agent)
+    from .workday_account_mail import find_activation
+    link=find_activation(agent.store,agent.job,_since(agent.store,key),'workday-account:'+key)
+    if not link:return False
+    boundary.check()
+    agent.store.event('workday_account_registration_mail_verified',key,{
+        'basis':'fresh_authenticated_activation_mail','registration_retried':False})
+    _activate(agent,key,return_url,link=link)
+    return True
+
+
 def authenticate(agent,*,reconcile=False):
     """Called only after exact posting verification and applicant eligibility."""
     _checkpoint(agent)
@@ -359,6 +393,9 @@ def authenticate(agent,*,reconcile=False):
     return_url=agent.page.url
     row=agent.store.db.execute('SELECT state FROM employer_accounts WHERE id=?',(key,)).fetchone()
     if row and _owned(agent,key):return True
+    if row and not reconcile and _recover_registration_mail(agent,key,return_url):
+        if _owned(agent,key):return True
+        row=agent.store.db.execute('SELECT state FROM employer_accounts WHERE id=?',(key,)).fetchone()
     if row and row['state']=='uncertain' and reconcile:
         # An explicitly requested sign-in can establish ownership after a lost
         # registration response. It never repeats the registration. Reserve this
@@ -393,10 +430,13 @@ def authenticate(agent,*,reconcile=False):
         if not policy.status(agent.store)['enabled']:raise Blocked('workday_registration_not_configured')
         if not _root(agent.page).locator('[data-automation-id="verifyPassword"]:visible').count():
             _navigate_control(agent,'createAccountLink','Create Account')
-        grant=_submit(agent,'register',credential,key)
-        if grant.result=='owner_verified':return True
+        try:grant=_submit(agent,'register',credential,key)
+        except Blocked as error:
+            if error.reason!='account_result_uncertain' or not _recover_registration_mail(agent,key,return_url):raise
+            grant=None
+        if grant and grant.result=='owner_verified':return True
         if _owned(agent,key):return True
-        if grant.result!='rejected':
+        if grant and grant.result!='rejected':
             _activate(agent,key,return_url)
             if _owned(agent,key):return True
         _entry(agent)

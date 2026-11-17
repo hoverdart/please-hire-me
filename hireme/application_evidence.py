@@ -49,26 +49,53 @@ def native_verdict(events, url):
     writes=[e for e in after if e['kind'] in {'native_submission_write','ashby_submission_write'}]
     replies=[e for e in after if e['kind'] in {'native_submission_response','ashby_submission_response'}]
     closed=[e for e in after if e['kind']=='native_submission_not_dispatched']
+    platform=ats_for(url)
+    if platform=='greenhouse':
+        if any(e['detail'].get('platform')!='greenhouse' for e in writes+replies):return None
+        verifications=[e for e in after if e['kind']=='verification_intent']
+        if len(writes)==len(replies)==2 and len(verifications)==1:
+            first=replies[0]['detail'];request=writes[0]['detail'];intent=verifications[0]
+            # Only the already-authorized owner-bound code continuation can
+            # precede the final acknowledged request. This never grants a
+            # retry for an unknown transport or an arbitrary failed POST.
+            if (not writes[0]['seq']<replies[0]['seq']<intent['seq']<writes[1]['seq']<replies[1]['seq']
+                    or request.get('platform')!='greenhouse' or first.get('platform')!='greenhouse'
+                    or first.get('verification_available') is not True or first.get('acknowledged') is not False
+                    or first.get('http_status') not in {403,422,428} or first.get('evidence_version')!=VERSION
+                    or first.get('posting_identity')!=list(application_identity(url))
+                    or not isinstance(request.get('request_hash'),str) or len(request['request_hash'])!=64
+                    or request['request_hash']!=first.get('request_hash')
+                    or request['request_hash']==writes[1]['detail'].get('request_hash')
+                    or first.get('acknowledgement_sha256')!=digest({key:first.get(key) for key in (
+                        'evidence_version','posting_identity','http_status','request_hash')})):
+                return None
+            writes=writes[1:];replies=replies[1:]
+        elif verifications:return None
     if closed and not writes and not replies and ats_for(url)=='lever':
         if all(e['detail'].get('platform')=='lever' for e in closed):
             return ('not_submitted','closed_native_grant',closed[-1]['timestamp'])
     if len(writes)!=1 or len(replies)!=1 or closed or replies[0]['seq']<=writes[0]['seq']:return None
-    proof=replies[0]['detail'];platform=ats_for(url)
+    proof=replies[0]['detail']
     # Lever's acknowledged reply is itself the fresh, native HTML receipt.
     # Ashby's FormSubmitSuccess is an acknowledgement only: preserve a
     # separate observed receipt before it can settle an uncertain outcome.
-    receipt_verified=platform=='lever' or platform=='ashby' and any(
+    receipt_verified=platform=='lever' or platform in {'ashby','greenhouse'} and any(
         e['kind']=='submission_receipt_verified' and e['seq']>replies[0]['seq']
         and e['detail'].get('platform')==platform and e['detail'].get('fresh') is True
         and e['detail'].get('posting_identity')==list(application_identity(url))
         and e['detail'].get('request_hash')==proof.get('request_hash')
         and isinstance(e['detail'].get('receipt_sha256'),str)
         and len(e['detail']['receipt_sha256'])==64 for e in after)
+    response_proof=proof.get('response_sha256')
+    if platform=='greenhouse':
+        response_proof=proof.get('acknowledgement_sha256')
+        if response_proof!=digest({key:proof.get(key) for key in (
+                'evidence_version','posting_identity','http_status','request_hash')}):return None
     if (proof.get('acknowledged') is True and proof.get('evidence_version')==VERSION
             and receipt_verified
             and proof.get('platform')==platform and proof.get('posting_identity')==list(application_identity(url))
             and isinstance(proof.get('http_status'),int) and 200<=proof['http_status']<300
-            and isinstance(proof.get('response_sha256'),str) and len(proof['response_sha256'])==64
+            and isinstance(response_proof,str) and len(response_proof)==64
             and isinstance(proof.get('request_hash'),str) and len(proof['request_hash'])==64
             and writes[0]['detail'].get('request_hash')==proof['request_hash']):
         return ('confirmed','native_ats_acknowledgement',replies[0]['timestamp'])
@@ -100,7 +127,7 @@ def snapshot(store, aid, *, include_mail=False):
     row=dict(row);events=event_history(store,aid);url=row['url'] or ''
     proof=native_verdict(events,url) or verified_ui_verdict(store,aid,row['job_id'],url,events)
     fields={'platform','acknowledged','evidence_version','posting_identity','http_status',
-            'response_sha256','request_hash','receipt_sha256','fresh','rejection_code','reason','stage','type','host','method','status','phase',
+            'response_sha256','acknowledgement_sha256','verification_available','request_hash','receipt_sha256','fresh','rejection_code','reason','stage','type','host','method','status','phase',
             'operation_id','owner_verified','evidence_hash','remote_application_hash'}
     # Never copy request bodies, CAPTCHA tokens, query strings or arbitrary paths.
     evidence={'events':[{'seq':e['seq'],'kind':e['kind'],'timestamp':e['timestamp'],

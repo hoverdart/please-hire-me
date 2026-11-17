@@ -35,7 +35,7 @@ Hosted iCIMS postings gain a requisition identity (host and numeric ID), so a re
 
 The exact AMD careers URL shape resolves to the same numeric requisition on AMD's fixed iCIMS host. The saved source URL and job ID remain unchanged. Hosted and careers links share duplicate comparisons, including historical manual applications and unacknowledged UI saves under another feed name. Other hosts, credentials, lookalikes and unknown paths gain no bridge.
 
-`icims` is its own entry in the application scope, including the recognized AMD careers bridge; allowing `other` does not include it. Staged rollout still commissions Lever and Ashby only. Steps that save through an account-profile endpoint are refused. Public AMD careers and iCIMS entry pages were observed read-only on November 14, 2026, without applicant data, login or CAPTCHA interaction. Full application execution has synthetic coverage only; no live iCIMS application was submitted or accepted.
+`icims` is its own entry in the application scope, including the recognized AMD careers bridge; allowing `other` does not include it. Staged rollout supports Lever, Ashby, Greenhouse and Workday with each platform’s required native evidence; iCIMS remains excluded. Steps that save through an account-profile endpoint are refused. Public AMD careers and iCIMS entry pages were observed read-only on November 14, 2026, without applicant data, login or CAPTCHA interaction. Full application execution has synthetic coverage only; no live iCIMS application was submitted or accepted.
 
 ## Limits
 

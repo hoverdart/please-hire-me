@@ -302,6 +302,18 @@ def _query(store, company):
     return query
 
 
+def _same_search(saved, current):
+    """Compare only our generated query grammar, with Gmail's OR semantics."""
+    def terms(query):
+        query=re.sub(r'^after:[0-9]+ ', '', query)
+        if query==QUERY:return frozenset()
+        match=re.fullmatch(re.escape(QUERY)+r' \{("[^"\r\n]+"(?: "[^"\r\n]+")*)\}',query)
+        if not match:return None
+        return frozenset(' '.join(value.casefold().split()) for value in re.findall(r'"([^"]+)"',match[1]))
+    expected=terms(current)
+    return expected is not None and terms(saved)==expected
+
+
 MAIL_SERVICE_FAILURES = {'prior_application_mail_access_denied', 'prior_application_mail_rate_limited'}
 
 
@@ -358,7 +370,10 @@ def scan(store, *, company=None, restart=False, client_factory=None, work_deadli
             state=store.db.execute('SELECT * FROM prior_application_scans WHERE owner_hash=? AND company_key=?',(owner,scope)).fetchone()
             protocol=_protocol(store)
             prior_protocol=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(owner,scope)).fetchone()
-            if state and (restart or not state['query'].endswith(query) or not prior_protocol or prior_protocol[0] not in {protocol,protocol+':backfill'}): state=None
+            # Feeds can alternate the capitalization of one employer while
+            # sharing its canonical scan scope. Gmail searches ignore case;
+            # preserve the cursor and proof for the same search terms.
+            if state and (restart or not _same_search(state['query'],query) or not prior_protocol or prior_protocol[0] not in {protocol,protocol+':backfill'}): state=None
             pending=json.loads(state['pending']) if state and state['completed'] is None else []
             next_page=state['next_page'] if state and state['completed'] is None else ''
             started=state['started'] if state and state['completed'] is None else time.time()
@@ -437,7 +452,7 @@ def require_recent_check(store,job):
     protocol=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(owner,_scope(store,job['company']))).fetchone()
     if (not row or row['completed'] is None or not 0<=time.time()-row['completed']<=FRESH_SECONDS
             or not protocol or protocol[0]!=_protocol(store)
-            or not row['query'].endswith(query)):
+            or not _same_search(row['query'],query)):
         raise Blocked('prior_application_check_required','A current company email-history check is required before this application.')
 
 

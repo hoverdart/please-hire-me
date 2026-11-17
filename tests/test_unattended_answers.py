@@ -54,6 +54,15 @@ def test_branded_careers_source_uses_posting_provenance():
                       'provenance': {'job_source': 'ash:grow-therapy'}}
 
 
+@pytest.mark.parametrize('choice',['Job Board Not Listed','Other Job Board'])
+def test_unlisted_job_board_requires_actual_board_discovery(choice):
+    options=['Company Career Site','LinkedIn',choice,'Previously worked here']
+    assert _discovery_answer('How Did You Hear About Us?*',options,{'source':'simplify:internships'})=={
+        'value':choice,'provenance':{'job_source':'simplify:internships'}}
+    assert _discovery_answer('How Did You Hear About Us?*',[choice],{'source':'portal:acme'}) is None
+    assert _discovery_answer('How Did You Hear About Us?*',[choice],{'source':'user'}) is None
+
+
 @pytest.mark.parametrize('source,company,options', [
     ('user', 'grow-therapy', ['Grow website/careers page']),
     ('ash:grow-therapy', 'grow-therapy', ['Growly website/careers page']),

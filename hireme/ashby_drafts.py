@@ -6,10 +6,10 @@ import json
 import re
 from urllib.parse import urlsplit,parse_qsl
 
-from .util import Blocked, digest, textarea_value
+from .util import ASHBY_TENANT, Blocked, digest, textarea_value
 
 # Reevaluate only Ashby draft mapping holds when this reviewed protocol changes.
-VERSION = 5
+VERSION = 6
 
 # Reviewed public ApiSetFormValue operation, including its read-only fragments.
 # A vendor query change needs review instead of granting another mutation.
@@ -110,7 +110,7 @@ class AshbyDraft:
     def __init__(self, store, job):
         self.store=store
         parsed=urlsplit(job['url'])
-        match=re.fullmatch(r'/([A-Za-z0-9_-]+)/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
+        match=re.fullmatch(r'/('+ASHBY_TENANT+r')/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
         self.identity=(match[1].casefold(),match[2].lower()) if match and parsed.hostname=='jobs.ashbyhq.com' else None
         self.job=job;self.forms={};self.grants={};self.pending={};self.saved=set();self.failed=False
         self.package=None;self.remaining=0
@@ -127,7 +127,7 @@ class AshbyDraft:
         company budget or stored posting URL.
         """
         parsed=urlsplit(url)
-        match=re.fullmatch(r'/([A-Za-z0-9_-]+)/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
+        match=re.fullmatch(r'/('+ASHBY_TENANT+r')/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
         if (not self.identity or not match or parsed.scheme!='https' or parsed.hostname!='jobs.ashbyhq.com'
                 or parsed.port not in (None,443) or parsed.username or parsed.password
                 or match[2].lower()!=self.identity[1]):
@@ -189,7 +189,7 @@ class AshbyDraft:
                     or not re.match(r'^\s*query\s+ApiJobPosting\b',data['query'])
                     or str(variables.get('jobPostingId','')).lower()!=self.identity[1]):return
             tenant=variables.get('organizationHostedJobsPageName')
-            if not isinstance(tenant,str) or not re.fullmatch(r'[A-Za-z0-9_-]+',tenant):return
+            if not isinstance(tenant,str) or not re.fullmatch(ASHBY_TENANT,tenant):return
             result=response.json()
             posting=result.get('data',{}).get('jobPosting',{})
             if result.get('errors') or str(posting.get('id','')).lower()!=self.identity[1]:return

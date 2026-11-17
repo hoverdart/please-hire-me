@@ -693,6 +693,10 @@ def test_greenhouse_email_verification_still_requires_its_own_matching_native_ac
     result=network.run()
     assert result['confirmed']==int(state=='confirmed'),result
     assert store.db.execute('SELECT state FROM applications').fetchone()[0]==state
+    from hireme.application_evidence import snapshot
+    application=store.db.execute('SELECT id FROM applications').fetchone()[0]
+    evidence=snapshot(store,application)
+    assert (evidence['verification_method']=='native_ats_acknowledgement')==(state=='confirmed')
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='native_submission_write'").fetchone()[0]==2
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='submit_intent'").fetchone()[0]==1
     message,=network.mailbox.messages_sent
@@ -846,3 +850,18 @@ def test_native_ashby_pipeline_accepts_fresh_contracted_employer_receipt_without
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='submission_receipt_verified'").fetchone()[0]==1
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
     assert network.run()['attempts']==0 and not network.unexpected
+
+
+@pytest.mark.parametrize('region',['us','eu'])
+def test_greenhouse_native_pipeline_retains_rollout_evidence_without_retry(store,monkeypatch,region):
+    from hireme.application_evidence import snapshot
+    from hireme.rollout import commission
+    posting=Posting('greenhouse','Synthetic commissioned greenhouse',region=region)
+    network=harness(store,monkeypatch,[posting]);result=network.run()
+    assert result['confirmed']==result['attempts']==1,result
+    app=store.db.execute('SELECT id FROM applications').fetchone()
+    assert snapshot(store,app['id'])['verification_method']=='native_ats_acknowledgement'
+    assert network.run()['attempts']==0 and not network.unexpected
+    store.update_settings({'allowed_application_ats':['greenhouse'],'max_per_cycle':3,'target_per_cycle':3,'max_per_day':10,'target_per_day':10,
+                           'max_attempts_per_cycle':8,'stop_on_uncertain_outcome':True})
+    assert commission(store,'restricted')['proofs']=={'greenhouse':app['id']}

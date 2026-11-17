@@ -81,7 +81,7 @@ def account_browser(store,monkeypatch):
             if state['mode']=='lost_ack_owned' and action=='register':
                 state['logged_in']=True;state['activated']=True
                 return Response(503,{'type':'SUCCESS'})
-            if state['mode']=='lost_ack':return Response(503,{})
+            if state['mode']=='lost_ack' or state['mode']=='lost_ack_mail' and action=='register':return Response(503,{})
             if action=='login':
                 assert state['activated'];state['logged_in']=True
             return Response(200,{'type':'SUCCESS'})
@@ -94,7 +94,7 @@ def account_browser(store,monkeypatch):
             {'name':'Authentication-Results','value':'mx.google.com; dkim=pass header.i=@otp.workday.com;'}],
             'body':{'data':body}}}
     class Messages:
-        def list(self,**kwargs):return SimpleNamespace(execute=lambda:{'messages':[{'id':'activation-message'}]} if state['mode']!='no_mail' else {})
+        def list(self,**kwargs):return SimpleNamespace(execute=lambda:{'messages':[{'id':'activation-message'}]} if state['mode'] not in {'no_mail','lost_ack'} else {})
         def get(self,**kwargs):return SimpleNamespace(execute=mail)
     api=Messages()
     monkeypatch.setattr('hireme.gmail.GmailClient',lambda selected:SimpleNamespace(email=owner,
@@ -125,6 +125,29 @@ def test_workday_registration_activation_and_signin_are_autonomous_and_separate_
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
     assert SECRET not in json.dumps(store.snapshot()) and SECRET.encode() not in store.path.read_bytes()
     assert TOKEN.encode() not in store.path.read_bytes()
+
+
+def test_account_signin_can_use_exact_native_submit_click_filter(store,account_browser,monkeypatch):
+    browser,state=account_browser;original=auth_html
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',lambda:original().replace("create?'Create Account':'Sign In'","create?'Create Account':'Submit'"))
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and state['activation_gets']==1
+    assert browser.owner_verified
+
+
+@pytest.mark.parametrize('variant',['unrecognized','ambiguous'])
+def test_generic_submit_cannot_expand_the_account_login_control(store,account_browser,monkeypatch,variant):
+    browser,state=account_browser;original=auth_html
+    def changed():
+        html=original().replace("create?'Create Account':'Sign In'","create?'Create Account':'Submit'")
+        if variant=='unrecognized':return html.replace('data-automation-id=click_filter','data-other-id=click_filter')
+        return html.replace('<button aria-hidden=true',"${create?'':'<div role=button aria-label=Submit data-automation-id=click_filter>Submit</div>'}<button aria-hidden=true")
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',changed)
+    browser.page.goto(URL)
+    with pytest.raises(Blocked,match='unsupported_account_form'):authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==1
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='account_signin_intent'").fetchone()
 
 
 def test_known_account_signs_in_without_creating_or_activating_again(store,account_browser):
@@ -175,6 +198,61 @@ def test_lost_creation_acknowledgement_never_repeats_registration(store,account_
     browser.workday_account_attempted=False
     with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
     assert state['writes']==['register'] and store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='uncertain'
+
+
+def test_lost_registration_reply_with_authenticated_mail_activates_without_recreation(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack_mail'
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and state['activation_gets']==1
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
+    assert store.db.execute("SELECT 1 FROM events WHERE kind='workday_account_registration_mail_verified'").fetchone()
+
+
+def test_activation_mail_arriving_after_uncertain_registration_can_resume(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    state['mode']='lost_ack_mail';browser.workday_account_attempted=False
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and state['activation_gets']==1
+
+
+def test_pause_after_recovery_mail_prevents_activation_transport(store,account_browser,monkeypatch):
+    from hireme.workday_account_mail import find_activation
+    browser,state=account_browser;state['mode']='lost_ack_mail'
+    def paused(*args,**kwargs):
+        link=find_activation(*args,**kwargs);store.update_settings({'live_enabled':False});return link
+    monkeypatch.setattr('hireme.workday_account_mail.find_activation',paused)
+    with pytest.raises(Blocked):authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==0
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='uncertain'
+
+
+@pytest.mark.parametrize('event,detail',[
+    ('workday_account_activation_intent',{}),
+    ('workday_account_write_dispatched',{'operation':'login'}),
+    ('workday_account_operation_uncertain',{'operation':'login','dispatched':True}),
+])
+def test_recovery_mail_cannot_retry_activation_or_uncertain_login(store,account_browser,event,detail):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    key=store.db.execute('SELECT id FROM employer_accounts').fetchone()[0]
+    store.event(event,key,detail)
+    state['mode']='lost_ack_mail';browser.workday_account_attempted=False
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==0
+    assert not store.db.execute('SELECT 1 FROM mail_consumptions').fetchone()
+
+
+def test_recovery_mail_requires_a_dispatched_registration_intent(store,account_browser):
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser
+    credentials(store,browser.job,create=True)
+    key=AccountVault(store).begin_creation(ORIGIN,'acme')
+    store.db.execute("UPDATE employer_accounts SET state='uncertain' WHERE id=?",(key,))
+    store.event('workday_account_operation_uncertain',key,{'operation':'register','dispatched':False})
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    assert not state['writes'] and state['activation_gets']==0
+    assert not store.db.execute('SELECT 1 FROM mail_consumptions').fetchone()
 
 
 def test_missing_mail_keeps_creation_pending_instead_of_resending_it(store,account_browser):

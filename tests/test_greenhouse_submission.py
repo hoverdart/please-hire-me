@@ -370,13 +370,19 @@ def test_exact_native_final_ack_requires_one_intent_and_confirmation_route(store
     assert not guard.receipt_matches(job['url'] + '/confirmation')
     guard.observe(SimpleNamespace(request=req, status=200), ('wrong', 'POST', key[2]))
     assert not guard.response_seen
-    guard.observe(SimpleNamespace(request=req, status=201), key)
+    guard.observe(SimpleNamespace(request=req, status=201, body=lambda:b'{}'), key)
     assert guard.acknowledged and guard.response_seen and not guard.failed
     assert guard.receipt_matches(job['url'] + '/confirmation')
     assert not guard.receipt_matches(job['url'] + '/confirmation?extra=1')
     assert not guard.receipt_matches('https://boards.greenhouse.io/acme/jobs/123/confirmation')
     events = [json.loads(r[0]) for r in store.db.execute("SELECT detail FROM events WHERE kind LIKE 'native_submission_%'")]
-    assert events == [{'platform': 'greenhouse'}, {'platform': 'greenhouse', 'acknowledged': True}]
+    from hireme.util import application_identity
+    evidence={'evidence_version':1,
+        'posting_identity':list(application_identity(job['url'])), 'http_status':201,
+        'request_hash':key[2]}
+    assert events == [{'platform': 'greenhouse', 'request_hash':key[2]}, {
+        'platform': 'greenhouse', 'acknowledged': True, 'verification_available':False,
+        **evidence, 'acknowledgement_sha256':digest(evidence)}]
 
 
 @pytest.mark.parametrize('change', ['wrong_job', 'other_email', 'extra_answer', 'extra_top', 'wrong_fingerprint', 'duplicate_json', 'wrong_method'])
@@ -913,3 +919,93 @@ def test_one_same_application_native_email_verification_grant_after_a_delay(stor
         guard.prepare_verification('ABC12345')
     events = json.dumps([dict(row) for row in store.db.execute("SELECT * FROM events WHERE kind LIKE 'native_submission_%'")])
     assert 'ABC12345' not in events and 'ZZZ12345' not in events
+
+
+def test_greenhouse_rollout_requires_native_reply_and_fresh_correlated_receipt(store):
+    from hireme.application_evidence import snapshot
+    from hireme.browser import Browser
+    from hireme.rollout import commission
+    browser, job, package, aid, _, data = setup_native(store)
+    store.update_settings({'allowed_application_ats':['greenhouse'], 'max_per_cycle':3, 'target_per_cycle':3,
+                           'max_per_day':10, 'target_per_day':10, 'max_attempts_per_cycle':8, 'stop_on_uncertain_outcome':True})
+    guard=GreenhouseSubmission(browser,job,package,aid)
+    req,key=request(data)
+    store.begin_submit(aid);assert guard.grant(req,key)
+    guard.observe(SimpleNamespace(status=200,body=lambda:b'{}'),key)
+    store.finish(aid,'confirmed','Synthetic fresh receipt')
+    assert snapshot(store,aid)['verification_method']=='adapter_confirmation'
+    with pytest.raises(ValueError,match='verified native'):commission(store,'restricted')
+    browser.aid=aid;browser.ashby_submission=None;browser.native_submission=guard
+    Browser._record_native_receipt(browser,job,'Thank you for applying. Your application has been received.')
+    assert snapshot(store,aid)['verification_method']=='native_ats_acknowledgement'
+    assert commission(store,'restricted')['proofs']=={'greenhouse':aid}
+    assert len(list(store.db.execute("SELECT 1 FROM events WHERE kind='native_submission_write'")))==1
+
+
+@pytest.mark.parametrize('change',['request','response','posting','fresh','duplicate'])
+def test_greenhouse_unmatched_or_incomplete_native_evidence_cannot_commission(store,change):
+    from hireme.application_evidence import snapshot
+    from hireme.browser import Browser
+    browser,job,package,aid,_,data=setup_native(store)
+    guard=GreenhouseSubmission(browser,job,package,aid)
+    req,key=request(data);store.begin_submit(aid);assert guard.grant(req,key)
+    guard.observe(SimpleNamespace(status=200,body=lambda:b'{}'),key)
+    browser.aid=aid;browser.ashby_submission=None;browser.native_submission=guard
+    Browser._record_native_receipt(browser,job,'Thank you for applying. Your application has been received.')
+    store.finish(aid,'confirmed','Synthetic fixture receipt')
+    row=store.db.execute("SELECT seq,detail FROM events WHERE subject=? AND kind='submission_receipt_verified'",(aid,)).fetchone()
+    detail=json.loads(row['detail'])
+    if change=='request':detail['request_hash']='f'*64
+    elif change=='posting':detail['posting_identity']=['unrelated']
+    elif change=='fresh':detail['fresh']=False
+    elif change=='response':
+        row=store.db.execute("SELECT seq,detail FROM events WHERE subject=? AND kind='native_submission_response'",(aid,)).fetchone()
+        detail=json.loads(row['detail']);detail.pop('acknowledgement_sha256')
+    else:store.event('native_submission_write',aid,{'platform':'greenhouse','request_hash':key[2]})
+    store.db.execute('UPDATE events SET detail=? WHERE seq=?',(json.dumps(detail),row['seq']))
+    assert snapshot(store,aid)['verification_method']=='adapter_confirmation'
+
+
+def verification_evidence(store,status=403):
+    from hireme.browser import Browser
+    browser,job,package,aid,_,data=setup_native(store)
+    guard=GreenhouseSubmission(browser,job,package,aid)
+    req,key=request(data);store.begin_submit(aid);assert guard.grant(req,key)
+    guard.observe(SimpleNamespace(status=status,json=lambda:{'code':'captcha-failed',
+        'security_code_recipient':store.facts()['email']['value']}),key)
+    store.finish(aid,'awaiting_verification','Synthetic code challenge')
+    store.db.execute('INSERT INTO verification_challenges VALUES(?,?,?,?,?,?,?,?)',
+                     (aid,'greenhouse',job['url'],'Acme',0,8,'pending',0))
+    guard.prepare_verification('AB12CD34');store.begin_verification(aid)
+    data={k:v for k,v in data.items() if k!='g-recaptcha-enterprise-token'}
+    data['security_code']='AB12CD34';req,key=request(data);assert guard.grant(req,key)
+    guard.observe(SimpleNamespace(status=200),key)
+    browser.aid=aid;browser.ashby_submission=None;browser.native_submission=guard
+    Browser._record_native_receipt(browser,job,'Thank you for applying. Your application has been received.')
+    store.finish(aid,'confirmed','Synthetic fixture receipt')
+    return aid
+
+
+@pytest.mark.parametrize('status',[403,422,428])
+def test_greenhouse_verified_email_continuation_has_two_bound_replies_and_one_fresh_receipt(store,status):
+    from hireme.application_evidence import snapshot
+    aid=verification_evidence(store,status)
+    assert snapshot(store,aid)['verification_method']=='native_ats_acknowledgement'
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='verification_intent'").fetchone()[0]==1
+
+
+@pytest.mark.parametrize('change',['missing_intent','duplicate_intent','initial_status','unbound_challenge','initial_hash','extra_write'])
+def test_greenhouse_verification_proof_rejects_unbound_or_ambiguous_prefix(store,change):
+    from hireme.application_evidence import snapshot
+    aid=verification_evidence(store)
+    if change=='missing_intent':store.db.execute("DELETE FROM events WHERE kind='verification_intent'")
+    elif change=='duplicate_intent':store.event('verification_intent',aid,{})
+    elif change=='extra_write':store.event('native_submission_write',aid,{'platform':'greenhouse','request_hash':'f'*64})
+    else:
+        row=store.db.execute("SELECT seq,detail FROM events WHERE kind='native_submission_response' ORDER BY seq LIMIT 1").fetchone()
+        data=json.loads(row['detail'])
+        if change=='initial_status':data['http_status']=500
+        elif change=='unbound_challenge':data['verification_available']=False
+        else:data['request_hash']='f'*64
+        store.db.execute('UPDATE events SET detail=? WHERE seq=?',(json.dumps(data),row['seq']))
+    assert snapshot(store,aid)['verification_method']=='adapter_confirmation'

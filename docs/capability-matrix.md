@@ -27,7 +27,7 @@ This table separates what the worker implements from what has been observed at a
 
 ## Gates that stay closed
 
-- Staged rollout (`hireme rollout`) commissions Lever and Ashby only. Adding a platform to it needs that platform's own native acknowledgement evidence.
+- Staged rollout (`hireme rollout`) supports Lever, Ashby, Greenhouse and Workday. Each enabled ATS requires its own native acknowledgement and fresh receipt, or an owner-bound Workday application readback. Greenhouse commissioning accepts one correlated final request, or one rejected owner-bound email challenge followed by its explicitly authorized and acknowledged code continuation. Both require a fresh receipt; older records without complete native evidence cannot commission it.
 - `allowed_application_ats` treats `icims` as its own scope; allowing `other` does not include it.
 - Native Workday, Handshake and Work at a Startup transports stay off until their reviewed, machine-bound flow evidence exists. A sign-in or a setting cannot create that evidence.
 - The adaptive executor never writes to account-profile, registration, withdrawal or deletion endpoints, and never opens a frame from another origin or requisition.

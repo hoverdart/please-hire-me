@@ -34,7 +34,8 @@ def test_ambiguous_or_form_bound_tabs_do_not_authorize_navigation(store,html):
 
 
 @pytest.mark.parametrize('delayed_redirect',[False,True])
-def test_verified_tenant_redirect_enters_application_without_changing_durable_job(store,job,monkeypatch,delayed_redirect):
+@pytest.mark.parametrize('tenant',['renamed','renamed.ai'])
+def test_verified_tenant_redirect_enters_application_without_changing_durable_job(store,job,monkeypatch,delayed_redirect,tenant):
     import json
     from hireme.ashby_drafts import AshbyDraft
     from hireme.util import digest
@@ -42,7 +43,7 @@ def test_verified_tenant_redirect_enters_application_without_changing_durable_jo
     def form():return {"id":"22222222-2222-4222-8222-222222222222","sourceFormDefinitionId":"33333333-3333-4333-8333-333333333333","sections":[]}
     monkeypatch.setattr('hireme.browser.public_host',lambda host:True)
     original=f'https://jobs.ashbyhq.com/acme/{REQ}'
-    renamed=f'https://jobs.ashbyhq.com/renamed/{REQ}'
+    renamed=f'https://jobs.ashbyhq.com/{tenant}/{REQ}'
     ashby={**job,'id':digest(original),'url':original,'host':'jobs.ashbyhq.com'}
     store.upsert_job(ashby)
     before=dict(store.db.execute('SELECT * FROM jobs WHERE id=?',(ashby['id'],)).fetchone())
@@ -60,7 +61,7 @@ def test_verified_tenant_redirect_enters_application_without_changing_durable_jo
                     html='<a href="'+original+'/application">Apply for this job</a><script>setTimeout(()=>location.replace('+json.dumps(renamed)+'),'+('150' if delayed_redirect else '0')+')</script>'
                 else:
                     query={'operationName':'ApiJobPosting','query':'query ApiJobPosting { jobPosting { id } }',
-                           'variables':{'organizationHostedJobsPageName':'renamed','jobPostingId':REQ}}
+                           'variables':{'organizationHostedJobsPageName':tenant,'jobPostingId':REQ}}
                     html='<h1>Synthetic posting</h1><a role="tab" href="'+renamed+'/application">Application</a><a href="'+renamed+'/application">Apply for this job</a><script>fetch("/api/non-user-graphql",{method:"POST",body:JSON.stringify('+json.dumps(query)+')})</script>'
                     if route.request.url.endswith('/application'):
                         html+='<script>setTimeout(()=>document.body.insertAdjacentHTML("beforeend",\'<form><label>Name<input name="name"></label></form>\'),150)</script>'

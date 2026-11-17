@@ -39,7 +39,7 @@ def code_fingerprint():
 def commission(store, stage):
     if stage not in {'dry_run','controlled','restricted'}:raise ValueError('Choose a rollout stage')
     settings=store.settings();scope=settings['allowed_application_ats']
-    if not scope or set(scope)-{'lever','ashby','workday'}:raise ValueError('Restrict applications to Lever, Ashby and/or Workday first')
+    if not scope or set(scope)-{'lever','ashby','greenhouse','workday'}:raise ValueError('Restrict applications to Lever, Ashby, Greenhouse and/or Workday first')
     if store.missing_setup() or not settings['onboarding_complete']:raise ValueError('Complete applicant setup first')
     proofs={}
     if stage=='restricted':

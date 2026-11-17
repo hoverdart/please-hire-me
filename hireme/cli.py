@@ -85,7 +85,7 @@ def main(argv=None):
     p=sub.add_parser('revalidate-holds',help='Refresh held postings without submitting or replaying uncertain drafts')
     p.add_argument('--ats',action='append',choices=['lever','ashby']);p.add_argument('--output',type=Path)
     p.add_argument('--prepare',action='store_true',help='Re-extract and verify current forms without final submission')
-    p=sub.add_parser('rollout',help='Commission a staged Lever/Ashby/Workday rollout against this installed code')
+    p=sub.add_parser('rollout',help='Commission a staged Lever/Ashby/Greenhouse/Workday rollout against this installed code')
     p.add_argument('stage',choices=['dry_run','controlled','restricted'])
     p=sub.add_parser('retry-not-submitted');p.add_argument('application_id');p.add_argument('--note',required=True);p.add_argument('--approved-package',type=Path)
     p=sub.add_parser('renew-retry');p.add_argument('application_id');p.add_argument('--note',required=True);p.add_argument('--approved-package',type=Path,required=True)

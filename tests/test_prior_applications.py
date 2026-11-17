@@ -975,3 +975,46 @@ def test_application_start_refreshes_a_still_valid_but_nearly_expired_write_chec
     prior.require_recent_check(store,optiver)
     store.db.execute('UPDATE prior_application_scans SET completed=?',(time.time()-prior.FRESH_SECONDS-1,))
     with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)
+
+
+def test_company_name_capitalization_preserves_history_cursor_and_freshness(store,optiver):
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[['one'],['two']]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    first=prior.scan(store,company='optiver',client_factory=factory)
+    assert first['more_available']
+    second=prior.scan(store,company='Optiver',client_factory=factory)
+    assert not second['more_available'],service.lists
+    assert service.lists[1]['pageToken']=='1'
+    # Backfill must still perform an overlapping catch-up before it grants a
+    # fresh proof. Case changes neither skip that step nor restart the history.
+    service.pages=[[]]
+    catchup=prior.scan(store,company='OPTIVER',client_factory=factory)
+    assert not catchup['more_available'] and service.lists[-1]['q'].startswith('after:')
+    prior.require_recent_check(store,optiver)
+    prior.require_recent_check(store,{**optiver,'company':'optiver'})
+    prior.require_recent_check(store,{**optiver,'company':'OPTIVER'})
+
+
+def test_changed_company_search_terms_still_require_new_complete_scan(store,optiver):
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    prior.scan(store,company='Optiver',client_factory=factory)
+    prior.scan(store,company='Optiver',client_factory=factory)
+    prior.require_recent_check(store,optiver)
+    store.update_settings({'company_aliases':{'Optiver Extra':'Optiver'}})
+    with pytest.raises(Blocked,match='check_required'):prior.require_recent_check(store,optiver)
+    prior.scan(store,company='Optiver',client_factory=factory)
+    assert not service.lists[-1]['q'].startswith('after:')
+
+
+@pytest.mark.parametrize('saved,same',[
+    ('after:123 in:anywhere {"OPTIVER" "Optiver"}',True),
+    ('in:anywhere {"Optiver Group" "Optiver"}',False),
+    ('in:anywhere {"Optiver"} -in:spam',False),
+    ('after:123 in:inbox {"Optiver"}',False),
+    ('in:anywhere {"Other"}',False),
+])
+def test_scan_query_equivalence_preserves_full_mailbox_and_exact_search_terms(saved,same):
+    assert prior._same_search(saved,'in:anywhere {"Optiver"}') is same

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+ASHBY_TENANT = r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*'
+
 
 class Blocked(Exception):
     def __init__(self, reason: str, detail: str = ""):
@@ -93,7 +95,7 @@ def application_identity(url: str):
     host, path = parsed.hostname, parsed.path
     uuid = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
     if host == 'jobs.ashbyhq.com':
-        match = re.fullmatch(r'/([A-Za-z0-9_-]+)/(' + uuid + r')(?:/application)?', path, re.I)
+        match = re.fullmatch(r'/(' + ASHBY_TENANT + r')/(' + uuid + r')(?:/application)?', path, re.I)
         if match: return ('ashby', match[1].casefold(), match[2].lower())
     if host in {'jobs.lever.co', 'jobs.eu.lever.co'}:
         match = re.fullmatch(r'/([A-Za-z0-9_-]+)/(' + uuid + r')', path, re.I)

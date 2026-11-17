@@ -761,7 +761,8 @@ class GreenhouseSubmission:
                 return False
             self.used = True
             self.request_key = key
-            self.store.event('native_submission_write', self.aid, {'platform': 'greenhouse'})
+            self.request_hash = hashlib.sha256(raw).hexdigest()
+            self.store.event('native_submission_write', self.aid, {'platform': 'greenhouse', 'request_hash': self.request_hash})
             return True
         except (ValueError, TypeError, AttributeError, KeyError):
             return False
@@ -770,6 +771,13 @@ class GreenhouseSubmission:
         if not self.used or self.response_seen or key != self.request_key:
             return
         self.response_seen = True
+        from .util import application_identity
+        evidence = {'evidence_version': 1, 'posting_identity': list(application_identity(self.job['url'])),
+                    'http_status': response.status, 'request_hash': self.request_hash}
+        # The reviewed client acknowledges response.ok, without interpreting
+        # the body, and can immediately navigate away. Do not block its reply
+        # callback on a body read that can disappear during that navigation.
+        evidence['acknowledgement_sha256'] = digest(evidence)
         self.acknowledged = 200 <= response.status < 300
         self.failed = not self.acknowledged
         if not self.acknowledged and not self.verification_used:
@@ -782,7 +790,8 @@ class GreenhouseSubmission:
                     and recipient.strip().casefold() == owner.strip().casefold())
             except (ValueError, TypeError, AttributeError):
                 pass
-        self.store.event('native_submission_response', self.aid, {'platform': 'greenhouse', 'acknowledged': self.acknowledged})
+        self.store.event('native_submission_response', self.aid, {'platform': 'greenhouse', 'acknowledged': self.acknowledged,
+            'verification_available': self.verification_available, **evidence})
 
     def receipt_matches(self, page_url):
         return self.used and self.acknowledged and page_url == self.confirmation_url

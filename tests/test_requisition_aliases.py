@@ -7,6 +7,7 @@ REQ = '12345678-1234-1234-1234-123456789abc'
 
 @pytest.mark.parametrize('first,second', [
     (f'https://jobs.ashbyhq.com/acme/{REQ}', f'https://jobs.ashbyhq.com/acme/{REQ}/application?embed=true'),
+    (f'https://jobs.ashbyhq.com/acme.ai/{REQ}', f'https://jobs.ashbyhq.com/ACME.ai/{REQ}/application'),
     (f'https://jobs.lever.co/acme/{REQ}', f'https://jobs.lever.co/acme/{REQ}/apply?utm_source=test'),
     ('https://boards.greenhouse.io/acme/jobs/123', 'https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123'),
     ('https://boards.eu.greenhouse.io/acme/jobs/123', 'https://job-boards.eu.greenhouse.io/acme/jobs/123?gh_src=test'),
