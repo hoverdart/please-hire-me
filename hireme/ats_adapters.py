@@ -69,14 +69,33 @@ class SingleStepAdapter:
         return re.split(r'\bApply for this job\b',text,maxsplit=1,flags=re.I)[0]
 
 class GreenhouseAdapter(SingleStepAdapter):
-    version=4
+    version=5
     def navigation(self,job,*,checkpoint=None,deadline=None):
         # Roblox always redirects its board URL to a custom careers site.
         from urllib.parse import urlsplit
         if re.fullmatch(r'/roblox/jobs/\d+',urlsplit(job['url']).path):return self.embedded(job,checkpoint=checkpoint,deadline=deadline)
+        # A native form can fall back to the UI executor after initial form
+        # inspection. Both executors must start at the verified ATS embed when
+        # the official posting advertises a custom careers site; restarting at
+        # its forwarding URL loses the safe entry point.
+        parts=urlsplit(job['url']);match=re.fullmatch(r'/([A-Za-z0-9_-]+)/jobs/(\d+)',parts.path)
+        if parts.hostname in {'boards.greenhouse.io','job-boards.greenhouse.io'} and match:
+            from .net import Network
+            from urllib.error import HTTPError,URLError
+            try:
+                data=Network(checkpoint=checkpoint,deadline=deadline).json(
+                    'https://boards-api.greenhouse.io/v1/boards/'+match[1]+'/jobs/'+match[2]+'?content=true')
+                target=urlsplit(data.get('absolute_url','')) if isinstance(data,dict) else None
+                external=bool(target and target.scheme=='https' and target.hostname and target.port in (None,443)
+                    and not target.username and not target.password and target.hostname not in {
+                        'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'})
+            except (HTTPError,URLError,TimeoutError,ValueError,TypeError):
+                external=False
+            if external:
+                return self.embedded(job,checkpoint=checkpoint,deadline=deadline,_posting=data)
         return super().navigation(job,checkpoint=checkpoint,deadline=deadline)
 
-    def embedded(self,job,*,checkpoint=None,deadline=None):
+    def embedded(self,job,*,checkpoint=None,deadline=None,_posting=None,_expected_public_url=None):
         """Greenhouse's own embedded application, for boards that forward to a custom careers site.
 
         The custom site is outside the browser allowlist; the embedded form is
@@ -91,7 +110,7 @@ class GreenhouseAdapter(SingleStepAdapter):
         board,job_id=match.groups()
         from .net import Network
         from urllib.error import HTTPError,URLError
-        try:data=Network(checkpoint=checkpoint,deadline=deadline).json('https://boards-api.greenhouse.io/v1/boards/'+board+'/jobs/'+job_id+'?content=true')
+        try:data=_posting if _posting is not None else Network(checkpoint=checkpoint,deadline=deadline).json('https://boards-api.greenhouse.io/v1/boards/'+board+'/jobs/'+job_id+'?content=true')
         except HTTPError as error:
             if error.code==404:raise Blocked('expired_posting','The official Greenhouse posting is no longer published') from None
             if error.code in {429,500,502,503,504}:raise Blocked('posting_fetch_failed','Greenhouse posting read temporarily failed; no fields were filled') from None
@@ -102,6 +121,8 @@ class GreenhouseAdapter(SingleStepAdapter):
             raise Blocked('posting_fetch_failed','Cannot verify the Greenhouse posting for the embedded application')
         normalize=lambda value:re.sub(r'[^a-z0-9]+','',value.lower())
         if normalize(data['title'])!=normalize(job['title']):raise Blocked('posting_changed_review','The employer posting title changed')
+        if _expected_public_url is not None and data.get('absolute_url')!=_expected_public_url:
+            raise Blocked('posting_changed_review','The official posting did not verify this public careers URL')
         content=html.unescape(re.sub(r'<[^>]+>',' ',data['content']))
         return 'https://job-boards.greenhouse.io/embed/job_app?for='+board+'&token='+job_id,content
 

@@ -1009,3 +1009,47 @@ def test_greenhouse_verification_proof_rejects_unbound_or_ambiguous_prefix(store
         else:data['request_hash']='f'*64
         store.db.execute('UPDATE events SET detail=? WHERE seq=?',(json.dumps(data),row['seq']))
     assert snapshot(store,aid)['verification_method']=='adapter_confirmation'
+
+
+def test_custom_embedded_public_url_needs_exact_fresh_official_mapping_before_intent(store,monkeypatch):
+    browser,job,package,aid,state,data=setup_native(store);route=embedded(browser,state)
+    public='https://careers.fixture.invalid/careers/123'
+    route['jobPost']['public_url']=public;calls=[]
+    def official(network,url):
+        calls.append(url)
+        return {'id':123,'title':job['title'],'content':'<p>Official posting</p>','absolute_url':public}
+    monkeypatch.setattr('hireme.net.Network.json',official)
+    guard=GreenhouseSubmission(browser,job,package,aid)
+    assert calls==['https://boards-api.greenhouse.io/v1/boards/acme/jobs/123?content=true']
+    assert guard.submit_url=='https://boards.greenhouse.io/embed/acme/jobs/123'
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+    store.begin_submit(aid)
+    req,key=request(data,url=route['submitPath'])
+    assert guard.grant(req,key)
+    assert not guard.grant(*request(data,url=public))
+
+
+@pytest.mark.parametrize('change',['different_url','different_job','different_title','missing_url','empty_posting'])
+def test_custom_embedded_mapping_never_accepts_unrelated_or_incomplete_official_postings(store,monkeypatch,change):
+    browser,job,package,aid,state,_=setup_native(store);route=embedded(browser,state)
+    public='https://careers.fixture.invalid/careers/123';route['jobPost']['public_url']=public
+    official={'id':123,'title':job['title'],'content':'<p>Posting</p>','absolute_url':public}
+    if change=='different_url':official['absolute_url']=public+'-other'
+    elif change=='different_job':official['id']=456
+    elif change=='different_title':official['title']='Another role'
+    elif change=='missing_url':official.pop('absolute_url')
+    else:official['content']=''
+    monkeypatch.setattr('hireme.net.Network.json',lambda *args:official)
+    with pytest.raises(Blocked):GreenhouseSubmission(browser,job,package,aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_pause_during_custom_public_identity_read_prevents_any_submission_intent(store,monkeypatch):
+    browser,job,package,aid,state,_=setup_native(store);route=embedded(browser,state)
+    public='https://careers.fixture.invalid/careers/123';route['jobPost']['public_url']=public
+    def paused(*args):
+        store.update_settings({'live_enabled':False})
+        return {'id':123,'title':job['title'],'content':'<p>Posting</p>','absolute_url':public}
+    monkeypatch.setattr('hireme.net.Network.json',paused)
+    with pytest.raises(Blocked):GreenhouseSubmission(browser,job,package,aid)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()

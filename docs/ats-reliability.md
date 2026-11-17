@@ -8,6 +8,8 @@ Ashby tenant names can contain dot-separated components such as `persona.ai`. Po
 
 Workday account recovery accepts fresh authenticated activation mail after a dispatched registration loses its acknowledgement, without repeating registration. A prior activation intent or dispatched login keeps its uncertainty fence. The native login button may be labelled Submit only when its exact unique click-filter control is inside the identified account form.
 
+Custom Greenhouse career URLs are resolved through the exact official board and requisition response before either executor opens its ATS-owned embedded form. Embedded public URLs with nonstandard paths require a fresh official mapping for the same board, job ID, title and exact public URL. This grants no access to the custom site and does not change the native submission host. A real Brex application returned its native acknowledgement and fresh accepted-application receipt after this repair.
+
 Local synthetic coverage checks fresh native receipts, missing or mismatched evidence, duplicate writes, dotted Ashby tenants, job-board provenance, and account-recovery fences. Actual Inversion and GCM Grosvenor applications displayed fresh acceptance receipts during this repair; GCM Grosvenor exercised the owner-bound email-code continuation. Broader unattended operation remains subject to installed-artifact verification and commissioning with complete native evidence.
 
 ## Adaptive application execution — November 3–4, 2026

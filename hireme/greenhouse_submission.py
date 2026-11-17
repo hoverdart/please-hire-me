@@ -389,14 +389,28 @@ class GreenhouseSubmission:
             # The public URL may name the employer's custom careers page. It
             # is identity evidence only; it never gains navigation/write access.
             raw = self.metadata.get('public_url')
+            custom_candidate = False
             try:
                 candidate = urlsplit(raw) if isinstance(raw, str) else None
+                custom_candidate = bool(candidate and candidate.scheme == 'https' and candidate.hostname
+                    and candidate.hostname not in HOSTS and not candidate.username and not candidate.password
+                    and candidate.port in (None,443) and not candidate.fragment
+                    and [v for k,v in parse_qsl(candidate.query,keep_blank_values=True) if k=='gh_jid'] in ([],[identifier]))
                 public_valid = public_valid or bool(candidate and candidate.scheme == 'https' and candidate.hostname
                     and not candidate.username and not candidate.password and candidate.port in (None, 443)
                     and not candidate.fragment and candidate.path == '/jobs/' + identifier
                     and parse_qsl(candidate.query, keep_blank_values=True) == [('gh_jid', identifier)])
             except ValueError:
                 public_valid = False
+            if not public_valid and custom_candidate:
+                # Custom sites use paths such as /careers/<id>. Their URL
+                # shape cannot establish identity. Require the exact URL from
+                # a fresh official response for this board, job and title.
+                # The resulting grant still sends only to Greenhouse.
+                from .ats_adapters import GreenhouseAdapter
+                GreenhouseAdapter().embedded(job,checkpoint=self.store.checkpoint,deadline=self.deadline,
+                    _expected_public_url=raw)
+                public_valid = True
         if (not isinstance(self.metadata, dict) or not public_valid
                 or not isinstance(self.metadata.get('questions'), list)
                 or not isinstance(self.metadata.get('fingerprint'), str)

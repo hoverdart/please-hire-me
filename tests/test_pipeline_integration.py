@@ -259,6 +259,10 @@ class ClosedATS:
         fixture = self
         def read(network, url, data=None):
             for posting in fixture.postings:
+                if (posting.platform=='greenhouse' and data is None and url==
+                        'https://boards-api.greenhouse.io/v1/boards/'+posting.tenant+'/jobs/'+posting.url.rsplit('/',1)[1]+'?content=true'):
+                    if network.checkpoint:network.checkpoint()
+                    return {'id':posting.url.rsplit('/',1)[1],'title':TITLE,'content':'<p>'+DESCRIPTION+'</p>','absolute_url':posting.url}
                 expected = f'https://api.lever.co/v0/postings/{posting.tenant}/{posting.req}?mode=json'
                 if posting.platform == 'lever' and url == expected and data is None:
                     if network.checkpoint: network.checkpoint()
