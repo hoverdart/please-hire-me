@@ -326,10 +326,13 @@ def test_native_upload_abort_is_bounded_and_marks_sent_intent_unknown_without_re
     journal=DraftJournal(store,driver.job,controller.session,controller.profile.signature)
     journal.remember(DraftObservation('owned-draft','initial',controller.session.owner_hash,driver.job['id'],digest({})),digest('initial'))
     document=dict(store.db.execute("SELECT * FROM documents WHERE kind='resume'").fetchone())
-    monkeypatch.setattr('hireme.workday_nvidia.NATIVE_TIMEOUT_MS',25)
+    timeout=25
+    monkeypatch.setattr('hireme.workday_nvidia.NATIVE_TIMEOUT_MS',timeout)
     sent=[]
     with sync_playwright() as playwright:
         browser=playwright.chromium.launch(headless=True);context=browser.new_context(service_workers='block');page=context.new_page()
+        page.clock.install(time=0)
+        page.clock.pause_at(10000)
         controller.browser.page=page
         def route(request):
             if request.request.url==ORIGIN+'/board':
@@ -337,8 +340,9 @@ def test_native_upload_abort_is_bounded_and_marks_sent_intent_unknown_without_re
             accepted=controller.browser.workday_grant.consume_request(request.request)
             assert accepted
             sent.append(request.request.url)
-            # A closed intercepted server never responds; the fetch timer must
-            # abort without an external network connection.
+            # Advance the browser's timer only after the route proves dispatch.
+            # This fixture never responds or reaches the external network.
+            page.clock.run_for(timeout)
         ORIGIN='https://'+NVIDIA
         context.route('**/*',route);page.goto(ORIGIN+'/board')
         driver.transport=NativeBrowserTransport(controller)
