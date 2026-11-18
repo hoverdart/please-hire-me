@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from hireme.answers import resolve
+from hireme.browser import Browser
 from hireme.greenhouse_submission import (GreenhouseSubmission, ROUTE, grant_upload,
                                          observe_upload)
 from hireme.util import Blocked, digest
@@ -19,6 +20,54 @@ def field(index, name, label, *, kind='text', options=None, section=None):
     if section:
         value['section'] = section
     return value
+
+
+def employment_row():
+    import calendar
+    months=list(calendar.month_name)[1:]
+    names=('company-name', 'title', 'start-date-month', 'start-date-year', 'end-date-month', 'end-date-year', 'current-role')
+    fields=[]
+    for index, name in enumerate(names):
+        kind='combobox' if name.endswith('month') else 'checkbox' if name=='current-role' else 'text'
+        options=months if kind=='combobox' else ['Yes','No'] if kind=='checkbox' else []
+        fields.append(field(index, name+'-0', name.replace('-', ' '), kind=kind, options=options, section='employment'))
+        if kind=='checkbox':fields[-1].update(value='No',required=False)
+    return fields
+
+
+def test_greenhouse_required_work_history_uses_one_completed_confirmed_role(store):
+    from hireme.greenhouse_submission import employment_answers
+    from hireme.workday_history import validate_answer
+    store.put_history_entry('employment',{'organization':'Older','title':'Prior intern','start':'2025-04','end':'2025-08','current':False},
+                            source='Applicant',confirmed=True)
+    store.put_history_entry('employment',{'organization':'Current','title':'Engineer','start':'2026-08','current':True},
+                            source='Applicant',confirmed=True)
+    recent=store.put_history_entry('employment',{'organization':'Recent','title':'Research intern','start':'2026-01','end':'2026-07','current':False},
+                                   source='Applicant',confirmed=True)
+    store.put_history_entry('employment',{'organization':'Unconfirmed','title':'Intern','start':'2026-08','end':'2026-11','current':False},
+                            source='Draft')
+    fields=employment_row()
+    result=employment_answers(store,fields)
+    assert [result[i]['value'] for i in range(7)]==['Recent','Research intern','January','2026','July','2026','No']
+    assert {item['provenance']['history_entry_id'] for item in result.values()}=={recent['id']}
+    for answer in result.values():validate_answer(store,answer)
+    assert Browser._shape([result[i]['field'] for i in range(7)])==Browser._shape(fields)
+    store.withdraw_history_entry(recent['id'])
+    with pytest.raises(Blocked):validate_answer(store,result[0])
+
+
+def test_greenhouse_work_history_respects_prefill_and_never_combines_jobs(store):
+    from hireme.greenhouse_submission import employment_answers
+    for company, end in [('Older','2025-08'),('Recent','2026-06')]:
+        store.put_history_entry('employment',{'organization':company,'title':'Engineer','start':'2025-02','end':end,'current':False},
+                                source='Applicant',confirmed=True)
+    fields=employment_row()
+    fields[0]['value']='Older'
+    assert employment_answers(store,fields)[5]['value']=='2025'
+    fields[5]['value']='2026'
+    with pytest.raises(Blocked,match='history_confirmation_required'):employment_answers(store,fields)
+    fields[5]['ref']['id']='unrecognized-control'
+    assert employment_answers(store,fields)=={}
 
 
 def setup_native(store, *, extra_questions=None, extra_fields=None, documents=None, region='us'):
@@ -110,12 +159,23 @@ def test_public_posting_identity_accepts_only_same_region_host_alias_and_matchin
     'https://boards.greenhouse.io/acme/jobs/123?gh_jid=123&gh_jid=123',
     'https://boards.greenhouse.io/acme/jobs/123?gh_jid=123&destination=other',
 ])
-def test_public_posting_alias_rejects_changed_destination_identity_and_extra_parameters(store, url):
+def test_public_posting_alias_rejects_changed_destination_identity_and_extra_parameters(store, url, monkeypatch):
     browser, job, package, aid, state, _ = setup_native(store)
+    monkeypatch.setattr('hireme.net.Network.json',lambda *_:{'id':123,'title':job['title'],'content':'Job details','absolute_url':job['url']})
     state['loaders'][ROUTE]['jobPost']['public_url'] = url
     with pytest.raises(Blocked, match='unsupported_form'):
         GreenhouseSubmission(browser, job, package, aid)
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_public_posting_alias_with_official_cross_region_identity_keeps_native_endpoint(store,monkeypatch):
+    browser,job,package,aid,state,_=setup_native(store)
+    alternate='https://job-boards.eu.greenhouse.io/acme/jobs/123'
+    state['loaders'][ROUTE]['jobPost']['public_url']=alternate
+    monkeypatch.setattr('hireme.net.Network.json',lambda *_:{'id':123,'title':job['title'],'content':'Job details','absolute_url':alternate})
+    grant=GreenhouseSubmission(browser,job,package,aid)
+    assert grant.submit_url=='https://boards.greenhouse.io/acme/jobs/123'
+    assert not grant.used
 
 
 @pytest.mark.parametrize('state', ['prepared', 'unknown', 'awaiting_verification', 'confirmed'])

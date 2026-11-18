@@ -11,6 +11,25 @@ from hireme.util import Blocked,digest
 from hireme.worker import cycle
 
 
+def test_ashby_embedded_form_reads_the_same_public_posting_first():
+    from hireme.ats_adapters import adapter_for
+    base='https://jobs.ashbyhq.com/fixture/12345678-1234-1234-1234-123456789abc'
+    job={'host':'jobs.ashbyhq.com','url':base+'/application?embed=true'}
+    assert adapter_for(job).navigation(job)==(base,None)
+    assert job['url']==base+'/application?embed=true'
+
+
+def test_greenhouse_reports_the_exact_official_posting_as_closed(monkeypatch):
+    from urllib.error import HTTPError
+    from hireme.ats_adapters import adapter_for
+    def unpublished(self,url):
+        raise HTTPError(url,404,'not published',None,None)
+    monkeypatch.setattr('hireme.net.Network.json',unpublished)
+    job={'host':'job-boards.greenhouse.io','url':'https://job-boards.greenhouse.io/fixture/jobs/1234'}
+    with pytest.raises(Blocked,match='expired_posting'):
+        adapter_for(job).navigation(job)
+
+
 @pytest.mark.parametrize('description',['','Sponsorship: Yes','Sponsorship: No'])
 def test_metadata_is_not_a_low_fit_verdict_or_application_authority(store,job,description):
     item={**job,'description':description}

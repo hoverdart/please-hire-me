@@ -90,6 +90,7 @@ def information_dependency(store,job,reason,fields=None):
     """Only a source that can address these questions releases their hold."""
     from .answers import _compatible_field, AUTOMATIC_ANSWER_VERSION, WRITING_SOURCE_VERSION, STUDENT_QUESTION
     from .config import FACTS
+    from .page_answers import VERSION as PAGE_PLAN_VERSION, RECOVERABLE
     saved_posting=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
     job=json.loads(saved_posting[0]) if saved_posting else job
     facts=store.facts();keys=set();labels=[];questions=[];uses_context=False;uses_history=False;uses_writing=reason=='writing_unsupported'
@@ -106,14 +107,14 @@ def information_dependency(store,job,reason,fields=None):
         candidates={key for key in FACTS if _compatible_field(key,field,job)}
         keys.update(candidates)
         if STUDENT_QUESTION.fullmatch(row['label'].strip()):keys.update({'school','college_start','graduation','degree'})
-        uses_context|=not candidates or row['reason']=='writing_unsupported'
+        uses_context|=not candidates or row['reason'] in RECOVERABLE
         uses_writing|=row['reason']=='writing_unsupported'
         uses_history|=field['section'] in {'education','employment'} or row['reason'] in {'history_confirmation_required','history_changed'}
         questions.append((row['id'],row['reason']))
     scopes=sorted({job['host'],job['host']+'|'+store.company(job['company']),job.get('answer_scope',job['host'])})
     answers=[tuple(row) for row in store.db.execute('SELECT id,question,revision FROM answers WHERE host IN ('
         +','.join('?' for _ in scopes)+') ORDER BY id',scopes) if row['question'] in labels]
-    data={'version':1,'automatic_answers':AUTOMATIC_ANSWER_VERSION,
+    data={'version':1,'automatic_answers':AUTOMATIC_ANSWER_VERSION,'page_plan':PAGE_PLAN_VERSION,
           'questions':questions,'facts':{key:facts[key]['value'] for key in sorted(keys) if key in facts},'answers':answers,
           'provider':{key:store.settings()[key] for key in ('provider','provider_model','model_effort','model_escalation')},
           'posting':job.get('_listing_hash') or digest({key:job.get(key) for key in ('title','description','location')}),'adapter':ADAPTER_VERSION,'mapping':MAPPING_VERSION}
@@ -123,7 +124,7 @@ def information_dependency(store,job,reason,fields=None):
         data['materials']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
         data['documents']=[tuple(row) for row in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')]
         data['writing_enabled']=store.settings()['tailored_writing']
-    if uses_history or reason in {'history_confirmation_required','history_changed'}:
+    if uses_history or uses_context or reason in {'history_confirmation_required','history_changed'}:
         data['history']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed FROM confirmed_history ORDER BY id')]
     if uses_writing:data['writing_sources']=WRITING_SOURCE_VERSION
     return digest(data)
@@ -209,6 +210,7 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
         # below safe_state/draft checks and cannot release an uncertain write.
         settings=store.settings()
         data['provider']={key:settings[key] for key in ('provider','provider_model','model_effort','model_escalation')}
+        if reason=='provider_timeout':data['provider']['model_timeout_seconds']=settings['model_timeout_seconds']
     if reason=='ashby_submission_unsupported':
         from .ashby_submission import VERSION
         data['ashby_submission']=VERSION

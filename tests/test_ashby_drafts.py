@@ -1294,23 +1294,27 @@ window.post = data => fetch('/api/non-user-graphql', {method:'POST',body:JSON.st
         assert d.failed is (mode=='wrong_ack')
 
 
-def location_draft(store,job,package,*,observe=True,restored=None):
+def location_draft(store,job,package,*,observe=True,restored=None,region=False):
     from hireme.answers import resolve
     d,ashby=draft(store,job,package)
-    field={'index':0,'indices':[0],'label':'Location','type':'combobox','required':True,
-           'options':[LOCATION],'maxlength':-1,'value':'','ashby_path':'_systemfield_location',
+    label='Which state, province, or region do you currently live in?' if region else 'Location'
+    choice='California, United States' if region else LOCATION
+    types=['Region','City','Country'] if region else ['City']
+    if region:store.put_facts({'state':'CA'})
+    field={'index':0,'indices':[0],'label':label,'type':'combobox','required':True,
+           'options':[choice],'maxlength':-1,'value':'','ashby_path':'_systemfield_location',
            'ashby_entry_id':RENDER+'__systemfield_location'}
     answer=resolve(store,ashby['host'],field)
-    proof={**d.package,'answers':[answer]}
+    proof={**d.package,'answers':[answer],'facts_hash':digest(store.facts())}
     saved=form()
     saved['sections'][0]['fieldEntries'].append({'id':field['ashby_entry_id'],
-        'field':{'path':'_systemfield_location','title':'Location','type':'Location','locationTypes':['City']},
+        'field':{'path':'_systemfield_location','title':label,'type':'Location','locationTypes':types},
         'fieldValue':{'value':restored} if restored else None})
     d._remember_form(saved)
     read=SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiAutocompleteGeoLocation',
         post_data=json.dumps({'operationName':'ApiAutocompleteGeoLocation','query':LOCATION_QUERY,
-                             'variables':{'text':'Berkeley','locationTypes':['City']}}))
-    result={'data':{'result':{'suggestions':[{'name':LOCATION,'geoLocationPath':[
+                             'variables':{'text':'California' if region else 'Berkeley','locationTypes':types}}))
+    result={'data':{'result':{'suggestions':[{'name':choice,'geoLocationPath':[
         {'providerLocationId':'fixture-country'},{'providerLocationId':'fixture-city'}]}]}}}
     if observe:d.observe_locations(read,SimpleNamespace(status=200,json=lambda:result))
     return d,proof,read,result
@@ -1328,6 +1332,14 @@ def test_location_object_requires_official_choice_and_exact_save_ack(store,job,p
     d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':saved}}),'location')
     assert d.complete
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_state_field_uses_the_exact_verified_region_result(store,job,package):
+    d,proof,_,_=location_draft(store,job,package,region=True)
+    assert proof['answers'][0]['provenance']['fact_key']=='state'
+    d.enable(None,proof['answers'],proof)
+    request_data,payload=request({'text':'California, United States','providerLocationId':'fixture-city'},path='_systemfield_location')
+    assert d.allow(request_data,payload,'region')
 
 
 @pytest.mark.parametrize('mode',['missing','wrong_host','wrong_method','wrong_query','wrong_operation','errors','wrong_types','ambiguous'])

@@ -1283,9 +1283,10 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
         ('fixture-submission', jobs[0]['id'], 'cedar labs', 'confirmed',
          '{"answers":[]}', 'fixture', stamp, stamp, stamp))
     # A blocked job with a question should count once in the attention queue.
+    store.db.execute('UPDATE jobs SET reason=? WHERE id=?', ('missing_answers', jobs[1]['id']))
     store.db.execute('INSERT INTO questions VALUES(?,?,?,?,?,?,0)',
                      ('fixture-question', jobs[1]['id'], jobs[1]['host'],
-                      'Which work location do you prefer?', '["Remote", "New York"]', 'unknown_fact'))
+                      'Which work location do you prefer?', '["Remote", "New York"]', 'missing_fact'))
     sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port))
     process.start()

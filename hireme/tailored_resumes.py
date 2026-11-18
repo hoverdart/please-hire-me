@@ -7,6 +7,7 @@ and a separate model review, or the confirmed line is used unchanged.
 from __future__ import annotations
 
 import calendar
+from collections import Counter
 import hashlib
 import json
 import re
@@ -14,7 +15,7 @@ import re
 from .resume_styles import display_link, link_target, render_resume, validate_style
 from .util import Blocked, digest, now, private_dir, safe_document, write_private_blob
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 CONTACT_KEYS = ('full_name', 'email', 'phone', 'location', 'linkedin', 'github', 'website')
 STOP_WORDS = {'and', 'the', 'with', 'for', 'our', 'you', 'your', 'will', 'from', 'that', 'this', 'have', 'work', 'role',
               'are', 'who', 'able', 'such', 'they', 'their', 'using', 'used', 'well', 'team', 'teams', 'into', 'more',
@@ -24,7 +25,11 @@ MAX_REWRITE_LINES = 24
 
 def _terms(text):
     # Sentence punctuation is not part of a term: "Rust." names the same skill as "Rust".
-    return {term.rstrip('.') for term in re.findall(r'[a-z][a-z0-9+#.]{1,}', text.casefold())} - STOP_WORDS - {''}
+    return {term.rstrip('.') for term in re.findall(r'(?<!\w)(?:[a-z][a-z0-9+#.]+|[cr]\b)', text.casefold())} - STOP_WORDS - {''}
+
+
+def _skill_items(value):
+    return list(dict.fromkeys(item.strip() for item in re.split(r',\s*(?![^()]*\))',value) if item.strip()))
 
 
 def _sources(store, job):
@@ -41,18 +46,33 @@ def _sources(store, job):
     if not original:
         raise Blocked('missing_document', 'Upload your original resume first.')
     path = safe_document(store.root / 'documents' / original['filename'], store.root / 'documents')
-    if hashlib.sha256(path.read_bytes()).hexdigest() != original['hash']:
+    original_bytes=path.read_bytes()
+    if hashlib.sha256(original_bytes).hexdigest() != original['hash']:
         raise Blocked('document_tampered')
     settings = store.settings()
     style = validate_style(settings['resume_style'])
     rewriting = style['mode'] == 'rewrite' and settings['tailored_writing']
+    skill_groups=[]
+    if style['template']=='reference':
+        from .onboarding import _pdf_text
+        from pypdf.errors import PdfReadError
+        confirmed=set(_skill_items(facts.get('skills',{}).get('value','')))
+        try:reference_text=_pdf_text(original_bytes) if b'%%EOF' in original_bytes else ''
+        except (PdfReadError,ValueError):reference_text=''
+        match=re.search(r'^\s*TECHNICAL SKILLS\s*\n(.+)',reference_text,re.M|re.S|re.I)
+        if match:
+            for line in match[1].splitlines()[:8]:
+                label,separator,values=line.strip().partition(':')
+                if not separator or not re.fullmatch(r'[A-Za-z /&-]{2,30}',label):break
+                skills=[skill for skill in _skill_items(values) if skill in confirmed]
+                if skills:skill_groups.append((label,skills))
     from .voice import guidance
     return {'facts': facts, 'history': history, 'original_resume': dict(original),
             'job': {key: job.get(key, '') for key in ('id', 'url', 'company', 'title', 'description')},
             'enabled': settings['tailored_resumes'], 'format': FORMAT_VERSION, 'style': style,
             # Rewriting is model-assisted writing and follows that separate authorization.
             'writing_voice': guidance(store) if rewriting else None,
-            'rewrite': rewriting}
+            'rewrite': rewriting, 'skill_groups':skill_groups}
 
 
 def _month(value):
@@ -83,8 +103,11 @@ def _description_lines(values):
 def assemble(sources):
     """Choose complete confirmed lines for this posting and record why each was kept or left out."""
     facts, history, job, style = sources['facts'], sources['history'], sources['job'], sources['style']
-    terms = _terms(job['title'] + ' ' + job['description'])
+    title_terms = _terms(job['title'])
+    terms = title_terms | _terms(job['description'])
     matched = lambda text: sorted(terms & _terms(text))
+    reference = style['template']=='reference'
+    weight = lambda hits: sum(3 if term in title_terms else 1 for term in hits)
     limit = style['max_bullets']
     explanation = []
     built = {}
@@ -94,32 +117,45 @@ def assemble(sources):
         built['education'] = []
         for row in education:
             values = row['values']
+            degree = ' '.join(value for value in (values.get('degree'),values.get('field_of_study')) if value)
+            gpa = 'GPA: ' + values['gpa'] if values.get('gpa') else ''
+            detail = ' | '.join(value for value in (degree,gpa) if value)
             built['education'].append({'heading': values['institution'],
-                'meta': ', '.join(value for value in (values.get('degree'), values.get('field_of_study'), values.get('location')) if value),
-                'dates': _date_range(values), 'lines': ['GPA: ' + values['gpa']] if values.get('gpa') else [],
+                'meta': '' if reference else ', '.join(value for value in (values.get('degree'), values.get('field_of_study'), values.get('location')) if value),
+                'dates': 'Expected '+_month(values['expected_end']) if reference and values.get('expected_end') else _date_range(values),
+                'lines': [line for line in (detail if reference else gpa,
+                                          'Coursework: '+values['coursework'] if values.get('coursework') else '') if line],
                 'bulleted': False, 'source_id': row['id']})
 
     for kind, section in (('employment', 'experience'), ('project', 'projects')):
         rows = [row for row in history if row['kind'] == kind]
         if not rows:
             continue
-        relevance = {row['id']: len(matched(' '.join(str(value) for value in row['values'].values()))) for row in rows}
+        relevance = {row['id']: weight(matched(' '.join(str(value) for value in row['values'].values()))) for row in rows}
         # Employment keeps the conventional most-recent-first order. Projects lead with the most relevant.
         rows.sort(key=(lambda row: _recency(row)) if kind == 'employment' else (lambda row: (relevance[row['id']], _recency(row))), reverse=True)
-        built[section] = []
         for row in rows:
             values = row['values']
+            actual_section = 'research' if values.get('resume_section')=='research' and 'research' in style['section_order'] else section
             lines = _description_lines(values)
-            scores = [len(matched(line)) for line in lines]
+            scores = [weight(matched(line)) for line in lines]
             # Pick the most relevant complete lines, then keep their confirmed order.
             chosen = sorted(sorted(range(len(lines)), key=lambda i: (-scores[i], i))[:limit])
-            heading = (values['title'] + ' | ' + values['organization'] if kind == 'employment' else
+            heading = (' | '.join((values['organization'],values['title']) if reference else (values['title'],values['organization'])) if kind == 'employment' else
                        values['name'] + (' | ' + values['role'] if values.get('role') else ''))
+            subtitle = values.get('title',values.get('role')) if reference else None
+            display_heading = heading.split(' | ',1)[0] if subtitle else heading
             meta = values.get('location', '') if kind == 'employment' else (display_link(values['url']) if values.get('url') else '')
-            built[section].append({'heading': heading, 'meta': meta, 'dates': _date_range(values),
+            heading_link = None
+            if reference and values.get('url'):
+                heading_link=display_link(values['url'])
+                meta=values.get('technologies','')
+            elif reference and values.get('technologies'):
+                meta=values['technologies']
+            built.setdefault(actual_section,[]).append({'heading': display_heading,'subtitle':subtitle,'meta': meta,'dates': _date_range(values),
                                    'lines': [lines[i] for i in chosen], 'bulleted': True, 'source_id': row['id'],
-                                   'url': values.get('url') if kind == 'project' else None})
-            explanation.append({'source_id': row['id'], 'section': section, 'heading': heading,
+                                   'url': values.get('url') if kind == 'project' else None,'heading_link':heading_link})
+            explanation.append({'source_id': row['id'], 'section': actual_section, 'heading': heading,
                 'matched_terms': relevance[row['id']],
                 'lines': [{'text': line, 'selected': i in chosen, 'matched': matched(line),
                            'reason': ('Matches the posting: ' + ', '.join(matched(line)[:8]) if matched(line) and i in chosen else
@@ -129,19 +165,65 @@ def assemble(sources):
 
     skills = facts.get('skills', {}).get('value', '')
     if skills:
-        items = list(dict.fromkeys(item.strip() for item in skills.split(',') if item.strip()))
+        items = _skill_items(skills)
         ordered = sorted(items, key=lambda item: -len(matched(item)))
-        built['skills'] = [{'heading': '', 'lines': [', '.join(ordered)], 'bulleted': False, 'source_id': 'fact:skills'}]
+        groups=sources.get('skill_groups',[])
+        grouped={item for _,skills in groups for item in skills}
+        extra=[item for item in ordered if item not in grouped and matched(item)]
+        displayed=[label+': '+', '.join(sorted(items,key=lambda item:-len(matched(item)))) for label,items in groups]
+        if displayed and extra:displayed.append('Additional: '+', '.join(extra))
+        if not displayed:displayed=[', '.join(ordered)]
+        built['skills'] = [{'heading': '', 'lines': displayed, 'bulleted': False, 'source_id': 'fact:skills'}]
         explanation.append({'source_id': 'fact:skills', 'section': 'skills', 'heading': 'Skills',
-            'lines': [{'text': item, 'selected': True, 'matched': matched(item),
-                       'reason': 'Named in the posting; listed first' if matched(item) else 'Confirmed skill'} for item in ordered]})
+            'lines': [{'text': item, 'selected': not groups or item in grouped or item in extra, 'matched': matched(item),
+                       'reason': ('Named in the posting' if matched(item) else 'Confirmed skill' if not groups or item in grouped
+                                  else 'Left out: outside the reference layout and unmentioned in the posting')} for item in ordered]})
     contact = []
-    for key in CONTACT_KEYS[1:]:
+    contact_keys = ('location','phone','email','website','github','linkedin') if reference else CONTACT_KEYS[1:]
+    for key in contact_keys:
         if key in facts:
             value = facts[key]['value']
+            if reference and key=='phone':
+                value=re.sub(r'^\+1(\d{3})(\d{3})(\d{4})$',r'(\1) \2-\3',value)
             contact.append(display_link(value) if key in ('linkedin', 'github', 'website') and link_target(value) else value)
-    sections = [(key, built[key]) for key in style['section_order'] if built.get(key)]
-    return {'name': facts['full_name']['value'], 'contact': contact, 'sections': sections, 'explanation': explanation}
+    order = list(style['section_order'])
+    if reference and 'research' in order and re.search(r'\bresearch\b',job['title'],re.I):
+        order.remove('research')
+        order.insert(order.index('experience'),'research')
+    sections = [(key, built[key]) for key in order if built.get(key)]
+    name = facts['full_name']['value']
+    return {'name': name.upper() if reference else name, 'contact': contact, 'sections': sections, 'explanation': explanation}
+
+
+def _fit(content, style):
+    """Fit measured layouts by dropping the least useful complete lines first."""
+    if style['template']!='reference' or not content['explanation']:return render_resume(content,style)
+    explanation={item['source_id']:item for item in content['explanation']}
+    while True:
+        try:return render_resume(content,style)
+        except Blocked as error:
+            if error.reason!='resume_too_long':raise
+            selected=[line for item in explanation.values() for line in item['lines'] if line['selected']]
+            occurrences=Counter(term for line in selected for term in line['matched'])
+            removable=[]
+            for section, entries in content['sections']:
+                for entry in entries:
+                    if not entry['bulleted']:continue
+                    item=explanation[entry['source_id']]
+                    if len(entry['lines'])>1:
+                        for index,line in enumerate(item['lines']):
+                            if line['selected']:
+                                unique=sum(occurrences[term]==1 for term in line['matched'])
+                                removable.append(((0,unique,len(line['matched']),-index),entries,entry,[line]))
+                    elif section in {'projects','research'} and len(entries)>1:
+                        lines=[line for line in item['lines'] if line['selected']]
+                        removable.append(((1,item['matched_terms'],0,0),entries,entry,lines))
+            if not removable:raise
+            (kind,*_),entries,entry,lines=min(removable,key=lambda item:item[0])
+            if kind:entries.remove(entry)
+            else:entry['lines'].remove(lines[0]['text'])
+            for line in lines:
+                line.update(selected=False,reason='Left out to fit the measured page; higher-relevance evidence was kept')
 
 
 def _grounded_rewrite(original, rewritten, entry_text):
@@ -262,8 +344,16 @@ def generate(store, job, provider=None):
         validate(store, job, document)
         return document
     content = assemble(sources)
+    if sources['style']['template']=='reference':
+        data,text,_ = _fit(content,sources['style'])
+    else:
+        data,text = render(content,sources['style'])
     rewriting = rewrite(store, sources, content, provider) if sources['rewrite'] else {'status': 'not_enabled', 'detail': '', 'lines': []}
-    data, text = render(content, sources['style'])
+    if rewriting['status']=='rewritten':
+        try:data,text=render(content,sources['style'])
+        except Blocked as error:
+            if error.reason not in {'resume_too_long','resume_font_unsupported','resume_render_failed'}:raise
+            rewriting={'status':'kept_confirmed_lines','detail':f'The rewritten PDF failed validation ({error.reason}).','lines':[]}
     checksum = hashlib.sha256(data).hexdigest()
     with store.transaction():
         store.checkpoint()
@@ -323,8 +413,9 @@ def preview(store, style=None, job=None):
             raise
         content = sample_content()
         sample = True
-    content = {**content, 'sections': [(key, entries) for key in style['section_order'] for name, entries in content['sections'] if name == key]}
-    data, _, measured = render_resume(content, style)
+    if sample:
+        content = {**content, 'explanation':[], 'sections': [(key, entries) for key in style['section_order'] for name, entries in content['sections'] if name == key]}
+    data, _, measured = _fit(content, style)
     return {'data': data, 'sample': sample, **measured}
 
 

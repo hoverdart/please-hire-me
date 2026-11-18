@@ -68,6 +68,21 @@ class SingleStepAdapter:
             }'''))
         return re.split(r'\bApply for this job\b',text,maxsplit=1,flags=re.I)[0]
 
+class AshbyPostingAdapter(SingleStepAdapter):
+    def navigation(self,job,*,checkpoint=None,deadline=None):
+        from urllib.parse import urlsplit
+        from .util import ASHBY_TENANT
+        parsed=urlsplit(job['url'])
+        posting=r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+        match=re.fullmatch(r'/('+ASHBY_TENANT+r')/('+posting+r')(?:/application)?/?',parsed.path,re.I)
+        if (parsed.scheme!='https' or parsed.hostname!='jobs.ashbyhq.com' or parsed.port not in (None,443)
+                or parsed.username or parsed.password or not match):
+            return super().navigation(job,checkpoint=checkpoint,deadline=deadline)
+        # Verify the official posting before opening its separate form. Saved
+        # links often point at an embedded application instead of the listing.
+        return f'https://jobs.ashbyhq.com/{match[1]}/{match[2]}',None
+
+
 class GreenhouseAdapter(SingleStepAdapter):
     version=5
     def navigation(self,job,*,checkpoint=None,deadline=None):
@@ -89,7 +104,11 @@ class GreenhouseAdapter(SingleStepAdapter):
                 external=bool(target and target.scheme=='https' and target.hostname and target.port in (None,443)
                     and not target.username and not target.password and target.hostname not in {
                         'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'})
-            except (HTTPError,URLError,TimeoutError,ValueError,TypeError):
+            except HTTPError as error:
+                if error.code in {404,410}:
+                    raise Blocked('expired_posting','The official Greenhouse posting is no longer published') from None
+                external=False
+            except (URLError,TimeoutError,ValueError,TypeError):
                 external=False
             if external:
                 return self.embedded(job,checkpoint=checkpoint,deadline=deadline,_posting=data)
@@ -247,6 +266,7 @@ def adapter_for(job):
         from .icims import posting_url
         if posting_url(job['url'])!=job['url']:return ICIMSPostingAdapter()
     if 'greenhouse.io' in job['host']:return GreenhouseAdapter()
+    if job['host']=='jobs.ashbyhq.com':return AshbyPostingAdapter()
     if job['host'] in {'jobs.lever.co','jobs.eu.lever.co'}:return LeverPostingAdapter()
     if job['host'].endswith('.myworkdayjobs.com'):return WorkdayPostingAdapter()
     return SingleStepAdapter()

@@ -5,7 +5,7 @@
   const get = (id) => document.getElementById(id);
   const form = get("resume-style-form"), status = get("resume-style-status");
   const orderList = get("resume-section-order"), panel = get("resume-style-preview-panel");
-  const sectionNames = { education: "Education", experience: "Experience", projects: "Projects", skills: "Skills" };
+  const sectionNames = { education: "Education", experience: "Experience", research: "Research", projects: "Projects", skills: "Skills" };
   const numeric = ["body_size", "margin", "line_spacing", "max_bullets"];
   let snapshot = null, catalog = null, saved = null, order = [], busy = false, dirty = false, loaded = false;
   let referenceHash = null, previewUrl = null;

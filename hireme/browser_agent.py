@@ -438,6 +438,7 @@ class AdaptiveBrowser(Browser):
     def _choices(self,view):
         choices=[];answers=[];documents=[];pending=[]
         self._bind_history(view)
+        previous=[answer for step in self.completed_steps for answer in step['answers']]
         self.questions=[f['label'] for f in view['fields']]
         # Posting pages may contain contact/newsletter controls. Prefer their
         # application entry over entering applicant data into another form.
@@ -520,7 +521,7 @@ class AdaptiveBrowser(Browser):
                             choices.append(lookup)
                             continue
             try:
-                answer=self._resolve(field,answers)
+                answer=self._resolve(field,[*previous,*answers])
                 if answer:
                     # Virtualized prompts initially expose only a small slice
                     # of their choices. Search the confirmed name before using
@@ -554,6 +555,20 @@ class AdaptiveBrowser(Browser):
                 if field.get('options_visible'):
                     choices.append({'id':'close_options:'+field['ui_id'],'kind':'close_options',
                         'label':'Close inspected choices for '+field['label'],'field':field})
+        # Let visible options and confirmed values settle before reviewing a
+        # stable group of unanswered questions. No documents are uploaded yet.
+        if pending and all(choice['kind']=='upload' for choice in choices):
+            from .page_answers import plan
+            planned,pending=plan(self.store,self.job['answer_scope'],view['fields'],answers,pending,
+                                 self.provider,self.job,previous=previous)
+            for answer in planned:
+                field=answer['field']
+                if not self._matches(answer):
+                    choices.append({'id':'fill:'+field['ui_id'],'kind':'fill',
+                                    'label':'Fill approved answer for '+field['label'],'field':field,'answer':answer})
+            if planned:
+                answers.extend(planned)
+                answers.sort(key=lambda answer:view['fields'].index(answer['field']))
         # A native date controller can clear a year entered while its required
         # day is unknown. Resolve the whole group before typing any component.
         blocked_dates={field['date_group'] for field,_ in pending if field.get('date_group')}
@@ -1161,10 +1176,13 @@ class AdaptiveBrowser(Browser):
                 # unknown required or prefilled value stays in the question queue.
                 if not choices:
                     asked=set()
+                    from .page_answers import PROVIDER_FAILURES
                     for field,reason in pending:
-                        asked.add(self.store.ask(self.job['id'],self.job['answer_scope'],field['label'],field.get('options',[]),
-                            reason,field=field,context=self.job))
+                        if reason not in PROVIDER_FAILURES:
+                            asked.add(self.store.ask(self.job['id'],self.job['answer_scope'],field['label'],field.get('options',[]),
+                                reason,field=field,context=self.job))
                     if pending:
+                        if not asked:raise Blocked(pending[0][1],'; '.join(f['label'] for f,_ in pending))
                         self.store.retire_questions(self.job['id'],asked)
                         self._save_partial(answers,documents)
                         raise Blocked('missing_answers','; '.join(f['label'] for f,_ in pending))

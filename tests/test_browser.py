@@ -1772,3 +1772,11 @@ def test_contracted_received_receipt_is_fresh_but_not_a_paraphrase_of_old_eviden
 ])
 def test_unreceived_or_conditional_application_never_counts_as_a_receipt(text):
     assert not submission_receipt(text)
+
+
+def test_employer_receipt_requires_a_new_acknowledgement_and_follow_up():
+    receipt='Thanks for applying to join our team at IMC. We’ll be in touch shortly with next steps.'
+    assert submission_receipt('Step one, done!\n'+receipt,'Name\nEmail\nSubmit application')
+    assert not submission_receipt(receipt,receipt)
+    assert not submission_receipt('Thanks for applying to join our team at IMC.')
+    assert not submission_receipt(receipt+' Please complete your application.')

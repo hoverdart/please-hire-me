@@ -677,7 +677,7 @@
               </button>
             </div>
           </div>
-          <h2 class="section">Applications that need a hand</h2>
+          <h2 class="section">Application holds</h2>
           <p id="blocked-scope" class="help"></p>
           <div id="blocked-jobs"></div>
           <button id="view-all-holds" type="button" class="secondary">
@@ -1007,6 +1007,7 @@
                 <label>Field of study<input name="field_of_study" maxlength="1000" /></label>
                 <label>GPA<input name="gpa" maxlength="1000" /></label>
                 <label>Expected end month<input name="expected_end" type="month" /></label>
+                <label>Coursework<input name="coursework" maxlength="1000" /></label>
               </div>
               <div class="form-grid wide" data-history-kind="employment" hidden>
                 <label>Organization<input name="organization" maxlength="1000" required disabled /></label>
@@ -1016,6 +1017,8 @@
               <div class="form-grid wide" data-history-kind="project" hidden>
                 <label>Project name<input name="name" maxlength="1000" required disabled /></label>
                 <label>Your role<input name="role" maxlength="1000" disabled /></label>
+                <label>Technologies<input name="technologies" maxlength="1000" disabled /></label>
+                <label>Resume section<select name="resume_section" disabled><option value="">Projects</option><option value="research">Research</option></select></label>
                 <label class="wide">Project link (https)<input name="url" type="url" maxlength="1000" placeholder="https://" disabled /></label>
                 <label class="wide">What you built and the result, one line per point<textarea name="project_description" rows="3" maxlength="8000" required disabled></textarea></label>
               </div>
@@ -1201,7 +1204,7 @@
                 <option value="rewrite">Rephrase selected lines for the posting, with source checks</option>
               </select></label>
               <p id="resume-style-mode-help" class="help wide"></p>
-              <label>Typeface<select name="font"><option value="sans">Sans serif</option><option value="serif">Serif</option></select></label>
+              <label>Typeface<select name="font"><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="carlito">Carlito</option></select></label>
               <label>Body text size (pt)<input name="body_size" type="number" step="0.5" min="9" max="12" required /></label>
               <label>Page margin (pt)<input name="margin" type="number" step="1" min="36" max="72" required /></label>
               <label>Line spacing<input name="line_spacing" type="number" step="0.05" min="1.15" max="1.6" required /></label>

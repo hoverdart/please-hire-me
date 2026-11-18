@@ -157,6 +157,7 @@ def test_human_verification_notice_and_preferences_preserve_drafts(dashboard,wid
             payload['human_verification']=({'company':'Synthetic & Co <test>','title':'Software Engineer Intern',
                 'phase':phase[0],'expires_at':expires} if phase[0] else None)
             payload['summary']['attention_count']=int(phase[0]=='challenge')
+            payload['summary']['applicant_attention_count']=int(phase[0]=='challenge')
             route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
         page.route('**/api/state*',state_response)
         page.goto(dashboard+'/#token=fixture-capability')

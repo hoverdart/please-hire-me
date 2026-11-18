@@ -54,6 +54,8 @@ def test_schedule_interval_can_be_applied_without_resuming_or_running(store, tmp
     assert status(store)['matches_applicant'] and status(store)['interval_hours'] == 6
     saved = plistlib.loads((tmp_path / 'Library/LaunchAgents' / (LABEL + '.plist')).read_bytes())
     assert Path(saved['ProgramArguments'][4]).is_absolute()
+    assert saved['StartCalendarInterval'] == [{'Hour': hour, 'Minute': 0} for hour in (0, 6, 12, 18)]
+    assert 'StartInterval' not in saved and status(store)['catch_up_on_wake']
     store.update_settings({'schedule_hours': 3})
     assert status(store)['interval_hours'] == 6
     apply_saved_interval(store, tmp_path / 'repo')
@@ -67,6 +69,38 @@ def test_schedule_interval_can_be_applied_without_resuming_or_running(store, tmp
         with pytest.raises(ValueError, match='another applicant'): uninstall(store=other)
         assert status(store)['matches_applicant'] and status(store)['interval_hours'] == 3
     finally: other.close()
+
+
+def test_mac_calendar_verifies_every_loaded_trigger(store, tmp_path, monkeypatch):
+    from hireme.scheduler import launchd_matches_loaded
+    monkeypatch.setattr('hireme.scheduler.sys.platform', 'darwin')
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr('hireme.scheduler.subprocess.run', lambda args, **kw: SimpleNamespace(
+        returncode=113 if 'print' in args else 0, stdout=''))
+    store.update_settings({'schedule_hours': 12})
+    saved = plistlib.loads(Path(install(store, tmp_path)).read_bytes())
+    environment = ''.join(f'\t\t{key} => {value}\n' for key, value in saved['EnvironmentVariables'].items())
+    triggers = ''.join(f'\t\t{LABEL}.{hour} => {{\n\t\t\tstream = com.apple.launchd.calendarinterval\n'
+                       f'\t\t\tmonitor = com.apple.UserEventAgent-Aqua\n\t\t\tdescriptor = {{\n'
+                       f'\t\t\t\t"Minute" => 0\n\t\t\t\t"Hour" => {hour}\n\t\t\t}}\n\t\t}}\n' for hour in (0, 12))
+    output = ('\targuments = {\n' + ''.join(f'\t\t{arg}\n' for arg in saved['ProgramArguments']) + '\t}\n'
+              f'\tworking directory = {tmp_path.resolve()}\n\tenvironment = {{\n{environment}\t}}\n'
+              f'\tevent triggers = {{\n{triggers}\t}}\n')
+    assert launchd_matches_loaded(output)
+    assert not launchd_matches_loaded(output.replace('"Hour" => 12', '"Hour" => 11'))
+    assert not launchd_matches_loaded(output.replace('"Minute" => 0', '"Minute" => 17'))
+    assert not launchd_matches_loaded(output + '\trun interval = 43200 seconds\n')
+
+
+def test_mac_non_calendar_interval_preserves_existing_cadence(store, tmp_path, monkeypatch):
+    monkeypatch.setattr('hireme.scheduler.sys.platform', 'darwin')
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr('hireme.scheduler.subprocess.run', lambda args, **kw: SimpleNamespace(
+        returncode=113 if 'print' in args else 0, stdout=''))
+    store.update_settings({'schedule_hours': 7})
+    saved = plistlib.loads(Path(install(store, tmp_path)).read_bytes())
+    assert saved['StartInterval'] == 7 * 3600 and 'StartCalendarInterval' not in saved
+    assert status(store)['interval_hours'] == 7 and not status(store)['catch_up_on_wake']
 
 
 @pytest.mark.parametrize('saved_plist', [True, False])

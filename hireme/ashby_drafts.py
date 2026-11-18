@@ -286,7 +286,7 @@ class AshbyDraft:
 
     def compile(self, browser, answers, package):
         """Validate native encodings without enabling any draft transport."""
-        from .answers import selections,validate_package
+        from .answers import field_key,selections,validate_package
         from .approval_boundary import ApprovalBoundary
         boundary=ApprovalBoundary(self.store,self.job,package,reserve_retry=False)
         validate_package(self.store,self.job,package)
@@ -362,7 +362,10 @@ class AshbyDraft:
                 if len(choices)!=1:raise Blocked('ashby_draft_unsupported','Ashby school choice is unverified or ambiguous')
                 value=[{'canonicalSchoolId':next(iter(choices)),'schoolName':value}]
             elif kind=='combobox' and metadata.get('type')=='Location':
-                if answer.get('provenance',{}).get('fact_key')!='location':
+                fact_key=answer.get('provenance',{}).get('fact_key')
+                region=(fact_key=='state' and field_key(field['label'])=='state'
+                        and 'Region' in (metadata.get('locationTypes') or []))
+                if fact_key!='location' and not region:
                     raise Blocked('ashby_draft_unsupported','Ashby location has no confirmed location source')
                 choices=self.locations.get(json.dumps(metadata.get('locationTypes'),sort_keys=True),{}).get(value,set())
                 # An existing exact official value can also restore a selection

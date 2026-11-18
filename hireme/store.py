@@ -718,7 +718,9 @@ class Store:
             # UUID across tenants conservatively; this comparison never grants
             # navigation, merges jobs or rewrites historical company identity.
             ashby_uuid_match=identity[0]==prior[0]=='ashby' and identity[2]==prior[2]
-            if prior==identity or ashby_uuid_match:
+            greenhouse_region_match=({identity[0],prior[0]}=={'job-boards.greenhouse.io','job-boards.eu.greenhouse.io'}
+                                     and identity[1:]==prior[1:])
+            if prior==identity or ashby_uuid_match or greenhouse_region_match:
                 raise Blocked('duplicate_or_uncertain','This requisition already has a recorded attempt under another link')
         ck=self.company(job["company"],s)
         if ck in {self.company(x,s) for x in s["skip_companies"]+s["interview_companies"]}:
@@ -999,7 +1001,7 @@ class Store:
         def rows(q,parameters=()): return [dict(x) for x in self.db.execute(q,parameters)]
         from .presentation import attention_sql,actionable_question_sql
         condition,parameters=attention_sql('j')
-        question_condition,question_parameters=actionable_question_sql('q')
+        question_condition,question_parameters=actionable_question_sql('q',self.settings()['allowed_application_ats'])
         priority=f"({condition} OR EXISTS(SELECT 1 FROM questions q WHERE q.job_id=j.id AND {question_condition}))"
         from .saved_views import list_views
         from .context_inbox import open_needs

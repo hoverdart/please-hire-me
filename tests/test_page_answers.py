@@ -139,6 +139,35 @@ def test_resume_hyperlinks_are_grounded_sources(store,job):
     assert any(s['text']=='Resume link: https://puzzle.example.test/' and s['resume_hash']==sha for s in sources)
 
 
+def test_missing_page_answers_only_recheck_after_approved_inputs_change(store,job):
+    class Abstaining:
+        calls=0
+        def plan_form(self,targets,sources,context):
+            self.calls+=1
+            return {'answers':[{'field_id':targets[0]['field_id'],'classification':'missing','answer':None,
+                                'sentence_ids':[],'reason':'No confirmed evidence for the requested project link.'}]}
+    model=Abstaining()
+    question=field('Which recent project should we look at?',type='url')
+    pending=[(question,'missing_fact')]
+    assert plan(store,job['host'],[question],[],pending,model,job)==([],pending)
+    assert plan(store,job['host'],[question],[],pending,model,job)==([],pending)
+    assert model.calls==1
+    store.put_history_entry('project',{'name':'Tool','url':'https://example.test/tool','description':'Built a testing tool.'},
+                            source='Applicant notes',confirmed=True)
+    assert plan(store,job['host'],[question],[],pending,model,job)==([],pending)
+    assert model.calls==2
+
+
+def test_direct_applicant_verification_is_never_filled_by_the_model(store,job):
+    question=field('Confirm this application is submitted directly by the applicant.', ['Yes','No'])
+    with pytest.raises(Blocked,match='human_work_sample'):
+        resolve(store,job['host'],question,context=job)
+    planner=Planner('Yes')
+    pending=[(question,'missing_fact')]
+    assert plan(store,job['host'],[question],[],pending,planner,job)==([],pending)
+    assert planner.calls==0
+
+
 def test_browser_plans_required_gaps_before_asking_or_filling(store,monkeypatch):
     from tests.test_browser import ats,local_job
     from hireme.browser import Browser

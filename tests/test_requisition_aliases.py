@@ -61,6 +61,19 @@ def test_unsubmitted_preparation_is_not_a_recorded_attempt(store, job, package):
     store._check_budget(second, store.settings())
 
 
+@pytest.mark.parametrize('state',['confirmed','unknown','awaiting_verification'])
+def test_greenhouse_regional_alias_keeps_the_original_submission_lock(store,job,package,state):
+    us='job-boards.greenhouse.io';eu='job-boards.eu.greenhouse.io'
+    first={**job,'id':digest('regional-us'),'host':us,'url':f'https://{us}/acme/jobs/123'}
+    store.upsert_job(first)
+    aid=store.prepare(first,{**package,'job_id':first['id'],'url':first['url']})
+    store.db.execute("UPDATE applications SET state=?,attempted='2020-01-01T00:00:00+00:00' WHERE id=?",(state,aid))
+    alias={**first,'id':digest('regional-eu'),'host':eu,'url':f'https://{eu}/acme/jobs/123'}
+    store.upsert_job(alias)
+    with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(alias,store.settings())
+    assert store.db.execute('SELECT state FROM applications WHERE id=?',(aid,)).fetchone()[0]==state
+
+
 def test_ashby_board_case_cannot_create_another_requisition_identity(store,job,package):
     first={**job,'id':digest('case-original'),'url':f'https://jobs.ashbyhq.com/Serval/{REQ}','host':'jobs.ashbyhq.com'}
     store.upsert_job(first)

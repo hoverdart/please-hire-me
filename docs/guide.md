@@ -152,7 +152,7 @@ Targets are not promises of throughput. Rate limits stop work without automatic 
 
 Pause stops a cycle at cancellation checkpoints, including active CLI inference. An in-flight browser/API request may finish its timeout first. An employer request already sent cannot be undone. Resume permits a new cycle and cannot revive the cancelled one.
 
-After saving a batch interval, choose **Settings → Search & automation → Apply saved interval**, then **Check schedule**. The CLI equivalent is `.venv/bin/python -m hireme schedule install`. Your computer must be awake for scheduled work. macOS uses a LaunchAgent; Linux uses cron unless Pi systemd units are installed. Cron intervals must divide 24 hours: 1, 2, 3, 4, 6, 8, 12 or 24.
+After saving a batch interval, choose **Settings → Search & automation → Apply saved interval**, then **Check schedule**. The CLI equivalent is `.venv/bin/python -m hireme schedule install`. On macOS, intervals of 1, 2, 3, 4, 6, 8, 12 or 24 hours use a calendar schedule in the logged-in session. Missed runs during sleep are combined into one run on wake. Other macOS intervals use a timer that skips sleep. Linux cron also skips sleep and accepts intervals that divide 24 hours. A Pi can use the installed systemd timer.
 
 To remove a schedule:
 

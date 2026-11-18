@@ -206,6 +206,7 @@ SNAPSHOT=r"""selector => {
 CONFIRMED=re.compile(
     r"(?:^|[.!?\n])\s*(?:"
     r"thank you for (?:applying\b|submitting (?:your |the |an )?application\b)|"
+    r"thanks for applying to join our team at [^.!?\n]{1,100}[.!]\s+we['’]ll be in touch shortly with next steps\b|"
     r"(?:your |the )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b|"
     r"we(?: (?:have |have successfully |successfully )?|['’]ve (?:successfully )?)received your application\b|"
     r"you have successfully applied\b)",re.I)
@@ -1044,7 +1045,9 @@ class Browser:
                 try:
                     self._open_combobox(el); self.page.wait_for_timeout(200)
                     menu=self._menu(el)
-                    if field_key(f['label']) not in ('school','location'):
+                    key=field_key(f['label'])
+                    state_lookup=key=='state' and self.current_host=='jobs.ashbyhq.com'
+                    if key not in ('school','location') and not state_lookup:
                         # ATS dropdowns may hydrate after opening. An empty early
                         # read must not turn a choice into a free-text fact.
                         with contextlib.suppress(Exception):menu.get_by_role('option').first.wait_for(state='visible',timeout=5000)
@@ -1083,8 +1086,8 @@ class Browser:
                         # its menu. Those visible chips remain valid choices.
                         f['options']=list(dict.fromkeys([*f['options'],*chips]))
                         f['value']='\n'.join(chips)
-                    if field_key(f['label']) in ('school','location','major') and el.evaluate('(e)=>e.tagName==="INPUT"'):
-                        key=field_key(f['label']);fact=self.store.facts().get(key)
+                    if (key in ('school','location','major') or state_lookup) and el.evaluate('(e)=>e.tagName==="INPUT"'):
+                        fact=self.store.facts().get(key)
                         if fact:
                             original=el.input_value()
                             found=list(f['options'])
@@ -1092,6 +1095,7 @@ class Browser:
                             # 100 choices until searched. A combined major may
                             # need the offered Other choice beyond that window.
                             queries=(fact['value'], 'Other') if key=='major' else (fact['value'],fact['value'].split(',')[0] if key=='location' else 'Berkeley' if 'berkeley' in fact['value'].casefold() else fact['value'])
+                            if state_lookup and fact['value'].strip().casefold()=='ca':queries=('California',)
                             for query in dict.fromkeys(queries):
                                 self.store.checkpoint();el.fill(query);self.page.wait_for_timeout(1200)
                                 found.extend(self._option_labels(self._menu(el).get_by_role('option'),f))
@@ -1117,7 +1121,7 @@ class Browser:
         from decimal import Decimal, InvalidOperation
         shapes=[]
         for f in fields:
-            shape={k:v for k,v in f.items() if k not in ('value','index','indices','ref','refs','form_index') and not (k=='options' and f['type']=='combobox')}
+            shape={k:v for k,v in f.items() if k not in ('value','index','indices','ref','refs','form_index','history_entry_id','history_key') and not (k=='options' and f['type']=='combobox')}
             if f['type']=='number':
                 # React mirrors the entered value into the value attribute.
                 # Compare the allowed numeric lattice, not its changing origin;
@@ -1514,6 +1518,10 @@ class Browser:
             dropdowns=[f for f in fields if f['type']=='combobox' and field_key(f['label']) not in ('school','location')]
             if len(dropdowns)>=2 and not any(f['options'] for f in dropdowns):
                 raise Blocked('posting_fetch_failed','No dropdown on the application loaded its choices; nothing was submitted')
+            from .greenhouse_submission import HOSTS as greenhouse_hosts, employment_answers
+            employment = employment_answers(self.store,fields) if job['host'] in greenhouse_hosts else {}
+            if employment:
+                fields = [employment[f['index']]['field'] if f['index'] in employment else f for f in fields]
             answers=[]; documents=list(retained_docs); pending=[]; optional=[]; budget_error=None; asked=set()
             for f in fields:
                 self.store.checkpoint()
@@ -1542,8 +1550,12 @@ class Browser:
                     # Resolve known values locally first. The unresolved page is
                     # planned together below, before any applicant value is filled.
                     provider=None if budget_error or (self.store.settings()['tailored_writing'] and hasattr(answer_provider,'plan_form')) else answer_provider
-                    answer_context={**job,'previous_answers':answers,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]}
-                    a=resolve(self.store,job['answer_scope'],f,provider,context=answer_context)
+                    answer_context={**job,'previous_answers':all_answers+answers,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]}
+                    a=employment.get(f['index'])
+                    if a:
+                        self.store.resolve_known_question(job['answer_scope'],f['label'],f['options'],field=f,context=answer_context)
+                    else:
+                        a=resolve(self.store,job['answer_scope'],f,provider,context=answer_context)
                     if a:
                         if f['required'] and a['value']=='No' and 'graduation_window_revision' in a['provenance'] and re.search(r'\bi confirm\b',f['label'],re.I):
                             raise Blocked('graduation_mismatch',f['label'])
@@ -1566,7 +1578,7 @@ class Browser:
             if (pending or optional) and not budget_error:
                 from .page_answers import plan as plan_page
                 try:
-                    planned,remaining=plan_page(self.store,job['answer_scope'],fields,answers,pending+optional,answer_provider,job)
+                    planned,remaining=plan_page(self.store,job['answer_scope'],fields,answers,pending+optional,answer_provider,job,previous=all_answers)
                     pending=[(f,r) for f,r in remaining if f['required'] or _prefilled(f)]
                     answers.extend(planned)
                     answers.sort(key=lambda a:fields.index(a['field']))
@@ -1581,11 +1593,13 @@ class Browser:
             if pending:
                 # Only genuine remaining gaps reach the user. Do not flash
                 # questions in the portal while the page planner is answering.
+                from .page_answers import PROVIDER_FAILURES as connection_failures
                 for f,reason in pending:
-                    question_context={**job,'previous_answers':[a for a in answers if fields.index(a['field'])<fields.index(f)]}
+                    if reason in connection_failures:continue
+                    question_context={**job,'previous_answers':all_answers+[a for a in answers if fields.index(a['field'])<fields.index(f)]}
                     asked.add(self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],reason,field=f,context=question_context))
                 # This attempt's questions supersede earlier attempts' wording and widgets.
-                self.store.retire_questions(job['id'],asked)
+                if asked:self.store.retire_questions(job['id'],asked)
                 labels='; '.join(f['label'] for f,_ in pending)
                 if budget_error:raise Blocked('model_budget_exhausted',labels+' — '+budget_error.detail)
                 # A failed model call is not missing applicant information. Use

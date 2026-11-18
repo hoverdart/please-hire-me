@@ -77,6 +77,17 @@ def test_transient_retry_only_two_delayed_retries(store,job,reason):
     hold(store,job,reason,at=10000)
     assert not ready(store,job,at=999999)
 
+def test_extending_model_timeout_releases_the_pre_submit_timeout_only(store,job,package):
+    hold(store,job,'provider_timeout',at=1000)
+    assert not ready(store,job,at=1001)
+    store.update_settings({'model_timeout_seconds':store.settings()['model_timeout_seconds']+60})
+    assert ready(store,job,at=1001)
+    aid=store.prepare(job,package)
+    store.begin_submit(aid)
+    store.finish(aid,'unknown')
+    assert not ready(store,job,at=1001)
+
+
 @pytest.mark.parametrize('state',['unknown','submitting','awaiting_verification','confirmed','not_submitted'])
 def test_recheck_never_releases_existing_outcome(store,job,package,state):
     store.prepare(job,package)

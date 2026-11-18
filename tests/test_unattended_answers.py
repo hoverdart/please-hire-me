@@ -5,6 +5,29 @@ from hireme.job_holds import hold, ready
 from hireme.util import Blocked
 
 
+@pytest.mark.parametrize('source', ['gh:coinbase', 'official_board'])
+def test_official_listing_can_supply_career_page_without_a_question(source):
+    answer = _discovery_answer('How did you hear about this job?*', ['Career Page', 'Referral', 'Job Board'], {'source': source})
+    assert answer == {'value': 'Career Page', 'provenance': {'job_source': source}}
+
+
+def test_confirmed_imc_application_supersedes_the_earlier_no(store,job,monkeypatch):
+    monkeypatch.setattr('hireme.util.now',lambda:'2026-11-18T08:00:00+00:00')
+    from hireme.discovery import posting
+    from tests.test_ledger import application
+    question = {'label':'Have you applied to this role or another role @IMC within the last 12-18 months? *',
+                'type':'select','options':['Yes','No'],'required':True}
+    current = {**job,'company':'IMC'}
+    store.upsert_job(current)
+    qid = store.ask(current['id'],current['host'],question['label'],question['options'],field=question,context=current)
+    store.answer_question(qid,'No')
+    assert resolve(store,current['host'],question,context=current)['value']=='No'
+    prior = posting('https://job-boards.greenhouse.io/imc/jobs/12345','IMC','Prior role','New York, NY','fixture')
+    store.upsert_job(prior)
+    application(store,prior,'2026-11-17T22:00:00+00:00',state='confirmed')
+    assert resolve(store,current['host'],question,context=current)['value']=='Yes'
+
+
 def question(label):
     return {'label': label, 'type': 'select', 'required': True,
             'options': ['Yes', 'No'], 'maxlength': -1}

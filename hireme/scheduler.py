@@ -49,6 +49,49 @@ def launchd_persistently_enabled(output):
         return False
 
 
+def _launchd_calendar(hours):
+    return [{'Hour': hour, 'Minute': 0} for hour in range(0, 24, hours)]
+
+
+def _launchd_schedule(saved):
+    """Read both current calendar schedules and installed interval schedules."""
+    if 'StartCalendarInterval' not in saved:
+        seconds = saved.get('StartInterval')
+        if type(seconds) is int and seconds > 0:
+            return seconds / 3600, None
+        raise ValueError('Invalid launchd interval')
+    calendar = saved['StartCalendarInterval']
+    if ('StartInterval' in saved or not isinstance(calendar, list) or not calendar or 24 % len(calendar)
+            or any(not isinstance(entry, dict) or set(entry) != {'Hour', 'Minute'}
+                   or any(type(value) is not int for value in entry.values()) for entry in calendar)):
+        raise ValueError('Invalid launchd calendar')
+    hours = 24 // len(calendar)
+    if sorted(calendar, key=lambda entry: entry['Hour']) != _launchd_calendar(hours):
+        raise ValueError('Invalid launchd calendar')
+    return hours, sorted((entry['Hour'], entry['Minute']) for entry in calendar)
+
+
+def _loaded_calendar(output):
+    streams = re.findall(r'^\s*stream = com\.apple\.launchd\.calendarinterval$', output, re.MULTILINE)
+    descriptors = re.findall(
+        r'^\s*stream = com\.apple\.launchd\.calendarinterval\n(?:[^\n]*monitor = [^\n]+\n)?'
+        r'\s*descriptor = \{\n(.*?)^\s*\}', output, re.MULTILINE | re.DOTALL)
+    if len(streams) != len(descriptors):
+        raise ValueError('Unverified launchd calendar triggers')
+    result = []
+    for descriptor in descriptors:
+        fields = {}
+        for line in descriptor.splitlines():
+            match = re.fullmatch(r'\s*"(Hour|Minute)" => (\d+)\s*', line)
+            if not match or match[1] in fields:
+                raise ValueError('Unverified launchd calendar trigger')
+            fields[match[1]] = int(match[2])
+        if set(fields) != {'Hour', 'Minute'}:
+            raise ValueError('Incomplete launchd calendar trigger')
+        result.append((fields['Hour'],fields['Minute']))
+    return sorted(result)
+
+
 def launchd_matches_loaded(output):
     """Check the loaded job, not merely the plist that may have changed since bootstrap."""
     path=Path.home()/'Library/LaunchAgents'/(LABEL+'.plist')
@@ -56,16 +99,18 @@ def launchd_matches_loaded(output):
         if path.is_symlink() or path.stat().st_size>65536:return False
         saved=plistlib.loads(path.read_bytes())
         arguments=saved.get('ProgramArguments')
-        interval=saved.get('StartInterval')
+        _, calendar = _launchd_schedule(saved)
         directory=saved.get('WorkingDirectory')
         environment=saved.get('EnvironmentVariables')
         if (saved.get('Label')!=LABEL or not _is_worker_command(arguments)
-                or type(interval) is not int or not isinstance(directory,str)
-                or not isinstance(environment,dict)
+                or not isinstance(directory,str) or not isinstance(environment,dict)
                 or any(not isinstance(key,str) or not isinstance(value,str) for key,value in environment.items())):
             return False
         directories=re.findall(r'^\s*working directory = (.+)$',output,re.MULTILINE)
         intervals=re.findall(r'^\s*run interval = (\d+) seconds$',output,re.MULTILINE)
+        loaded_calendar = _loaded_calendar(output)
+        schedule_matches = ((not intervals and loaded_calendar == calendar) if calendar is not None
+                            else intervals == [str(saved['StartInterval'])] and not loaded_calendar)
         blocks=re.findall(r'^\s*environment = \{\s*\n(.*?)^\s*\}',output,re.MULTILINE|re.DOTALL)
         if len(blocks)!=1:return False
         loaded_environment={}
@@ -78,9 +123,9 @@ def launchd_matches_loaded(output):
         keys=('PATH','CLAUDE_CONFIG_DIR','CODEX_HOME','XDG_CONFIG_HOME')
         expected_environment={key:environment[key] for key in keys if key in environment}
         actual_environment={key:loaded_environment[key] for key in keys if key in loaded_environment}
-        return (len(directories)==len(intervals)==1
+        return (len(directories)==1 and schedule_matches
                 and _launchd_arguments(output)==arguments
-                and directories[0]==directory and int(intervals[0])==interval
+                and directories[0]==directory
                 and actual_environment==expected_environment)
     except (OSError,ValueError,TypeError,plistlib.InvalidFileException):
         return False
@@ -118,10 +163,14 @@ def install(store,repo):
         if path.is_symlink():raise ValueError('Unsafe LaunchAgent path')
         logs=private_dir(store.root/'logs')
         payload={'Label':LABEL,'ProgramArguments':[sys.executable,'-m','hireme','--data-dir',str(store.root.resolve()),'run'],
-          'WorkingDirectory':str(repo.resolve()),'StartInterval':hours*3600,'RunAtLoad':False,
+          'WorkingDirectory':str(repo.resolve()),'RunAtLoad':False,
           'StandardOutPath':str(logs/'worker.out.log'),'StandardErrorPath':str(logs/'worker.err.log'),
           'EnvironmentVariables':{'PATH':os.environ.get('PATH','/usr/local/bin:/usr/bin:/bin'),
               **{k:os.environ[k] for k in ('CLAUDE_CONFIG_DIR','CODEX_HOME','XDG_CONFIG_HOME') if os.environ.get(k)}}}
+        if 24 % hours == 0:
+            payload['StartCalendarInterval'] = _launchd_calendar(hours)
+        else:
+            payload['StartInterval'] = hours * 3600
         # Connection secrets stay in a private file, never argv or logs.
         with tempfile.NamedTemporaryFile(dir=directory,prefix='.'+LABEL,delete=False) as f:
             temporary=Path(f.name)
@@ -240,11 +289,11 @@ def status(store=None,cron_only=False):
         if not p.is_file():return {'installed':False,'path':str(p)}
         try:
             data=plistlib.loads(p.read_bytes())
-            interval=data.get('StartInterval')
             arguments=data.get('ProgramArguments',[])
             if data.get('Label')!=LABEL or not _is_worker_command(arguments):
                 return {'installed':True,'matches_applicant':False,'path':str(p),'kind':'launchd','error':'The saved schedule could not be verified.'}
-            return _details(arguments,store,interval / 3600 if isinstance(interval,(int,float)) else None,path=str(p),kind='launchd')
+            hours, calendar = _launchd_schedule(data)
+            return _details(arguments,store,hours,path=str(p),kind='launchd',catch_up_on_wake=calendar is not None)
         except (ValueError,TypeError,plistlib.InvalidFileException):
             return {'installed':True,'matches_applicant':False,'path':str(p),'error':'The saved schedule could not be read.'}
     if sys.platform=='linux' and not cron_only and shutil.which('systemctl'):
