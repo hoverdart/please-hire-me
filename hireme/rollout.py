@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from .util import Blocked,atomic_json,now,digest
 
-MAX_DAILY=10
+MAX_DAILY=20
 MAX_CYCLE=3
 MAX_ATTEMPTS=8
 
@@ -51,7 +51,7 @@ def commission(store, stage):
                 proofs.setdefault(bundle['ats'],bundle['attempt_id'])
         if set(proofs)!=set(scope):raise ValueError('A verified native submission or owner-bound Workday application readback is required for each enabled ATS')
         if settings['max_per_cycle']>MAX_CYCLE or settings['max_per_day']>MAX_DAILY or settings['max_attempts_per_cycle']>MAX_ATTEMPTS:
-            raise ValueError('Restricted rollout allows at most three submissions and eight attempts per cycle, and ten submissions per day')
+            raise ValueError('Restricted rollout allows at most three submissions and eight attempts per cycle, and twenty submissions per day')
         if not settings['stop_on_uncertain_outcome']:raise ValueError('Enable stop-on-uncertainty first')
     record={'stage':stage,'code_fingerprint':code_fingerprint(),'ats':scope,'proofs':proofs,'commissioned_at':now()}
     atomic_json(store.root/'config/rollout.json',record)
