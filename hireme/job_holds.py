@@ -184,6 +184,9 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
             'posting_constraints':{k:posting.get(k) for k in ('min_years','compensation','employment_type','source')},
             'facts':{k:facts[k]['value'] for k in sorted(fact_keys) if k in facts},
             'settings':{k:settings[k] for k in sorted(setting_keys) if k in settings}}
+        if reason=='internship_out_of_scope':
+            from .policy import SUMMER_SCOPE_VERSION
+            data['summer_scope_policy']=SUMMER_SCOPE_VERSION
         if reason=='expired_posting':data['adapter']=ADAPTER_VERSION
         if reason in {'citizenship_mismatch','citizenship_or_clearance_review'}:
             from .policy import CITIZENSHIP_VERSION

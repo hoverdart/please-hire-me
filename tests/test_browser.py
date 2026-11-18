@@ -1780,3 +1780,14 @@ def test_employer_receipt_requires_a_new_acknowledgement_and_follow_up():
     assert not submission_receipt(receipt,receipt)
     assert not submission_receipt('Thanks for applying to join our team at IMC.')
     assert not submission_receipt(receipt+' Please complete your application.')
+
+
+def test_custom_greenhouse_receipt_confirms_completed_application_and_review():
+    completed='Now that you’ve taken the first step by submitting your application,'
+    review='our team will carefully review your resume and qualifications.'
+    receipt=f'Thank you for your interest!\n{completed} {review}'
+    assert submission_receipt(receipt,'Name\nEmail\nSubmit application')
+    assert not submission_receipt(receipt,receipt)
+    assert not submission_receipt(completed)
+    assert not submission_receipt(review)
+    assert not submission_receipt(receipt+' Your application was not submitted.')

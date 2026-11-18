@@ -319,6 +319,27 @@ def test_season_choices_require_exact_separate_summer_cohort_evidence(store,job,
         eligible({**job,'title':'Software Intern - '+title,'description':job['description']+'\n'+description},store.settings(),store.facts())
 
 
+@pytest.mark.parametrize('title,dates,accepted',[
+    ('Backend Engineer Intern','The internship program will run from June 1 through August 31, 2027.',True),
+    ('Software Developer Intern (2027)','The internship lasts 10 weeks, from June 7 to August 13.',True),
+    ('Software Developer Intern','The internship lasts 10 weeks, from June 7 to August 13.',False),
+    ('Backend Engineer Intern (2028)','The internship program runs from June 1 to August 31, 2027.',False),
+    ('Backend Engineer Intern','The internship application period runs from June 1 to August 31, 2027.',False),
+    ('Backend Engineer Intern','The internship program runs from June 31 to August 31, 2027.',False),
+    ('Backend Engineer Intern','The internship program runs from June 1 to August 31, 2026.',False),
+    ('Backend Engineer Intern','The internship program runs from June 1 to December 31, 2027.',False),
+    ('Backend Engineer Intern (Winter 2027)','The internship program runs from June 1 to August 31, 2027.',False),
+])
+def test_summer_scope_uses_explicit_placement_dates(store,job,title,dates,accepted):
+    store.update_settings({'seniority':['summer-internship']})
+    candidate={**job,'title':title,'description':job['description']+'\n'+dates,'terms':['Summer 2027']}
+    if accepted:
+        assert eligible(candidate,store.settings(),store.facts())[0]>0
+    else:
+        with pytest.raises(Blocked,match='internship_out_of_scope'):
+            eligible(candidate,store.settings(),store.facts())
+
+
 @pytest.mark.parametrize('specialty,accepted',[('Software',True),('Hardware',False),('Software Sales',False)])
 def test_reverse_engineering_intern_title_preserves_exact_software_specialty(store,job,specialty,accepted):
     store.update_settings({'roles':['software'],'seniority':['summer-internship']})

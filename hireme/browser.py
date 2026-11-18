@@ -207,6 +207,8 @@ CONFIRMED=re.compile(
     r"(?:^|[.!?\n])\s*(?:"
     r"thank you for (?:applying\b|submitting (?:your |the |an )?application\b)|"
     r"thanks for applying to join our team at [^.!?\n]{1,100}[.!]\s+we['’]ll be in touch shortly with next steps\b|"
+    r"now that you['’]ve taken the first step by submitting your application,\s+"
+    r"(?:our|the) team will carefully review your r[eé]sum[eé] and qualifications\b|"
     r"(?:your |the )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b|"
     r"we(?: (?:have |have successfully |successfully )?|['’]ve (?:successfully )?)received your application\b|"
     r"you have successfully applied\b)",re.I)

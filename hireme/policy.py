@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
 ELIGIBILITY_VERSION = 16
 CITIZENSHIP_VERSION = 2
+SUMMER_SCOPE_VERSION = 1
 
 LOCATIONS = {
  "San Francisco Bay Area": r"san francisco|\bsf\b|bay area|palo alto|mountain view|menlo park|redwood city|san mateo|sunnyvale|santa clara|san jose|oakland|berkeley|cupertino|foster city|emeryville|burlingame",
@@ -197,11 +199,18 @@ def _role_matches(job,roles,*,metadata=False):
     return False
 
 
+_SUMMER_INTERNSHIP_DATES = re.compile(
+    r'\b(?:the|this) internship(?: program)? (?:will run|runs|lasts \d{1,2} weeks?,?) from '
+    r'(May|June) (\d{1,2})\s+(?:to|through)\s+(July|August) (\d{1,2})'
+    r'(?:,?\s+(20\d{2}))?(?=[ \t]*(?:[.\r\n]|$))', re.I,
+)
+
+
 def _summer_2027(job):
     title=job.get('title','')
+    description=job.get('description','')
     seasons=set(re.findall(r'\b(winter|spring|summer|fall|autumn)\b',title,re.I))
     if seasons:
-        description=job.get('description','')
         # A slash title can advertise separate cohorts. Require the employer's
         # explicit, separate session lengths and dates before choosing summer;
         # incidental summer prose or a combined placement cannot qualify.
@@ -215,7 +224,18 @@ def _summer_2027(job):
         # Title intent wins over a different program mentioned in body prose:
         # "Software Intern (2027 Start) - Winter" is not a summer posting.
         return {s.casefold() for s in seasons}=={'summer'} and bool(re.search(r'\b2027\b',title))
-    return bool(re.search(r'\bsummer\s*2027\b|\b2027\s*summer\b',job.get('description',''),re.I))
+    if re.search(r'\bsummer\s*2027\b|\b2027\s*summer\b',description,re.I):return True
+    # Some employers give the placement dates without a season label. A
+    # yearless range needs the year in the posting title, never a feed tag.
+    match=_SUMMER_INTERNSHIP_DATES.search(description)
+    title_years=set(re.findall(r'\b20\d{2}\b',title))
+    if not match or title_years-{'2027'} or (match[5] or next(iter(title_years),None))!='2027':return False
+    months={'may':5,'june':6,'july':7,'august':8}
+    try:
+        date(2027,months[match[1].lower()],int(match[2]))
+        date(2027,months[match[3].lower()],int(match[4]))
+    except ValueError:return False
+    return True
 
 
 def _check_required_technologies(description,facts):
