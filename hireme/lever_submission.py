@@ -220,6 +220,13 @@ class LeverSubmission:
             declined=bool(re.fullmatch(r'consent\[[a-z]+\]',name) and value=='0')
             if (name not in successful or not value or control['type'] in {'file','submit','button'}
                     or name==CAPTCHA or name in approved and (not control['hidden'] or declined)):continue
+            if (name=='consent[marketing]' and control['type']=='checkbox' and value=='1' and control.get('checked') is False
+                    and [entry.get('value') for entry in form['entries'] if entry['name']==name]==['0']
+                    and sum(c['name']==name for c in form['controls'])==2
+                    and any(c['name']==name and c['hidden'] and c['value']=='0' for c in form['controls'])):
+                # The unchecked box contributes nothing. Only Lever's hidden
+                # default travels, so a blank optional field cannot opt in.
+                continue
             template=bool(re.fullmatch(r'cards\['+UUID+r'\]\[baseTemplate\]',name,re.I))
             selected=name=='selectedLocation' and location is not None
             if control['hidden'] and (name in METADATA or template or selected or declined or name in empty_surveys):continue

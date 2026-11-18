@@ -223,6 +223,22 @@ def test_native_marketing_consent_preserves_default_zero_and_only_approved_check
     with pytest.raises(Blocked,match='field_verification_failed'):LeverSubmission._approved_pairs({'answers':[answer]},form)
 
 
+@pytest.mark.parametrize('change',['none','checked','no_default','duplicate_default','unapproved_wire_value'])
+def test_unanswered_marketing_consent_only_transmits_the_native_zero(store,lever,change):
+    name='consent[marketing]'
+    hidden={'name':name,'type':'hidden','hidden':True,'value':'0'}
+    unchecked={'name':name,'type':'checkbox','hidden':False,'value':'1','checked':change=='checked'}
+    lever.form['controls'].extend([hidden,unchecked] if change!='no_default' else [unchecked])
+    if change=='duplicate_default':lever.form['controls'].append(dict(hidden))
+    lever.form['entries'].append({'name':name,'value':'1' if change=='unapproved_wire_value' else '0'})
+    if change=='none':
+        grant=LeverSubmission(lever.browser,lever.job,lever.package,lever.aid)
+        assert [pair for pair in grant.pairs if pair[0]==name]==[(name,'0')]
+    else:
+        with pytest.raises(Blocked,match='unsupported_form'):
+            LeverSubmission(lever.browser,lever.job,lever.package,lever.aid)
+
+
 @pytest.mark.parametrize('kind',['radio','checkbox-group','select'])
 def test_native_choice_values_are_bound_to_the_package_option_mapping(kind):
     names=['native-choice'] if kind=='select' else ['native-choice','native-choice']
