@@ -28,9 +28,11 @@ FORM="""() => {
  const forms=document.querySelectorAll('form#application-form');
  if(forms.length!==1)return null;
  const form=forms[0];
+ const customPronouns=form.querySelectorAll('input[type=checkbox]#customPronounsOption');
  return {method:form.method,action:form.action,enctype:form.enctype,
+   customPronounsSelected:customPronouns.length===1 ? customPronouns[0].checked : null,
    controls:Array.from(form.elements).filter(e=>e.name&&!e.disabled).map(e=>({
-     name:e.name,id:e.id,type:e.type,hidden:e.type==='hidden',value:e.value,checked:e.checked})),
+     name:e.name,id:e.id,type:e.type,hidden:e.type==='hidden',visible:e.getClientRects().length>0,value:e.value,checked:e.checked})),
    entries:Array.from(new FormData(form)).map(([name,value])=>typeof value==='string'
      ? {name,value} : {name,filename:value.name,size:value.size,type:value.type})};
 }"""
@@ -110,6 +112,13 @@ class LeverSubmission:
             if name in names:raise Blocked('unsupported_form','Duplicate approved Lever field name')
             names.add(name)
             controls=[control for control in form['controls'] if control['name']==name and not control['hidden']]
+            if name=='pronouns' and kind=='checkbox-group' and form.get('customPronounsSelected') is False:
+                # Lever includes a CSS-hidden custom text input with the same
+                # name as the standard choices, even when custom is unchecked.
+                custom=[control for control in controls if control.get('id')=='customPronounsTextField']
+                if len(custom)==1 and custom[0]['type']=='text' and custom[0].get('visible') is False and custom[0]['value']=='':
+                    controls.remove(custom[0])
+                    expected.append((name,''))
             if (len(controls)!=len(refs) or any(ref.get('id') and control.get('id')!=ref['id']
                     for ref,control in zip(refs,controls))):
                 raise Blocked('field_verification_failed',field['label'])

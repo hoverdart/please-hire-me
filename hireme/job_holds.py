@@ -220,8 +220,9 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
     if reason=='ashby_draft_unsupported':
         from .ashby_drafts import VERSION
         data['ashby_draft']=VERSION
-    if reason=='upload_verification_failed' and job.get('host') in {'jobs.lever.co','jobs.eu.lever.co'}:
-        data['lever_resume_replan']=1
+    if job.get('host') in {'jobs.lever.co','jobs.eu.lever.co'}:
+        if reason=='upload_verification_failed':data['lever_resume_replan']=1
+        if reason=='field_verification_failed':data['lever_standard_pronouns']=1
     if workday is not None:data['workday']=workday
     if reason in {'captcha','captcha_blocked'}:data['captcha_detection']=CAPTCHA_DETECTION_VERSION
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})

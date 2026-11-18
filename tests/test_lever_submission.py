@@ -240,6 +240,28 @@ def test_native_choice_values_are_bound_to_the_package_option_mapping(kind):
     with pytest.raises(Blocked):LeverSubmission._approved_pairs(package,form)
 
 
+@pytest.mark.parametrize('change',['none','checked','visible','prefilled','different_control','wire_value','wire_duplicate'])
+def test_standard_pronouns_allow_only_the_dormant_empty_custom_control(change):
+    options=['They/them','Use name only']
+    refs=[{'name':'pronouns','id':''},{'name':'pronouns','id':'useNameOnlyPronounsOption'}]
+    field={'label':'Pronouns','type':'checkbox-group','options':options,'option_values':options,'refs':refs}
+    custom={'name':'pronouns','id':'customPronounsTextField','type':'text','hidden':False,'visible':False,'value':''}
+    standard=[{**ref,'type':'checkbox','hidden':False,'value':option,'checked':i==0} for i,(ref,option) in enumerate(zip(refs,options))]
+    form={'customPronounsSelected':change=='checked','controls':[*standard,custom],
+          'entries':[{'name':'pronouns','value':options[0]},{'name':'pronouns','value':''}]}
+    if change=='visible':custom['visible']=True
+    if change=='prefilled':custom['value']='Unapproved custom value'
+    if change=='different_control':custom['id']='someOtherField'
+    if change=='wire_value':form['entries'][1]['value']='Unexpected value'
+    if change=='wire_duplicate':form['entries'].append({'name':'pronouns','value':''})
+    package={'answers':[{'field':field,'value':options[0]}]}
+    if change=='none':
+        assert LeverSubmission._approved_pairs(package,form)==({'pronouns'},None)
+    else:
+        with pytest.raises(Blocked,match='field_verification_failed'):
+            LeverSubmission._approved_pairs(package,form)
+
+
 def test_location_requires_same_approved_selected_name_and_holds_unreviewed_residential_fields(store,lever):
     field={'index':3,'indices':[3],'label':'Current location','type':'combobox','lever_location':True,'required':True,
            'options':['Berkeley, CA'],'maxlength':-1,'ref':{'name':'location','id':'location'},'refs':[{'name':'location','id':'location'}]}
