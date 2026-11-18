@@ -38,6 +38,10 @@ jobs:
             python: '3.14'
           - os: macos-15-intel
             python: '3.12'
+            shard: 1
+          - os: macos-15-intel
+            python: '3.12'
+            shard: 2
           - os: ubuntu-24.04-arm
             python: '3.11'
     runs-on: ${{ matrix.os }}
@@ -59,14 +63,29 @@ jobs:
         if: runner.os == 'macOS'
         run: HOMEBREW_NO_AUTO_UPDATE=1 brew install age
       - name: Check macOS workspace interactions first
-        if: runner.os == 'macOS'
+        if: matrix.shard == 1
         run: python scripts/run_ci_tests.py --timeout-seconds 300 tests/test_basic_context_ui.py tests/test_connected_workspace_ui.py
       - run: python scripts/run_ci_tests.py
+        if: matrix.shard == null
+      - name: Run macOS test shard
+        if: matrix.shard != null
+        shell: bash
+        env:
+          TEST_SHARD: ${{ matrix.shard }}
+        run: |
+          tests=()
+          position=0
+          while IFS= read -r path; do
+            if (( position % 2 == TEST_SHARD - 1 )); then tests+=("$path"); fi
+            position=$((position + 1))
+          done < <(find tests -type f \( -name 'test_*.py' -o -name '*_test.py' \) | LC_ALL=C sort)
+          test "${#tests[@]}" -gt 0
+          python scripts/run_ci_tests.py "${tests[@]}"
       - name: Retain synthetic dashboard failure evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dashboard-failure-${{ matrix.os }}-python-${{ matrix.python }}
+          name: dashboard-failure-${{ matrix.os }}-python-${{ matrix.python }}${{ matrix.shard && format('-shard-{0}', matrix.shard) || '' }}
           path: test-results/dashboard/
           if-no-files-found: ignore
           retention-days: 7
@@ -83,7 +102,7 @@ jobs:
       - run: python scripts/check_install_artifact.py dist/*.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: verified-distributions-${{ matrix.os }}-python-${{ matrix.python }}
+          name: verified-distributions-${{ matrix.os }}-python-${{ matrix.python }}${{ matrix.shard && format('-shard-{0}', matrix.shard) || '' }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
