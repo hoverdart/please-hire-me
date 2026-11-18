@@ -1337,7 +1337,7 @@ class Browser:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')
                 continue
-            if self.lever_resume and d['hash']==self.lever_resume.document['hash']:self.lever_resume.verify()
+            if self.lever_resume and d['kind']=='resume':self.lever_resume.verify(d)
             if not self.preparing and self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and d['hash'] not in self.uploaded_files:
                 raise Blocked('upload_verification_failed','Greenhouse has not acknowledged the approved PDF upload')
             if not self.preparing and self.current_host=='jobs.ashbyhq.com':
@@ -1640,9 +1640,15 @@ class Browser:
                 self.upload_payloads[d['hash']]=path.read_bytes()
                 if d in retained_docs:continue
                 control=self._control(d['field'])
-                if live and self.current_host in {'jobs.lever.co','jobs.eu.lever.co'} and d['kind']=='resume' and control.get_attribute('id')=='resume-upload-input':
-                    from .lever_resume import LeverResume
-                    self.lever_resume=LeverResume(self,d)
+                if self.current_host in {'jobs.lever.co','jobs.eu.lever.co'} and d['kind']=='resume':
+                    if self.lever_resume:
+                        # A conditional question can rebuild the plan while
+                        # Lever still holds the already-acknowledged PDF.
+                        self.lever_resume.verify(d)
+                        continue
+                    if control.get_attribute('id')=='resume-upload-input':
+                        from .lever_resume import LeverResume
+                        self.lever_resume=LeverResume(self,d)
                 control.set_input_files(str(path))
             if documents:
                 with contextlib.suppress(Exception):self.page.wait_for_load_state('networkidle',timeout=8000)

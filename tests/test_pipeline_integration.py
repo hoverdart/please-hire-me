@@ -147,6 +147,10 @@ class Posting:
                 "if(platform==='greenhouse')window.__remixContext={state:{loaderData:ghLoader}};\n"
                 "const endpoint='/api/non-user-graphql';\n"
                 "const send=data=>fetch(endpoint,{method:'POST',body:JSON.stringify(data)});\n"
+                "if(outcome==='lever_conditional')document.querySelector('[name=name]').addEventListener('input',()=>{"
+                "if(document.getElementById('revealed-city'))return;"
+                "document.querySelector('button[type=submit]').insertAdjacentHTML('beforebegin',"
+                "'<label for=\"revealed-city\">City</label><input id=\"revealed-city\" name=\"city\" required>')});\n"
                 "if(outcome==='blur_validation')document.querySelector('input[type=email]').addEventListener('blur',e=>fetch('https://email-address-validator.us.greenhouse.io/address/validate?address='+encodeURIComponent(e.target.value)).catch(()=>{}));\n"
                 + (f'send({json.dumps(bootstrap)});\n' if self.platform == 'ashby' else '')
                 + "for(const el of document.querySelectorAll('input:not([type=file]):not([type=hidden])')){\n"
@@ -159,7 +163,8 @@ class Posting:
                 "  data.append('utf8','✓');for(const [name,value] of Object.entries(config.resume.fields))data.append(name,value);\n"
                 "  data.append('key',key);data.append('authenticity_token','1234');data.append('Content-Type','application/octet-stream');data.append('file',file);\n"
                 "  await fetch(config.url,{method:'POST',body:data});window.fixtureGHUpload={name:file.name,url:config.url+'/'+key};return;}\n"
-                " if(platform==='lever'){data.append('resume',file);data.append('accountId',document.querySelector('[name=accountId]').value);\n"
+                " if(platform==='lever'){if(outcome==='lever_conditional'&&document.querySelector('[name=resumeStorageId]').value)return;"
+                "  data.append('resume',file);data.append('accountId',document.querySelector('[name=accountId]').value);\n"
                 "  const response=await fetch('/parseResume',{method:'POST',body:data});const result=await response.json();\n"
                 "  document.querySelector('[name=resumeStorageId]').value=result.resumeStorageId;\n"
                 "  if(result.position!==undefined)document.querySelector('[name=org]').value=outcome==='company_changed'?'Changed applicant entry':result.position;\n"
@@ -434,6 +439,17 @@ def test_real_ashby_pipeline_saves_decimal_gpa_and_verifies_one_submission(store
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
     assert not network.unexpected and len(network.mailbox.messages_sent)==1
     assert network.run()['attempts']==0
+
+
+def test_lever_keeps_verified_resume_when_a_required_question_appears(store,monkeypatch):
+    store.put_facts({'city':'Berkeley'})
+    posting=Posting('lever','Synthetic conditional Lever questions',outcome='lever_conditional')
+    network=harness(store,monkeypatch,[posting])
+    result=network.run()
+    assert result['confirmed']==result['attempts']==1,result
+    assert sum(path=='/parseResume' for _,_,path in posting.requests)==1
+    assert b'Berkeley' in posting.final_body
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='conditional_fields_revealed'").fetchone()[0]==1
 
 
 @pytest.mark.parametrize('initial_company,outcome',[('','confirmed'),('Existing applicant entry','confirmed'),('','company_changed')])

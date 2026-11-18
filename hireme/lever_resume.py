@@ -113,7 +113,10 @@ class LeverResume:
             if control.input_value():raise Blocked('field_verification_failed',matches[0]['label'])
             self.browser.store.event('parser_prefill_cleared',job_id,{'field':name,'document_hash':self.document['hash']})
 
-    def verify(self):
+    def verify(self, document=None):
+        if document is not None and (document['hash']!=self.document['hash']
+                or document['field']['ref']!=self.document['field']['ref']):
+            raise Blocked('upload_verification_failed','The approved Lever resume or its upload control changed')
         storage=self.browser.page.locator('input[type=hidden][name=resumeStorageId]')
         account=self.browser.page.locator('input[type=hidden][name=accountId]')
         if (not self.storage_id or storage.count()!=1 or storage.input_value()!=self.storage_id
