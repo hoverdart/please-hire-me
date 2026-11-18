@@ -87,7 +87,9 @@ class LeverSubmission:
                 if (not isinstance(field,dict) or set(field)-{'type','text','description','required','id','options'}
                         or field.get('required') is not False or field.get('type') not in {'multiple-choice','multiple-select'}
                         or not isinstance(field.get('options'),list) or not field['options']
-                        or any(not isinstance(o,dict) or set(o)!={'text'} or not isinstance(o['text'],str) for o in field['options'])):
+                        or any(not isinstance(o,dict) or set(o)-{'text','optionId'} or not isinstance(o.get('text'),str)
+                               or 'optionId' in o and (not isinstance(o['optionId'],str) or not re.fullmatch(UUID,o['optionId'],re.I))
+                               for o in field['options'])):
                     raise Blocked('unsupported_form','Only unanswered optional Lever surveys are supported')
                 name=f'surveysResponses[{identity}][responses][field{index}]'
                 controls=[c for c in form['controls'] if c['name']==name]

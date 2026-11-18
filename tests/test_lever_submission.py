@@ -240,6 +240,25 @@ def test_native_choice_values_are_bound_to_the_package_option_mapping(kind):
     with pytest.raises(Blocked):LeverSubmission._approved_pairs(package,form)
 
 
+@pytest.mark.parametrize('option_id,accepted',[(True,True),('not-a-uuid',False),(123,False)])
+def test_optional_survey_option_id_is_metadata_only(option_id,accepted):
+    survey='44444444-1111-2222-3333-555555555555'
+    option='44444444-1111-2222-3333-666666666666'
+    account='11111111-2222-3333-4444-555555555555'
+    descriptor={'type':'survey','id':survey,'accountId':account,'fields':[
+        {'type':'multiple-choice','required':False,'options':[{'text':'First choice','optionId':option if option_id is True else option_id}]}]}
+    names=[f'surveysResponses[{survey}][baseTemplate]',f'surveysResponses[{survey}][surveyId]']
+    metadata=[{'name':name,'value':value,'hidden':True} for name,value in zip(names,(json.dumps(descriptor),survey))]
+    control={'name':f'surveysResponses[{survey}][responses][field0]','value':'First choice','hidden':False,'type':'radio','checked':False}
+    form={'controls':[{'name':'accountId','value':account,'hidden':True},*metadata,control],'entries':list(metadata)}
+    if not accepted:
+        with pytest.raises(Blocked,match='unsupported_form'):LeverSubmission._empty_survey_metadata(form)
+        return
+    assert LeverSubmission._empty_survey_metadata(form)==set(names)
+    control['checked']=True
+    with pytest.raises(Blocked,match='unsupported_form'):LeverSubmission._empty_survey_metadata(form)
+
+
 @pytest.mark.parametrize('change',['none','checked','visible','prefilled','different_control','wire_value','wire_duplicate'])
 def test_standard_pronouns_allow_only_the_dormant_empty_custom_control(change):
     options=['They/them','Use name only']

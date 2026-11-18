@@ -223,6 +223,7 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
     if job.get('host') in {'jobs.lever.co','jobs.eu.lever.co'}:
         if reason=='upload_verification_failed':data['lever_resume_replan']=1
         if reason=='field_verification_failed':data['lever_standard_pronouns']=1
+        if reason in {'unsupported_form','unsupported_widget'}:data['lever_empty_survey_option_id']=1
     if workday is not None:data['workday']=workday
     if reason in {'captcha','captcha_blocked'}:data['captcha_detection']=CAPTCHA_DETECTION_VERSION
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})
