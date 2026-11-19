@@ -80,7 +80,7 @@ def test_saved_report_dates_use_batch_start_in_applicant_timezone(store):
     assert 'America/Los_Angeles' in body and 'Delayed delivery: 2 saved batch reports' in body
 
 
-def test_batch_email_links_include_only_browser_attempts(store,job,package,monkeypatch):
+def test_batch_email_separates_screening_from_browser_attempts(store,job,package,monkeypatch):
     from hireme.util import digest
     jobs = []
     for outcome in ('confirmed', 'blocked', 'screened'):
@@ -110,7 +110,8 @@ def test_batch_email_links_include_only_browser_attempts(store,job,package,monke
     body = store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
     for item in jobs[:2]:
         assert body.count(item['url']) == 1
-    assert jobs[2]['url'] not in body
+    assert body.count(jobs[2]['url']) == 1
+    assert 'Pre-application holds recorded this batch — no browser attempt' in body
     assert 'Applied successfully' in body
     assert 'Blocked — review or apply manually' in body
     assert 'location_mismatch' not in body and 'Complete the employer CAPTCHA' in body
@@ -268,3 +269,52 @@ def test_limit_waits_are_not_listed_as_blocked(store,job):
     finished(store)
     body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
     assert 'Waiting for a company or daily limit — no action needed' in body and 'Blocked — review' not in body
+
+
+def test_report_activity_does_not_relabel_old_work_as_new(store,job):
+    from hireme.job_holds import hold
+    from hireme.reports import preview_report
+    hold(store,job,'missing_answers','Old missing answer')
+    store.event('job_screening_blocked',job['id'],{'run_id':'old-run','reason':'missing_answers'})
+    store.db.execute("INSERT INTO runs VALUES('current','2026-01-01T00:00:00Z','2026-01-01T00:00:05Z','finished',0,?)",
+        (json.dumps({'discovered':2,'eligible':3,'attempts':0}),))
+    queue_report(store,'current')
+    preview=preview_report(store,'current')
+    for rendered in (preview['text'],preview['html']):
+        assert 'newly discovered roles: 2; eligible after screening: 3; browser attempts: 0; pre-application holds: 0' in rendered
+        assert 'Earlier unresolved items (not new failures): 1 human interventions; 0 unconfirmed submissions' in rendered
+        assert 'Eligible roles may include older postings' in rendered
+    assert 'Outstanding human interventions from earlier batches' in preview['text']
+
+
+def test_screening_is_run_scoped_deduplicated_and_not_backlog(store,job):
+    from hireme.job_holds import hold
+    hold(store,job,'missing_answers','Missing answer','screening')
+    for _ in range(2):
+        store.event('job_screening_blocked',job['id'],{'run_id':'current','reason':'missing_answers'})
+    store.db.execute("INSERT INTO runs VALUES('current','2026-01-01T00:00:00Z','2026-01-01T00:00:05Z','finished',0,?)",
+        (json.dumps({'discovered':0,'eligible':0,'attempts':0}),))
+    queue_report(store,'current')
+    row=store.db.execute('SELECT body FROM report_outbox').fetchone()
+    assert 'pre-application holds: 1' in row['body']
+    assert 'Earlier unresolved items (not new failures): 0 human interventions' in row['body']
+    assert 'Outstanding human interventions from earlier batches' not in row['body']
+    assert row['body'].count(job['url'])==1
+
+
+def test_legacy_missing_activity_counts_are_unknown_not_zero(store):
+    finished(store)
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'newly discovered roles: not recorded; eligible after screening: not recorded; browser attempts: not recorded' in body
+
+
+def test_terminal_outcome_supersedes_screening_hold_in_same_batch(store,job):
+    store.event('job_screening_blocked',job['id'],{'run_id':'current','reason':'missing_answers'})
+    store.event('application_finished',job['id'],{'run_id':'current','outcome':'blocked','reason':'captcha'})
+    store.db.execute("INSERT INTO runs VALUES('current','2026-01-01T00:00:00Z','2026-01-01T00:00:05Z','finished',0,?)",
+        (json.dumps({'discovered':0,'eligible':1,'attempts':1}),))
+    queue_report(store,'current')
+    body=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'pre-application holds: 0' in body
+    assert 'Pre-application holds recorded this batch — no browser attempt' not in body
+    assert body.count(job['url'])==1

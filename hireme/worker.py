@@ -54,6 +54,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         store.prior_mail_checked=set()
         store.prior_mail_failures={}
         store.prior_mail_service_failure=None
+        store.prior_mail_maintenance_scope=None
         max_attempts=min(max_attempts or s['max_attempts_per_cycle'],s['max_attempts_per_cycle'])
         store.prior_mail_check_limit=max_attempts
         store.db.execute("INSERT INTO runs(id,started,status,detail) VALUES(?,?,'running',?)",(rid,now(),json.dumps({'mode':'live' if live else 'prepare'})))
@@ -155,7 +156,10 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             target=min(s['max_per_cycle'],s['target_per_cycle'],s['max_per_day']-sent_today)
             if limit is not None:target=min(target,limit)
             if ranked and target>0:
-                with worker_lock(store.root,'browser'):
+                if live:
+                    from .prior_applications import advance_waiting_scan
+                    advance_waiting_scan(store,(job for _,job in ranked))
+                with ExitStack() as browser_lock_stack:
                     if browser_factory is Browser:
                         from .platform_browser import ConnectedBrowser
                         factory=ConnectedBrowser
@@ -188,7 +192,9 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                     from .prior_applications import preflight
                                     preflight(store,job)
                                 stage='browser_start'
-                                if browser is None:browser=browser_stack.enter_context(factory(store))
+                                if browser is None:
+                                    browser_lock_stack.enter_context(worker_lock(store.root,'browser'))
+                                    browser=browser_stack.enter_context(factory(store))
                                 attempts+=1
                                 attempt_started=True
                                 store.event('application_started',job['id'],{'run_id':rid,'attempt':attempts,'company':job['company'],'title':job['title'],'quality':job.pop('_quality',{})})
@@ -266,6 +272,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             store.prior_mail_checked=None
             store.prior_mail_failures=None
             store.prior_mail_service_failure=None
+            store.prior_mail_maintenance_scope=None
             try:
                 from .reports import queue_report,flush_reports
                 queue_report(store,rid)

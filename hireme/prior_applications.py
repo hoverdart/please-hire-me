@@ -25,6 +25,7 @@ START_FRESH_SECONDS = 60
 MAX_QUERY_BYTES = 1200
 AUTO_SCAN_SECONDS = 30
 AUTO_SCAN_PAGES = 25
+MAINTENANCE_SCAN_SECONDS = 90
 SEARCH_VERSION = 2
 CLASSIFIER_VERSION = 2
 QUERY = 'in:anywhere'
@@ -456,8 +457,8 @@ def require_recent_check(store,job):
         raise Blocked('prior_application_check_required','A current company email-history check is required before this application.')
 
 
-def preflight(store,job):
-    try:return _preflight(store,job)
+def preflight(store,job, *, scan_seconds=None):
+    try:return _preflight(store,job,scan_seconds=scan_seconds)
     except Blocked as error:
         if error.reason in {'paused','cycle_timeout'}:raise
         if not error.reason.startswith('prior_application_'):
@@ -479,7 +480,7 @@ def _require_start_check(store,job):
         raise Blocked('prior_application_check_required','Refresh company email history before starting the application form')
 
 
-def _preflight(store,job):
+def _preflight(store,job, *, scan_seconds=None):
     check_saved(store,job)
     if not store.settings()['gmail_prior_applications']: return
     service_failure=getattr(store,'prior_mail_service_failure',None)
@@ -491,14 +492,16 @@ def _preflight(store,job):
         try:_require_start_check(store,job);return
         except Blocked as error:
             if error.reason!='prior_application_check_required':raise
-    if checked is not None and scope not in checked and len(checked)>=getattr(store,'prior_mail_check_limit',store.settings()['max_attempts_per_cycle']):
+    maintenance=getattr(store,'prior_mail_maintenance_scope',None)
+    if (checked is not None and scope not in checked and scope!=maintenance
+            and len(checked-{maintenance})>=getattr(store,'prior_mail_check_limit',store.settings()['max_attempts_per_cycle'])):
         raise Blocked('prior_application_check_budget','This batch reached its company email-check limit. Saved scan progress will continue next cycle.')
     if checked is not None:checked.add(scope)
     resolve_company(store,job)
     check_saved(store,job)
     try: _require_start_check(store,job);return
     except Blocked: pass
-    deadline=time.monotonic()+AUTO_SCAN_SECONDS
+    deadline=time.monotonic()+(AUTO_SCAN_SECONDS if scan_seconds is None else scan_seconds)
     failures=rate_failures=0
     for _ in range(AUTO_SCAN_PAGES):
         store.checkpoint()
@@ -533,6 +536,40 @@ def _preflight(store,job):
                 if (error.reason!='prior_application_check_required' or not row or row['completed'] is None
                         or time.time()-row['completed']<=START_FRESH_SECONDS and not catching_up):raise
     raise Blocked('prior_application_scan_incomplete','More application mail remains to scan for this company. Continue the scan before applying.')
+
+
+def advance_waiting_scan(store, jobs):
+    """Advance one existing incomplete scope outside the browser/attempt budget.
+
+    Take the oldest scan checkpoint among eligible held scopes. Preflight keeps
+    its normal owner, duplicate and freshness checks; a failed scope stays
+    cached for this cycle. No new search scope is enrolled here.
+    """
+    if not store.settings()['gmail_prior_applications']:return
+    try:owner=_owner(store)
+    except Blocked:return
+    held={row['job_id'] for row in store.db.execute(
+        "SELECT job_id FROM job_holds WHERE reason='prior_application_scan_incomplete'")}
+    pending={row['company_key']:row['updated'] for row in store.db.execute(
+        "SELECT company_key,updated FROM prior_application_scans WHERE owner_hash=? AND completed IS NULL",(owner,))}
+    choices={}
+    for job in jobs:
+        if job['id'] not in held:continue
+        scope=_scope(store,job['company'])
+        if scope in pending:choices.setdefault(scope,job)
+    if not choices:return
+    scope=min(choices,key=lambda key:(pending[key],key))
+    job=choices[scope]
+    store.prior_mail_maintenance_scope=scope
+    try:
+        preflight(store,job,scan_seconds=MAINTENANCE_SCAN_SECONDS)
+    except Blocked as error:
+        if error.reason in {'paused','cycle_timeout'}:raise
+        # This scope remains held; the ordinary eligibility/attempt loop
+        # can continue to the next company without consuming an attempt here.
+        store.event('prior_mail_maintenance',job['id'],{'reason':error.reason,'run_id':store.active_run_id})
+    else:
+        store.event('prior_mail_maintenance',job['id'],{'reason':'ready','run_id':store.active_run_id})
 
 
 def _evidence_companies(store,row):

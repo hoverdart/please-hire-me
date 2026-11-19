@@ -172,7 +172,7 @@ def test_accepted_send_carries_html_and_is_labelled_provider_accepted(store, mai
     assert report_status(store)[0]['delivery'] == 'queued'
     assert flush_reports(store, mailbox) == {'sent': 1, 'enabled': True, 'batches': 1}
     (subject, body, html), = mailbox.accepted.values()
-    assert html.startswith('<!DOCTYPE html>') and 'Application update' in html and body.startswith('Confirmed submissions: 0')
+    assert html.startswith('<!DOCTYPE html>') and 'Application update' in html and body.startswith('This batch:') and 'Confirmed submissions: 0' in body
     status = report_status(store)[0]
     assert status['state'] == 'sent' and status['delivery'] == 'provider_accepted'
     assert 'Inbox placement is not verified' in status['explanation']

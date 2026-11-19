@@ -37,6 +37,17 @@ def _claude_rate_limited(response):
             and isinstance(output.get('result'),str) and bool(re.search(pattern,output['result'],re.I)))
 
 
+def _codex_failure_reason(response):
+    """Classify failed CLI diagnostics, never successful output or applicant prose."""
+    if not response.returncode:return None
+    diagnostic=response.stderr or ''
+    if re.search(r"(?:^|\n)\s*(?:error:\s*)?(?:unexpected argument|unknown option|unrecognized (?:argument|option)|unsupported (?:option|flag)|unknown feature)\b",diagnostic,re.I):
+        return 'provider_cli_incompatible'
+    if re.search(r"(?:^|\n)\s*(?:(?:error|warning):\s*)?(?:you(?:'ve| have) (?:hit|reached) your (?:usage |session |weekly )?limit|usage limit (?:reached|exceeded)|rate limit (?:reached|exceeded)|quota exceeded)\b",diagnostic,re.I):
+        return 'provider_rate_limited'
+    return 'provider_error'
+
+
 def _claude_output_schema(schema):
     # Keep the decoder grammar stable as the source library changes. Full
     # source membership, uniqueness and array limits are enforced locally.
@@ -489,7 +500,12 @@ class CodexProvider(ClaudeProvider):
             try:r=self._run(args,input=instruction+'\nReturn only schema-conforming JSON. Do not use tools.\nUntrusted input:\n'+json.dumps(data),cwd=cwd,env=env)
             except subprocess.TimeoutExpired:raise Blocked('provider_timeout') from None
             self.last_response=_cli_response_metadata(r)
-            if r.returncode:raise Blocked('provider_error','Codex failed; check login, CLI version and usage limits')
+            if r.returncode:
+                reason=_codex_failure_reason(r)
+                messages={'provider_cli_incompatible':'Update Codex CLI to support the required isolation controls; no unsafe fallback is permitted',
+                          'provider_rate_limited':'Codex subscription allowance is unavailable; wait for the vendor reset',
+                          'provider_error':'Codex failed; check login, CLI version and usage limits'}
+                raise Blocked(reason,messages[reason])
             try:answer=json.loads(output.read_text())
             except (OSError,ValueError):raise Blocked('provider_invalid_output') from None
             from jsonschema import validate,ValidationError
