@@ -807,7 +807,7 @@ def test_mail_failure_reports_attention_without_inventing_an_application_attempt
     result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
     report=store.db.execute('SELECT state,subject,body FROM report_outbox ORDER BY created DESC LIMIT 1').fetchone()
     assert result['attempts']==0 and report['state']=='pending'
-    assert report['subject']=='Application update: 0 attempted; 0 confirmed; 1 held before opening'
+    assert report['subject']=='Application update: 0 confirmed; 0 attempted; 1 held before opening'
     assert 'Email-history checks need attention' in report['body']
     assert 'Browser sessions started: 0' in report['body']
     assert 'Pre-application holds recorded this batch' in report['body']

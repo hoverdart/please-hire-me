@@ -246,7 +246,7 @@ def queue_report(store, run_id):
              f"{len(set(held_outcomes)-current_jobs)} unconfirmed submissions. "
              "Overall attention totals include existing unresolved work.")
     notices=[activity,backlog,*notices]
-    body = (activity+"\n"+backlog+"\n\n"+f"Confirmed submissions: {run['submitted']}\nHuman interventions: {human}\nUnconfirmed results to verify: {unconfirmed}\n\n"
+    body = (f"Confirmed submissions: {run['submitted']}\nHuman interventions: {human}\nUnconfirmed results to verify: {unconfirmed}\n\n"+activity+"\n"+backlog+"\n\n"
             + (control_notice+'\n\n' if control_notice else '')
             + ('\n\n'.join(recruiting)+'\n\n' if recruiting else '')
             + f"Application batch {run_id}\nStarted: {run['started']}\nFinished: {run['finished']}\n"
@@ -289,7 +289,8 @@ def queue_report(store, run_id):
     with store.transaction():
         subject = ("Applications paused — earlier items need review" if paused else
                    "Draft preparation update" if detail.get('mode') == 'prepare' else
-                   f"Application update: {recorded_count('attempts')} attempted; {run['submitted']} confirmed"
+                   f"Application update: {run['submitted']} confirmed"
+                   + ("; 0 attempted" if detail.get('attempts') == 0 else "")
                    + (f"; {len(screening)} held before opening" if screening else ""))
         inserted=store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
                          (run_id, email, subject,
