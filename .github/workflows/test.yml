@@ -106,3 +106,16 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 30
+  macos-required-check:
+    # The protected branch still requires the pre-sharding check name.
+    name: test (macos-15-intel, 3.12)
+    needs: test
+    if: ${{ always() && github.event_name != 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Require every matrix job to pass
+        env:
+          MATRIX_RESULT: ${{ needs.test.result }}
+        run: test "$MATRIX_RESULT" = success
