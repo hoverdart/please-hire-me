@@ -24,6 +24,17 @@ def test_legacy_graduation_review_only_releases_proven_screening_false_positive(
     assert ready(store,job) is expected
 
 
+def test_graduation_parser_revision_revalidates_only_graduation_review(store,job,monkeypatch):
+    other={**job,'id':digest([job['id'],'other']), 'url':job['url']+'/other'}
+    store.upsert_job(job);store.upsert_job(other)
+    hold(store,job,'graduation_window_review',stage='screening')
+    hold(store,other,'location_mismatch',stage='screening')
+    assert not ready(store,job)
+    monkeypatch.setattr('hireme.graduation.GRADUATION_POLICY_VERSION',999)
+    assert ready(store,job)
+    assert not ready(store,other)
+
+
 @pytest.mark.parametrize('reason',sorted(NOT_MATCH_REASONS))
 def test_unrelated_phone_edit_does_not_release_eligibility_hold(store,job,reason):
     hold(store,job,reason)

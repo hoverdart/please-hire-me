@@ -8,7 +8,7 @@ from .util import Blocked, company_normalizer
 # Bump when eligibility semantics change, independently of form/answer mapping.
 ELIGIBILITY_VERSION = 16
 CITIZENSHIP_VERSION = 2
-SUMMER_SCOPE_VERSION = 1
+SUMMER_SCOPE_VERSION = 2
 
 LOCATIONS = {
  "San Francisco Bay Area": r"san francisco|\bsf\b|bay area|palo alto|mountain view|menlo park|redwood city|san mateo|sunnyvale|santa clara|san jose|oakland|berkeley|cupertino|foster city|emeryville|burlingame",
@@ -57,7 +57,7 @@ CITIZEN=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:us citizen|u
 US_CITIZEN_GATE=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:u\.?s\.?|united states) citizen(?:ship|s)?|(?:u\.?s\.?|united states) citizen(?:ship|s)?.{0,25}(?:required|only)",re.I)
 DOCTORAL = r'(?:\bph\.?\s*d\b\.?|\bdoctor(?:al|ate)\b(?:\s+degree)?|\bdoctor of philosophy\b)'
 LOWER_DEGREE = r"(?:\b(?:bachelor(?:['’]s)?|master(?:['’]s)?|undergraduate|b\.?s|b\.?a|b\.?sc|m\.?s|m\.?sc)\b\.?)"
-MASTER_WORD = r"\bmaster(?:['’]s)?\b"
+MASTER_WORD = r"\bmaster(?:['’]?s)?\b"
 MASTER_ABBREVIATION = r'\bm\.?\s*s(?:c)?\b\.?'
 UNDERGRADUATE = r"(?:\b(?:bachelor(?:['’]s)?|undergraduate|associate(?:['’]s)?|b\.?s|b\.?a|b\.?sc)\b\.?)"
 DOCTORAL_FACTS = {'phd','doctorate','doctoral','doctoraldegree','doctoratedegree','doctorofphilosophy'}
@@ -206,8 +206,18 @@ _SUMMER_INTERNSHIP_DATES = re.compile(
 )
 
 
-def _summer_2027(job):
+def _internship_calendar_title(job):
     title=job.get('title','')
+    if re.search(r'\bsummer\s+2027\b|\b2027\s+summer\b',job.get('description',''),re.I):
+        # Some boards abbreviate the cohort in the title and state the full
+        # year in the posting. Keep an explicit conflicting title year decisive.
+        if not set(re.findall(r'\b20\d{2}\b',title))-{'2027'}:
+            title=re.sub(r"\b(summer)\s*['’]27\b",r'\1 2027',title,flags=re.I)
+    return title
+
+
+def _summer_2027(job):
+    title=_internship_calendar_title(job)
     description=job.get('description','')
     seasons=set(re.findall(r'\b(winter|spring|summer|fall|autumn)\b',title,re.I))
     if seasons:
@@ -334,7 +344,8 @@ def eligible(job,s,facts):
     grad=facts.get("graduation",{}).get("value","")
     from .graduation import required
     required(desc,grad)
-    start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",title,re.I)
+    calendar_title=_internship_calendar_title(job)
+    start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",calendar_title,re.I)
     reverse_start=re.search(r"(\d{4})\s*(winter|spring|summer|fall|autumn)",title,re.I) if not start else None
     if reverse_start:
         start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",reverse_start[2]+' '+reverse_start[1],re.I)

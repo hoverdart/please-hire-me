@@ -24,13 +24,28 @@ def _recorded_outcome(store, job_id, fallback):
     return state if state in {'confirmed', 'not_submitted', 'unknown', 'awaiting_verification'} else fallback
 
 
-def _application_rows(store,query,selected,scope):
+def _application_ids(store,query,selected,scope):
     from .application_evidence import ats_for
-    rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
-    if not scope:return rows,0
+    rows=store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected)
+    if not scope:return [row['id'] for row in rows],0
     enabled=set(scope)
-    candidates=[row for row in rows if ats_for(row['url']) in enabled]
-    return candidates,len(rows)-len(candidates)
+    candidates=[];excluded=0
+    for row in rows:
+        if ats_for(row['url']) in enabled:candidates.append(row['id'])
+        else:excluded+=1
+    return candidates,excluded
+
+
+def _candidate_rows(store,ids):
+    # Freeze the ranking via IDs. Keep only one batch of possibly large
+    # posting bodies in memory and finish each SELECT before updating jobs.
+    for offset in range(0,len(ids),100):
+        batch=ids[offset:offset+100]
+        placeholders=','.join('?' for _ in batch)
+        rows={row['id']:row for row in store.db.execute(
+            f'SELECT id,payload FROM jobs WHERE id IN ({placeholders})',batch)}
+        for job_id in batch:
+            if job_id in rows:yield rows[job_id]
 
 
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
@@ -83,18 +98,21 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                 from .net import Network
                 discovery_deadline=min(store.run_deadline,time.monotonic()+300)
                 net=Network(discovery_deadline,checkpoint=store.checkpoint)
-                store.checkpoint(); sweep_lists(store,net)
+                restricted=s['rollout_stage']=='restricted'
+                if restricted:
+                    # Check boards that can feed this worker before broader sources
+                    # consume the shared discovery budget. Leave time for lists.
+                    ats=[key for name,key in (('ashby','ash'),('greenhouse','gh'),('lever','lv'))
+                         if name in s['allowed_application_ats']]
+                    remaining=discovery_deadline-time.monotonic()
+                    if ats and remaining>0:sweep_boards(store,repo,ats=ats,deadline_seconds=min(180,remaining))
+                store.checkpoint()
+                if time.monotonic()<discovery_deadline:sweep_lists(store,net)
                 store.checkpoint()
                 if time.monotonic()<discovery_deadline:sweep_portals(store,net)
                 store.checkpoint()
                 remaining=discovery_deadline-time.monotonic()
-                if remaining>0:
-                    # Restricted rollout discovery prioritizes sources that
-                    # this worker can actually submit to. Explicit discovery
-                    # remains available for the broader manual-review queue.
-                    ats=([key for name,key in (('ashby','ash'),('greenhouse','gh'),('lever','lv'))
-                          if name in s['allowed_application_ats']] if s['rollout_stage']=='restricted' else None)
-                    if ats is None or ats:sweep_boards(store,repo,ats=ats,deadline_seconds=remaining)
+                if not restricted and remaining>0:sweep_boards(store,repo,ats=None,deadline_seconds=remaining)
                 store.checkpoint()
                 if time.monotonic()<discovery_deadline:
                     from .platform_connections import sweep_connections
@@ -105,24 +123,24 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                         if error.reason!='cycle_timeout' or time.monotonic()>=cycle_deadline:raise
                     finally:store.run_deadline=cycle_deadline
             discovered_count=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]-jobs_before if discover else 0
-            query="SELECT * FROM jobs WHERE status IN ('discovered','blocked','prepared') AND id NOT IN (SELECT job_id FROM job_decisions)"
+            query="SELECT id,url FROM jobs WHERE status IN ('discovered','blocked','prepared') AND id NOT IN (SELECT job_id FROM job_decisions)"
             selected=tuple(job_ids or ())
             if selected:query+=' AND id IN ('+','.join('?' for _ in selected)+')'
-            rows,excluded=_application_rows(store,query,selected,s['allowed_application_ats'])
+            ids,excluded=_application_ids(store,query,selected,s['allowed_application_ats'])
             if excluded:reasons['ats_out_of_scope']=excluded
             from .application_quality import rescreen_scope
-            for reason,excluded in rescreen_scope(store,rows,s).items():reasons[reason]=reasons.get(reason,0)+excluded
+            for reason,excluded in rescreen_scope(store,_candidate_rows(store,ids),s).items():reasons[reason]=reasons.get(reason,0)+excluded
             from .posting_inspection import refresh_candidates,needs_details
             # No browser/model work occurs inside the screening transactions.
-            refresh_candidates(store,rows,s,0 if limit==0 else max_attempts)
-            rows,_=_application_rows(store,query,selected,s['allowed_application_ats'])
+            refresh_candidates(store,_candidate_rows(store,ids),s,0 if limit==0 else max_attempts)
+            ids,_=_application_ids(store,query,selected,s['allowed_application_ats'])
             ranked=[]
             from .application_quality import relevance
             confirmed_history=store.history_entries()
             # Screening only makes local decisions. Small bounded transactions
             # group their related writes, avoiding several SD-card fsyncs per
             # excluded job. Browser/model work remains outside transactions.
-            pending=iter(rows);screening_done=False
+            pending=_candidate_rows(store,ids);screening_done=False
             while not screening_done:
                 batch_started=time.monotonic()
                 with store.transaction():

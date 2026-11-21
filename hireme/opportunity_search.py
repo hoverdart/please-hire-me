@@ -37,7 +37,7 @@ def find_opportunities(store, repo, deadline_seconds=300, requested_generation=N
             remaining = deadline - time.monotonic()
             if remaining > 0:
                 sweep_boards(store, repo, deadline_seconds=remaining)
-            if remaining > 0:
+            if remaining > 0 and time.monotonic() < deadline:
                 from .platform_connections import sweep_connections
                 store.run_deadline = deadline
                 try:sweep_connections(store)

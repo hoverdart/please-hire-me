@@ -187,6 +187,9 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
         if reason=='internship_out_of_scope':
             from .policy import SUMMER_SCOPE_VERSION
             data['summer_scope_policy']=SUMMER_SCOPE_VERSION
+        if reason=='graduation_window_review':
+            from .graduation import GRADUATION_POLICY_VERSION
+            data['graduation_policy']=GRADUATION_POLICY_VERSION
         if reason=='expired_posting':data['adapter']=ADAPTER_VERSION
         if reason in {'citizenship_mismatch','citizenship_or_clearance_review'}:
             from .policy import CITIZENSHIP_VERSION

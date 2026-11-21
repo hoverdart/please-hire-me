@@ -3,7 +3,7 @@ import html,re
 from html.parser import HTMLParser
 from .util import Blocked
 
-class _LeverHTMLText(HTMLParser):
+class _PostingHTMLText(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True);self.parts=[];self.skip=0
     def handle_starttag(self,tag,attrs):
@@ -16,17 +16,22 @@ class _LeverHTMLText(HTMLParser):
         if not self.skip:self.parts.append(value)
 
 
+def posting_html_text(value):
+    parser=_PostingHTMLText()
+    parser.feed(value)
+    parser.close()
+    return ''.join(parser.parts).strip()
+
+
 def lever_posting_text(data,*,required=False):
     """Use the hosted page's HTML fields before potentially stale plain copies."""
-    def rendered(value):
-        parser=_LeverHTMLText();parser.feed(value);return ''.join(parser.parts).strip()
     def section(key,plain):
         value=data.get(key)
         if value is None:
             value=data.get(plain)
             return value if isinstance(value,str) else ''
         if not isinstance(value,str):raise Blocked('posting_inspection_review','Lever posting text is not recognized')
-        return rendered(value)
+        return posting_html_text(value)
     body=section('description','descriptionPlain');lists=data.get('lists',[])
     if (required and not body.strip()) or not isinstance(lists,list):
         raise Blocked('posting_inspection_review','The official Lever posting body is missing')
@@ -34,7 +39,7 @@ def lever_posting_text(data,*,required=False):
     for item in lists:
         if not isinstance(item,dict) or not isinstance(item.get('text'),str) or not isinstance(item.get('content'),str):
             raise Blocked('posting_inspection_review','Lever posting requirements are not recognized')
-        parts.extend([item['text'],rendered(item['content'])])
+        parts.extend([item['text'],posting_html_text(item['content'])])
     parts.extend(section(key,plain) for key,plain in (
         ('additional','additionalPlain'),('salaryDescription','salaryDescriptionPlain')))
     return '\n'.join(part for part in parts if part.strip())

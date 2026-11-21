@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULTS = {
     "schema_version": 1,
@@ -140,7 +140,13 @@ def validate_settings(changes: dict, current: dict | None = None) -> dict:
         raise ValueError("Invalid aliases")
     if s["browser_channel"] not in ("chrome", "chromium", "system-chromium"):
         raise ValueError("Unsupported browser channel")
-    ZoneInfo(s["timezone"])
+    timezone = s["timezone"]
+    if not isinstance(timezone, str) or not timezone:
+        raise ValueError("Choose a valid IANA time zone")
+    try:
+        ZoneInfo(timezone)
+    except (ValueError, ZoneInfoNotFoundError):
+        raise ValueError("Choose a valid IANA time zone") from None
     return s
 
 

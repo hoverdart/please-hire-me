@@ -220,25 +220,28 @@ def test_discovery_budget_leaves_cached_candidates_available_for_applications(st
     assert result['shortfall']==0 and store.run_deadline is None
 
 
-def test_restricted_board_discovery_uses_enabled_ats_and_remaining_budget(store,monkeypatch):
-    clock=[100.0];nets=[];probes=[]
+def test_restricted_board_discovery_prioritizes_enabled_ats_within_shared_budget(store,monkeypatch):
+    clock=[100.0];nets=[];visited=[]
     store.update_settings({'rollout_stage':'restricted','allowed_application_ats':['ashby']})
     monkeypatch.setattr('hireme.rollout.check',lambda s,**kwargs:kwargs['live'])
     monkeypatch.setattr('hireme.worker.time.monotonic',lambda:clock[0])
-    def lists(s,net):nets.append(net);clock[0]+=20
-    def portals(s,net):nets.append(net);clock[0]+=30
-    def boards(s,repo,**kwargs):probes.append(kwargs);clock[0]+=5
+    def lists(s,net):nets.append(net);visited.append('lists');clock[0]+=100
+    def portals(s,net):nets.append(net);visited.append('portals');clock[0]+=20
+    def boards(s,repo,**kwargs):
+        assert kwargs=={'ats':['ash'],'deadline_seconds':180}
+        visited.append('boards');clock[0]+=170
     monkeypatch.setattr('hireme.worker.sweep_lists',lists)
     monkeypatch.setattr('hireme.worker.sweep_portals',portals)
     monkeypatch.setattr('hireme.worker.sweep_boards',boards)
     def connections(s):
         assert s.run_deadline==400
+        visited.append('connections')
         clock[0]=401;s.checkpoint()
     monkeypatch.setattr('hireme.platform_connections.sweep_connections',connections)
     result=cycle(store,Path('.'),limit=0)
     assert result['mode']=='live' and result['attempts']==0
     assert nets[0] is nets[1] and nets[0].deadline==400
-    assert probes==[{'ats':['ash'],'deadline_seconds':250}]
+    assert visited==['boards','lists','portals','connections']
     assert store.run_deadline is None
 
 

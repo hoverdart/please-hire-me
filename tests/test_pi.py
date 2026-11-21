@@ -12,6 +12,8 @@ def test_pi_units_are_owner_local_quoted_and_include_no_credentials(store,tmp_pa
     assert 'Type=oneshot' in worker and 'UMask=0077' in worker
     assert not any(line.startswith('Environment=') and ('API_KEY' in line or 'OAUTH_TOKEN' in line) for line in worker.splitlines()) and 'client_secret' not in worker and 'User=root' not in worker
     assert 'UnsetEnvironment=ANTHROPIC_API_KEY' in worker
+    assert 'OnActiveSec=6h' in units['please-hire-me-worker.timer']
+    assert 'OnBootSec' not in units['please-hire-me-worker.timer']
     assert 'OnUnitInactiveSec=6h' in units['please-hire-me-worker.timer']
     assert 'dashboard --hide-token' in units['please-hire-me-dashboard.service']
     result=install(store,Path('/repo'),tmp_path/'units',enable=False)
@@ -20,10 +22,48 @@ def test_pi_units_are_owner_local_quoted_and_include_no_credentials(store,tmp_pa
 
 def test_pi_configuration_preserves_identity_and_limits_and_pauses(store):
     facts=store.facts();limit=store.settings()['max_per_day']
+    store.update_settings({'headless':False,'human_verification_wait_seconds':60,'human_verification_handoff':True})
     configure(store)
     assert store.facts()==facts and store.settings()['max_per_day']==limit
     assert not store.settings()['live_enabled'] and store.settings()['headless']
     assert store.settings()['browser_channel']=='system-chromium'
+    assert not store.settings()['human_verification_handoff']
+    assert store.settings()['human_verification_wait_seconds']==0
+
+
+def test_pi_preview_requires_a_destination_outside_the_live_unit_directory(store,tmp_path,monkeypatch):
+    live=tmp_path/'custom config'/'systemd/user'
+    monkeypatch.setenv('XDG_CONFIG_HOME',str(live.parent.parent))
+    with pytest.raises(ValueError,match='separate export directory'):
+        install(store,tmp_path)
+    assert not live.exists()
+    monkeypatch.setattr('hireme.pi.sys.platform','linux')
+    monkeypatch.setattr('hireme.pi.shutil.which',lambda _: '/usr/bin/systemctl')
+    with pytest.raises(ValueError,match='requires the user unit directory'):
+        install(store,tmp_path,tmp_path/'unloaded',enable=True)
+    assert not (tmp_path/'unloaded').exists()
+
+
+def test_pi_preflight_distinguishes_installed_programs_from_working_services(store,monkeypatch):
+    from hireme import pi
+    from types import SimpleNamespace
+    monkeypatch.setattr(pi.sys,'platform','linux')
+    monkeypatch.setattr(pi.shutil,'which',lambda name: f'/usr/bin/{name}')
+    monkeypatch.setattr(pi,'_chromium_launches',lambda executable: executable == '/usr/bin/chromium-browser')
+    monkeypatch.setattr(pi.subprocess,'run',lambda *a,**kw:SimpleNamespace(returncode=1,stdout=''))
+    result=pi.preflight(store)
+    assert result['chromium'] and not result['chromium_launches']
+    assert result['systemd'] and not result['systemd_user_available']
+
+
+def test_pi_browser_probe_times_out_even_when_the_driver_stalls(monkeypatch):
+    import subprocess
+    from hireme import pi
+    def stall(args, *, timeout, **options):
+        assert 0 < timeout <= 60
+        raise subprocess.TimeoutExpired(args,timeout)
+    monkeypatch.setattr(pi.subprocess,'run',stall)
+    assert not pi._chromium_launches('/usr/bin/chromium')
 
 
 def test_dashboard_service_startup_message_does_not_log_capability():

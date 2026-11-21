@@ -9,6 +9,12 @@ from hireme.store import Store,worker_lock
 from hireme.config import validate_settings,validate_fact
 
 
+@pytest.mark.parametrize('timezone', ['Not/An_IANA_Zone', '', '/etc/localtime', None])
+def test_invalid_time_zone_is_reported_as_a_settings_error(timezone):
+    with pytest.raises(ValueError,match='valid IANA time zone'):
+        validate_settings({'timezone':timezone})
+
+
 def test_retry_requires_reconciled_no_submission_and_preserves_attempt(store,job,package):
     aid=store.prepare(job,package);store.begin_submit(aid);store.finish(aid,'unknown')
     with pytest.raises(ValueError):store.retry_not_submitted(aid,'Please retry this application')

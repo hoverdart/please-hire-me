@@ -24,7 +24,7 @@ Check both submission control and the application rollout in `doctor`. A saved s
 
 Report delivery can resume independently of applications. Combined emails identify their original batch dates in the applicant timezone, and a paused reminder labels outstanding work as earlier history. A newly delivered saved report does not establish that the current schedule attempted those applications.
 
-Application batches share a five-minute discovery budget across lists, portals, boards and connected platforms, then process saved candidates. Restricted rollouts probe boards only for enabled ATS. Use the separate **Find jobs** action for broader discovery; a large backlog of speculative boards should not consume the application batch.
+Application batches share a five-minute discovery budget across lists, portals, boards and connected platforms, then process saved candidates. Restricted rollouts spend up to the first three minutes probing boards for enabled ATS, with working boards checked before speculative sources. Lists, portals and connections use the remaining time. Use the separate **Find jobs** action for broader discovery.
 
 Postings outside the enabled ATS scope are filtered before detail reads and application screening. They do not consume application attempts or create manual-review tasks. Older ATS-scope holds are classified as policy exclusions; application and uncertain-draft records remain protected.
 

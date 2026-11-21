@@ -259,7 +259,13 @@ def main(argv=None):
             from . import pi
             if args.action=='configure':result=pi.configure(store)
             elif args.action=='preflight':result=pi.preflight(store)
-            else:result=pi.install(store,REPO,args.directory,enable=args.action=='install')
+            elif args.action=='install':
+                with worker_lock(store.root):
+                    try:
+                        result=pi.install(store,REPO,args.directory,enable=True)
+                    except (OSError,subprocess.SubprocessError) as error:
+                        raise ValueError('Pi service installation failed. Check systemctl --user status and hireme schedule status.') from error
+            else:result=pi.install(store,REPO,args.directory)
             print(json.dumps(result,indent=2))
         elif args.command=='resume-style':
             from .resume_styles import style_from_reference,validate_style
@@ -334,7 +340,7 @@ def main(argv=None):
             print(json.dumps({'jobs':store.db.execute('SELECT count(*) FROM jobs').fetchone()[0]}))
         elif args.command=='schedule':
             from . import scheduler
-            if args.action=='install':print(scheduler.install(store,REPO))
+            if args.action=='install':print(scheduler.apply_saved_interval(store,REPO)['location'])
             elif args.action=='uninstall':scheduler.uninstall(store=store);print('Worker schedule removed')
             else:print(json.dumps(scheduler.status(store)))
         elif args.command=='duplicate':

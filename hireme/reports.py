@@ -154,7 +154,8 @@ def queue_report(store, run_id):
         evidence=json.loads(event['detail'])
         if evidence.get('run_id')!=run_id:continue
         if event['kind']=='application_started':started_jobs.add(event['subject'])
-        else:screening[event['subject']]=evidence
+        elif isinstance(evidence.get('reason'),str) and evidence['reason'].strip():
+            screening[event['subject']]=evidence
     for job_id in terminal.keys()|started_jobs:screening.pop(job_id,None)
     screening_heading='Pre-application holds recorded this batch — no browser attempt'
     groups[screening_heading]=[];entries[screening_heading]=[]
@@ -183,13 +184,15 @@ def queue_report(store, run_id):
                      'Other outcomes — review before retrying')
             questions = _questions(store, job_id)
             reason = REASON_GUIDANCE.get(detail.get('reason'), (detail.get('reason'),))[0]
+            missing_receipt = detail['outcome']=='confirmed' and not receipt
+            outcome = 'Confirmation could not be verified' if missing_receipt else detail['outcome']
             uncertainty = ('Submission outcome is uncertain. Check with the employer before applying again.'
-                           if detail['outcome'] in {'unknown','submitting'} else
+                           if missing_receipt or detail['outcome'] in {'unknown','submitting'} else
                            'Email verification is pending. Complete verification before applying again.'
                            if detail['outcome']=='awaiting_verification' else '')
             groups[group].append(f"{job['company']} — {job['title']}: "
                                  + (reason if detail['outcome'] == 'blocked' and reason else
-                                    detail['outcome'] + (f" ({reason})" if reason else ''))
+                                    outcome + (f" ({reason})" if reason else ''))
                                  + ('\n'+uncertainty if uncertainty else '')
                                  + (''.join('\n  • ' + line for line in questions) if questions
                                     else f"\n{_short(detail['detail'], 300)}" if detail.get('detail') else '')
@@ -197,7 +200,7 @@ def queue_report(store, run_id):
                                  + f"\n{job['url']}")
             entries[group].append({'company':job['company'],'title':job['title'],'url':job['url'],
                 'status':(reason if detail['outcome']=='blocked' and reason else
-                          OUTCOME_WORDS.get(detail['outcome'],detail['outcome'])+(f" ({reason})" if reason else '')),
+                          OUTCOME_WORDS.get(outcome,outcome)+(f" ({reason})" if reason else '')),
                 'note':uncertainty,'questions':questions,
                 'action':('Wait for employer follow-up; do not apply again.' if receipt else
                           'Review the saved employer result in your workspace before another attempt.' if detail['outcome']=='not_submitted' else ''),

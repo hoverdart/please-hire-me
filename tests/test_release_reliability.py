@@ -39,6 +39,12 @@ def test_unknown_graduation_precision_and_wording():
     with pytest.raises(Blocked):matches('2027',window('Graduate before September 2027'))
     with pytest.raises(Blocked):required('Must graduate sometime soon','2028-05')
 
+def test_posting_graduation_range_with_abbreviated_months():
+    posting='Must graduate between Sept. 2027 and Jun. 2028. Must be available full-time.'
+    required(posting,'2028-06')
+    with pytest.raises(Blocked,match='graduation_mismatch'):
+        required(posting,'2028-07')
+
 def test_hp_iq_cutoff_question_is_answered_from_confirmed_date(store,job):
     f={'label':'Will you be graduating before September 2027?*','type':'select','options':['Yes','No'],'required':True,'maxlength':-1}
     result=resolve(store,job['host'],f,context=job)

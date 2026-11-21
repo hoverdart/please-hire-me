@@ -93,6 +93,19 @@ def test_search_deadline_skips_remaining_sources(store, monkeypatch):
     assert result['time_limit_reached']
 
 
+def test_board_sweep_can_consume_the_remaining_search_budget(store,monkeypatch):
+    clock=[0]
+    monkeypatch.setattr(opportunity_search.time,'monotonic',lambda:clock[0])
+    fixture_sweeps(monkeypatch,lambda *a:None)
+    def boards(*args,**kwargs):
+        clock[0]=2
+    monkeypatch.setattr(opportunity_search,'sweep_boards',boards)
+    monkeypatch.setattr('hireme.platform_connections.sweep_connections',
+                        lambda *a:pytest.fail('Deadline reached before platform sweep'))
+    result=opportunity_search.find_opportunities(store,Path('.'),deadline_seconds=1)
+    assert result['time_limit_reached']
+
+
 def test_search_summary_counts_latest_result_once_per_source_and_keeps_jobs(store, job, monkeypatch):
     from hireme.discovery import source_result
     def collect(store, net):

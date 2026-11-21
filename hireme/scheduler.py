@@ -153,10 +153,16 @@ def _crontab(arguments, **kwargs):
 
 
 def install(store,repo):
-    check_owner(store)
+    current=check_owner(store)
     if store.missing_setup() or not store.settings()['onboarding_complete']:
         raise ValueError('Complete onboarding before installing automatic runs')
-    hours=store.settings()['schedule_hours']
+    settings=store.settings()
+    hours=settings['schedule_hours']
+    if settings['deployment']=='pi' or current.get('kind')=='systemd':
+        if sys.platform!='linux' or not shutil.which('systemctl'):
+            raise ValueError('Pi schedules require Linux with systemd.')
+        from .pi import install as install_pi
+        return install_pi(store,repo,enable=True,dashboard=False)['directory']
     if sys.platform=='darwin':
         directory=Path.home()/'Library/LaunchAgents';directory.mkdir(parents=True,exist_ok=True)
         path=directory/(LABEL+'.plist')
@@ -182,10 +188,9 @@ def install(store,repo):
         r=subprocess.run(['launchctl','bootstrap',f'gui/{os.getuid()}',str(path)],capture_output=True)
         if r.returncode:raise ValueError('launchd rejected worker; run .venv/bin/python -m hireme daemon in a terminal')
         return str(path)
-    if sys.platform=='linux' and shutil.which('systemctl') and (Path.home()/'.config/systemd/user/please-hire-me-worker.timer').exists():
-        from .pi import install as install_pi
-        return install_pi(store,repo,enable=True)['directory']
     if 24%hours:raise ValueError('Cron requires a schedule dividing 24 hours')
+    if not shutil.which('crontab'):
+        raise ValueError('Install cron, or run the worker with hireme daemon.')
     r=_crontab(['-l'],capture_output=True,text=True)
     lines=[l for l in r.stdout.splitlines() if not l.endswith('# '+LABEL)]
     # Cron does not load the interactive shell's PATH; user-installed CLIs must
@@ -209,8 +214,10 @@ def uninstall(cron_only=False,store=None):
             payload=plistlib.loads(path.read_bytes())
             if payload.get('Label')==LABEL:path.unlink()
     else:
-        if not cron_only and sys.platform=='linux' and shutil.which('systemctl') and (Path.home()/'.config/systemd/user/please-hire-me-worker.timer').exists():
-            subprocess.run(['systemctl','--user','disable','--now','please-hire-me-worker.timer'],capture_output=True,check=True)
+        if not cron_only and sys.platform=='linux' and shutil.which('systemctl'):
+            from .pi import unit_directory
+            if (unit_directory()/'please-hire-me-worker.timer').exists():
+                subprocess.run(['systemctl','--user','disable','--now','please-hire-me-worker.timer'],capture_output=True,check=True)
         if not shutil.which('crontab'):return
         r=_crontab(['-l'],capture_output=True,text=True)
         lines=[l for l in r.stdout.splitlines() if not l.endswith('# '+LABEL)]
@@ -297,15 +304,16 @@ def status(store=None,cron_only=False):
         except (ValueError,TypeError,plistlib.InvalidFileException):
             return {'installed':True,'matches_applicant':False,'path':str(p),'error':'The saved schedule could not be read.'}
     if sys.platform=='linux' and not cron_only and shutil.which('systemctl'):
+        from .pi import unit_directory
         r=_query_schedule(['systemctl','--user','is-enabled','please-hire-me-worker.timer'])
-        directory=Path.home()/'.config/systemd/user'
+        directory=unit_directory()
         if not r.returncode or (directory/'please-hire-me-worker.timer').exists():
             try:
                 commands=[line.split('=',1)[1] for line in (directory/'please-hire-me-worker.service').read_text().splitlines() if line.startswith('ExecStart=')]
                 intervals=[line.split('=',1)[1] for line in (directory/'please-hire-me-worker.timer').read_text().splitlines() if line.startswith('OnUnitInactiveSec=')]
                 if len(commands)!=1 or len(intervals)!=1:raise ValueError('Ambiguous worker unit')
                 command=commands[0];interval=intervals[0]
-                arguments=shlex.split(command.replace('%%','%'))
+                arguments=shlex.split(command.removeprefix(':').replace('%%','%'))
                 if not _is_worker_command(arguments) or not _systemd_loaded_matches(directory):
                     return {'installed':True,'matches_applicant':False,'kind':'systemd',
                             'error':'The loaded service or timer could not be verified.'}
@@ -343,20 +351,9 @@ def status(store=None,cron_only=False):
 def apply_saved_interval(store, repo):
     from .store import worker_lock
     with worker_lock(store.root):
-        current=check_owner(store)
-        if store.missing_setup() or not store.settings()['onboarding_complete']:
-            raise ValueError('Complete onboarding before installing automatic runs')
         try:
-            if store.settings()['deployment']=='pi' or current.get('kind')=='systemd':
-                if sys.platform!='linux' or not shutil.which('systemctl'):
-                    raise ValueError('Pi schedules require Linux with systemd.')
-                from .pi import install as install_pi, WORKER
-                location=install_pi(store,repo,enable=False)['directory']
-                if shutil.which('crontab'):uninstall(cron_only=True,store=store)
-                subprocess.run(['systemctl','--user','daemon-reload'],check=True)
-                subprocess.run(['systemctl','--user','enable','--now',WORKER+'.timer'],check=True)
-            else:location=install(store,repo)
-        except (OSError,subprocess.CalledProcessError) as error:
+            location=install(store,repo)
+        except (OSError,subprocess.SubprocessError) as error:
             raise ValueError('Schedule activation failed. Check the OS scheduler or run .venv/bin/python -m hireme daemon. Application pause settings were not changed.') from error
         interval=store.settings()['schedule_hours']
         store.event('schedule_installed','worker',{'interval_hours':interval})

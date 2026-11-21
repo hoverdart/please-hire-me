@@ -378,6 +378,39 @@ def test_pi_schedule_update_activates_worker_timer_without_starting_dashboard(st
     assert not store.settings()['live_enabled']
 
 
+def test_cli_pi_schedule_uses_systemd_and_preserves_model_config_paths(store,tmp_path,monkeypatch):
+    import shlex
+    from hireme.cli import main
+    from hireme.pi import unit_directory
+    monkeypatch.setattr('hireme.scheduler.sys.platform','linux')
+    monkeypatch.setenv('XDG_CONFIG_HOME',str(tmp_path/'custom config'))
+    monkeypatch.setenv('CLAUDE_CONFIG_DIR',str(tmp_path/'Claude 100%'))
+    monkeypatch.setenv('CODEX_HOME',str(tmp_path/'Codex ${USER}'))
+    monkeypatch.setenv('ANTHROPIC_API_KEY','synthetic-private-key')
+    monkeypatch.setattr('hireme.scheduler.shutil.which',lambda name:'/usr/bin/systemctl' if name=='systemctl' else None)
+    calls=[]
+    def run(args,**kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=1 if 'is-enabled' in args else 0,
+                               stdout='LoadState=not-found\n' if 'show' in args else '')
+    monkeypatch.setattr('hireme.scheduler.subprocess.run',run)
+    store.update_settings({'deployment':'pi','live_enabled':False,'schedule_hours':7})
+    assert main(['--data-dir',str(store.root),'schedule','install']) == 0
+    assert ['systemctl','--user','enable','--now','please-hire-me-worker.timer'] in calls
+    assert not (unit_directory()/'please-hire-me-dashboard.service').exists()
+    timer=(unit_directory()/'please-hire-me-worker.timer').read_text()
+    assert 'OnActiveSec=7h\nOnUnitInactiveSec=7h\n' in timer
+    worker=(unit_directory()/'please-hire-me-worker.service').read_text()
+    props=dict(line.split('=',1) for line in worker.splitlines() if '=' in line)
+    environment=dict(value.split('=',1) for value in shlex.split(props['Environment']))
+    assert environment['CLAUDE_CONFIG_DIR'].endswith('Claude 100%%')
+    assert environment['CODEX_HOME'].endswith('Codex ${USER}')
+    assert environment['XDG_CONFIG_HOME']==str(tmp_path/'custom config')
+    assert 'synthetic-private-key' not in worker
+    assert props['ExecStart'].startswith(':')
+    assert not store.settings()['live_enabled']
+
+
 def test_disabled_systemd_schedule_still_protects_its_applicant(store, tmp_path, monkeypatch):
     from hireme.pi import service_units
     monkeypatch.setattr('hireme.scheduler.sys.platform', 'linux')

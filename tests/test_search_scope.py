@@ -340,6 +340,59 @@ def test_summer_scope_uses_explicit_placement_dates(store,job,title,dates,accept
             eligible(candidate,store.settings(),store.facts())
 
 
+@pytest.mark.parametrize('apostrophe',["'",'’'])
+def test_short_summer_year_requires_full_posting_year_and_checks_availability(store,job,apostrophe):
+    store.update_settings({'seniority':['summer-internship']})
+    candidate={**job,'title':f'Software Engineering Intern - Summer {apostrophe}27'}
+    with pytest.raises(Blocked,match='internship_out_of_scope'):
+        eligible(candidate,store.settings(),store.facts())
+    candidate['description']+='\nThis is a Summer 2027 placement.'
+    assert eligible(candidate,store.settings(),store.facts())[0]>0
+    with pytest.raises(Blocked,match='internship_out_of_scope'):
+        eligible({**candidate,'title':candidate['title']+' (2026)'},store.settings(),store.facts())
+    store.put_facts({'earliest_start':'2027-09'})
+    with pytest.raises(Blocked,match='start_window_mismatch'):
+        eligible(candidate,store.settings(),store.facts())
+
+
+def test_graduate_program_requirement_does_not_mask_a_real_graduation_cutoff(store,job):
+    store.put_facts({'graduation':'2028-06'})
+    candidate={**job,'description':job['description']+
+        '\nMust be enrolled in a bachelor’s degree or graduate program.'}
+    assert eligible(candidate,store.settings(),store.facts())[0]>0
+    candidate['description']+='\nMust graduate by December 2027.'
+    with pytest.raises(Blocked,match='graduation_mismatch'):
+        eligible(candidate,store.settings(),store.facts())
+
+
+@pytest.mark.parametrize('posting',[
+    '<li style="font-size: 12pt;">Expected to graduate by <strong>Summer 2028</strong></li>',
+    '<li>Expected to graduate between <strong>Fall 2027 &amp; Summer&nbsp;2028</strong></li>',
+])
+def test_graduation_cutoffs_survive_employer_html(posting):
+    from hireme.graduation import required
+    required(posting,'2028-05')
+    with pytest.raises(Blocked,match='graduation_mismatch'):
+        required(posting,'2028-09')
+
+
+def test_optional_postgraduate_employment_does_not_hide_candidate_cutoffs():
+    from hireme.graduation import required
+    optional='High-performing interns may be considered for full-time roles after graduation.'
+    required(optional,'2028-05')
+    with pytest.raises(Blocked,match='graduation_mismatch'):
+        required(optional+' Applicants must graduate by December 2027.','2028-05')
+    with pytest.raises(Blocked,match='graduation_window_review'):
+        required('Applicants must graduate before the internship starts.','2028-05')
+
+
+def test_masters_without_apostrophe_is_still_a_graduate_requirement(store,job):
+    store.put_facts({'degree':'BS'})
+    candidate={**job,'title':'Machine Learning Intern (Masters) - Summer 2027'}
+    with pytest.raises(Blocked,match='degree_mismatch'):
+        eligible(candidate,store.settings(),store.facts())
+
+
 @pytest.mark.parametrize('specialty,accepted',[('Software',True),('Hardware',False),('Software Sales',False)])
 def test_reverse_engineering_intern_title_preserves_exact_software_specialty(store,job,specialty,accepted):
     store.update_settings({'roles':['software'],'seniority':['summer-internship']})

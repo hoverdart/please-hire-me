@@ -12,13 +12,18 @@ def readiness(ready=True):
             'missing': [] if ready else ['resume', 'work_authorized_us']}
 
 
-def test_doctor_reports_next_steps_without_changing_worker_or_request_budget(store, monkeypatch):
+@pytest.mark.parametrize('channel,guidance', [
+    ('chromium','python -m playwright install chromium'),
+    ('system-chromium','Install system Chromium.'),
+])
+def test_doctor_reports_next_steps_without_changing_worker_or_request_budget(store,monkeypatch,channel,guidance):
+    store.update_settings({'browser_channel':channel})
     monkeypatch.setattr('hireme.doctor.readiness', lambda s, verify=False: readiness(False))
     settings = store.settings(); generation = store.control_generation()
     result = diagnose(store)
     assert not result['ready']
     text = format_report(result)
-    assert 'python -m playwright install chromium' in text
+    assert guidance in text
     assert 'Currently authorized to work in the US' in text
     assert 'No model requests or applications were sent' in text
     assert store.settings() == settings and store.control_generation() == generation
@@ -82,7 +87,7 @@ def test_dashboard_diagnostics_refreshes_browser_without_login_or_writes(store, 
     store.put_facts({'full_name': 'Private Synthetic Name', 'email': 'private@candidate.invalid'})
     before = store.snapshot(); changes = store.db.total_changes
     result = dashboard_diagnostics(store)
-    assert seen == [('chromium', True)]
+    assert seen == [(store.settings()['browser_channel'], True)]
     assert result['checked_at'] and not result['verified_login']
     assert 'Private Synthetic Name' not in result['report']
     assert 'private@candidate.invalid' not in result['report']
