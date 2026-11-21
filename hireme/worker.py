@@ -24,6 +24,30 @@ def _recorded_outcome(store, job_id, fallback):
     return state if state in {'confirmed', 'not_submitted', 'unknown', 'awaiting_verification'} else fallback
 
 
+def _application_ids(store,query,selected,scope):
+    from .application_evidence import ats_for
+    rows=store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected)
+    if not scope:return [row['id'] for row in rows],0
+    enabled=set(scope)
+    candidates=[];excluded=0
+    for row in rows:
+        if ats_for(row['url']) in enabled:candidates.append(row['id'])
+        else:excluded+=1
+    return candidates,excluded
+
+
+def _candidate_rows(store,ids):
+    # Freeze the ranking via IDs. Keep only one batch of possibly large
+    # posting bodies in memory and finish each SELECT before updating jobs.
+    for offset in range(0,len(ids),100):
+        batch=ids[offset:offset+100]
+        placeholders=','.join('?' for _ in batch)
+        rows={row['id']:row for row in store.db.execute(
+            f'SELECT id,payload FROM jobs WHERE id IN ({placeholders})',batch)}
+        for job_id in batch:
+            if job_id in rows:yield rows[job_id]
+
+
 def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,max_attempts=None,job_ids=None,requested_generation=None):
     with worker_lock(store.root):
         from .rollout import check as check_rollout
@@ -45,6 +69,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
         store.prior_mail_checked=set()
         store.prior_mail_failures={}
         store.prior_mail_service_failure=None
+        store.prior_mail_maintenance_scope=None
         max_attempts=min(max_attempts or s['max_attempts_per_cycle'],s['max_attempts_per_cycle'])
         store.prior_mail_check_limit=max_attempts
         store.db.execute("INSERT INTO runs(id,started,status,detail) VALUES(?,?,'running',?)",(rid,now(),json.dumps({'mode':'live' if live else 'prepare'})))
@@ -54,7 +79,8 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                 if missing or not s['onboarding_complete']:
                     raise Blocked('setup_incomplete',', '.join(missing))
                 raise Blocked('paused')
-            from .job_holds import upgrade_information_holds
+            from .job_holds import upgrade_information_holds,upgrade_scope_holds
+            upgrade_scope_holds(store)
             upgrade_information_holds(store)
             from .workday_commission_state import bind_run
             bind_run(store,rid,job_ids=job_ids,live=live,discover=discover,limit=limit,
@@ -67,29 +93,54 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             except ValueError:raise Blocked('storage_low','Free disk space before starting another application batch') from None
             jobs_before=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
             if discover:
-                store.checkpoint(); sweep_lists(store)
-                store.checkpoint(); sweep_portals(store)
-                store.checkpoint(); sweep_boards(store,repo)
-                from .platform_connections import sweep_connections
-                store.checkpoint(); sweep_connections(store)
+                # Leave time to process saved candidates. Discovery has its own
+                # shared budget instead of three independent long sweeps.
+                from .net import Network
+                discovery_deadline=min(store.run_deadline,time.monotonic()+300)
+                net=Network(discovery_deadline,checkpoint=store.checkpoint)
+                restricted=s['rollout_stage']=='restricted'
+                if restricted:
+                    # Check boards that can feed this worker before broader sources
+                    # consume the shared discovery budget. Leave time for lists.
+                    ats=[key for name,key in (('ashby','ash'),('greenhouse','gh'),('lever','lv'))
+                         if name in s['allowed_application_ats']]
+                    remaining=discovery_deadline-time.monotonic()
+                    if ats and remaining>0:sweep_boards(store,repo,ats=ats,deadline_seconds=min(180,remaining))
+                store.checkpoint()
+                if time.monotonic()<discovery_deadline:sweep_lists(store,net)
+                store.checkpoint()
+                if time.monotonic()<discovery_deadline:sweep_portals(store,net)
+                store.checkpoint()
+                remaining=discovery_deadline-time.monotonic()
+                if not restricted and remaining>0:sweep_boards(store,repo,ats=None,deadline_seconds=remaining)
+                store.checkpoint()
+                if time.monotonic()<discovery_deadline:
+                    from .platform_connections import sweep_connections
+                    cycle_deadline=store.run_deadline
+                    store.run_deadline=discovery_deadline
+                    try:sweep_connections(store)
+                    except Blocked as error:
+                        if error.reason!='cycle_timeout' or time.monotonic()>=cycle_deadline:raise
+                    finally:store.run_deadline=cycle_deadline
             discovered_count=store.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]-jobs_before if discover else 0
-            query="SELECT * FROM jobs WHERE status IN ('discovered','blocked','prepared') AND id NOT IN (SELECT job_id FROM job_decisions)"
+            query="SELECT id,url FROM jobs WHERE status IN ('discovered','blocked','prepared') AND id NOT IN (SELECT job_id FROM job_decisions)"
             selected=tuple(job_ids or ())
             if selected:query+=' AND id IN ('+','.join('?' for _ in selected)+')'
-            rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            ids,excluded=_application_ids(store,query,selected,s['allowed_application_ats'])
+            if excluded:reasons['ats_out_of_scope']=excluded
             from .application_quality import rescreen_scope
-            for reason,excluded in rescreen_scope(store,rows,s).items():reasons[reason]=reasons.get(reason,0)+excluded
+            for reason,excluded in rescreen_scope(store,_candidate_rows(store,ids),s).items():reasons[reason]=reasons.get(reason,0)+excluded
             from .posting_inspection import refresh_candidates,needs_details
             # No browser/model work occurs inside the screening transactions.
-            refresh_candidates(store,rows,s,0 if limit==0 else max_attempts)
-            rows=list(store.db.execute(query+' ORDER BY score DESC,first_seen DESC',selected))
+            refresh_candidates(store,_candidate_rows(store,ids),s,0 if limit==0 else max_attempts)
+            ids,_=_application_ids(store,query,selected,s['allowed_application_ats'])
             ranked=[]
             from .application_quality import relevance
             confirmed_history=store.history_entries()
             # Screening only makes local decisions. Small bounded transactions
             # group their related writes, avoiding several SD-card fsyncs per
             # excluded job. Browser/model work remains outside transactions.
-            pending=iter(rows);screening_done=False
+            pending=_candidate_rows(store,ids);screening_done=False
             while not screening_done:
                 batch_started=time.monotonic()
                 with store.transaction():
@@ -123,7 +174,10 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             target=min(s['max_per_cycle'],s['target_per_cycle'],s['max_per_day']-sent_today)
             if limit is not None:target=min(target,limit)
             if ranked and target>0:
-                with worker_lock(store.root,'browser'):
+                if live:
+                    from .prior_applications import advance_waiting_scan
+                    advance_waiting_scan(store,(job for _,job in ranked))
+                with ExitStack() as browser_lock_stack:
                     if browser_factory is Browser:
                         from .platform_browser import ConnectedBrowser
                         factory=ConnectedBrowser
@@ -156,7 +210,9 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
                                     from .prior_applications import preflight
                                     preflight(store,job)
                                 stage='browser_start'
-                                if browser is None:browser=browser_stack.enter_context(factory(store))
+                                if browser is None:
+                                    browser_lock_stack.enter_context(worker_lock(store.root,'browser'))
+                                    browser=browser_stack.enter_context(factory(store))
                                 attempts+=1
                                 attempt_started=True
                                 store.event('application_started',job['id'],{'run_id':rid,'attempt':attempts,'company':job['company'],'title':job['title'],'quality':job.pop('_quality',{})})
@@ -234,6 +290,7 @@ def cycle(store,repo,discover=True,live=True,limit=None,browser_factory=Browser,
             store.prior_mail_checked=None
             store.prior_mail_failures=None
             store.prior_mail_service_failure=None
+            store.prior_mail_maintenance_scope=None
             try:
                 from .reports import queue_report,flush_reports
                 queue_report(store,rid)

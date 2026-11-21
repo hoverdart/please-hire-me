@@ -1751,3 +1751,43 @@ def test_employer_privacy_notice_cannot_mask_an_application_restriction(store,at
         with pytest.raises(Blocked,match='human_work_sample'):browser.apply(local_job(store,ats))
     assert not ats[1]
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('apostrophe',["'",'’'])
+def test_contracted_received_receipt_is_fresh_but_not_a_paraphrase_of_old_evidence(apostrophe):
+    text=f'Thank you for your interest in Acme! We{apostrophe}ve received your application, and our recruiting team will review it.'
+    assert submission_receipt(text,'Name\nEmail\nSubmit application')
+    for before in ('We received your application.','We have received your application.',
+                   'We have successfully received your application.'):
+        assert not submission_receipt(text,before)
+
+
+@pytest.mark.parametrize('text',[
+    "Thank you for applying. We've not received your application.",
+    'Thank you for applying. We’ve not yet received your application.',
+    "Thank you for applying. We haven't received your application.",
+    'Thank you for applying. We have never received your application.',
+    'Thank you for applying. We did not receive your application.',
+    "When we've received your application, we'll contact you.",
+])
+def test_unreceived_or_conditional_application_never_counts_as_a_receipt(text):
+    assert not submission_receipt(text)
+
+
+def test_employer_receipt_requires_a_new_acknowledgement_and_follow_up():
+    receipt='Thanks for applying to join our team at IMC. We’ll be in touch shortly with next steps.'
+    assert submission_receipt('Step one, done!\n'+receipt,'Name\nEmail\nSubmit application')
+    assert not submission_receipt(receipt,receipt)
+    assert not submission_receipt('Thanks for applying to join our team at IMC.')
+    assert not submission_receipt(receipt+' Please complete your application.')
+
+
+def test_custom_greenhouse_receipt_confirms_completed_application_and_review():
+    completed='Now that you’ve taken the first step by submitting your application,'
+    review='our team will carefully review your resume and qualifications.'
+    receipt=f'Thank you for your interest!\n{completed} {review}'
+    assert submission_receipt(receipt,'Name\nEmail\nSubmit application')
+    assert not submission_receipt(receipt,receipt)
+    assert not submission_receipt(completed)
+    assert not submission_receipt(review)
+    assert not submission_receipt(receipt+' Your application was not submitted.')

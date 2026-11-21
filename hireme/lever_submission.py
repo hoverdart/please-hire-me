@@ -28,9 +28,11 @@ FORM="""() => {
  const forms=document.querySelectorAll('form#application-form');
  if(forms.length!==1)return null;
  const form=forms[0];
+ const customPronouns=form.querySelectorAll('input[type=checkbox]#customPronounsOption');
  return {method:form.method,action:form.action,enctype:form.enctype,
+   customPronounsSelected:customPronouns.length===1 ? customPronouns[0].checked : null,
    controls:Array.from(form.elements).filter(e=>e.name&&!e.disabled).map(e=>({
-     name:e.name,id:e.id,type:e.type,hidden:e.type==='hidden',value:e.value,checked:e.checked})),
+     name:e.name,id:e.id,type:e.type,hidden:e.type==='hidden',visible:e.getClientRects().length>0,value:e.value,checked:e.checked})),
    entries:Array.from(new FormData(form)).map(([name,value])=>typeof value==='string'
      ? {name,value} : {name,filename:value.name,size:value.size,type:value.type})};
 }"""
@@ -85,7 +87,9 @@ class LeverSubmission:
                 if (not isinstance(field,dict) or set(field)-{'type','text','description','required','id','options'}
                         or field.get('required') is not False or field.get('type') not in {'multiple-choice','multiple-select'}
                         or not isinstance(field.get('options'),list) or not field['options']
-                        or any(not isinstance(o,dict) or set(o)!={'text'} or not isinstance(o['text'],str) for o in field['options'])):
+                        or any(not isinstance(o,dict) or set(o)-{'text','optionId'} or not isinstance(o.get('text'),str)
+                               or 'optionId' in o and (not isinstance(o['optionId'],str) or not re.fullmatch(UUID,o['optionId'],re.I))
+                               for o in field['options'])):
                     raise Blocked('unsupported_form','Only unanswered optional Lever surveys are supported')
                 name=f'surveysResponses[{identity}][responses][field{index}]'
                 controls=[c for c in form['controls'] if c['name']==name]
@@ -110,6 +114,13 @@ class LeverSubmission:
             if name in names:raise Blocked('unsupported_form','Duplicate approved Lever field name')
             names.add(name)
             controls=[control for control in form['controls'] if control['name']==name and not control['hidden']]
+            if name=='pronouns' and kind=='checkbox-group' and form.get('customPronounsSelected') is False:
+                # Lever includes a CSS-hidden custom text input with the same
+                # name as the standard choices, even when custom is unchecked.
+                custom=[control for control in controls if control.get('id')=='customPronounsTextField']
+                if len(custom)==1 and custom[0]['type']=='text' and custom[0].get('visible') is False and custom[0]['value']=='':
+                    controls.remove(custom[0])
+                    expected.append((name,''))
             if (len(controls)!=len(refs) or any(ref.get('id') and control.get('id')!=ref['id']
                     for ref,control in zip(refs,controls))):
                 raise Blocked('field_verification_failed',field['label'])
@@ -209,6 +220,13 @@ class LeverSubmission:
             declined=bool(re.fullmatch(r'consent\[[a-z]+\]',name) and value=='0')
             if (name not in successful or not value or control['type'] in {'file','submit','button'}
                     or name==CAPTCHA or name in approved and (not control['hidden'] or declined)):continue
+            if (name=='consent[marketing]' and control['type']=='checkbox' and value=='1' and control.get('checked') is False
+                    and [entry.get('value') for entry in form['entries'] if entry['name']==name]==['0']
+                    and sum(c['name']==name for c in form['controls'])==2
+                    and any(c['name']==name and c['hidden'] and c['value']=='0' for c in form['controls'])):
+                # The unchecked box contributes nothing. Only Lever's hidden
+                # default travels, so a blank optional field cannot opt in.
+                continue
             template=bool(re.fullmatch(r'cards\['+UUID+r'\]\[baseTemplate\]',name,re.I))
             selected=name=='selectedLocation' and location is not None
             if control['hidden'] and (name in METADATA or template or selected or declined or name in empty_surveys):continue

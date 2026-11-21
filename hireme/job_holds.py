@@ -41,6 +41,7 @@ def mail_check_failed(row):
 # Each exclusion is already a proven blocker. Other profile/preferences edits
 # cannot make that blocker pass and must not release it for another browser run.
 ELIGIBILITY_INPUTS = {
+    'ats_out_of_scope': (set(),{'allowed_application_ats'}),
     'seniority_mismatch': (set(),set()),
     'role_mismatch': (set(),{'roles'}),
     'internship_out_of_scope': (set(),{'seniority'}),
@@ -64,6 +65,8 @@ ELIGIBILITY_INPUTS = {
 }
 
 def category(reason):
+    if reason=='account_verification_pending':return 'transient'
+    if reason in {'workday_registration_not_configured','unsupported_account_form','account_registration_rejected','account_signin_rejected'}:return 'account'
     if reason=='browser_draft_uncertain':return 'review'
     if reason in {'browser_identity_unverified','browser_identity_mismatch','browser_profile_changed'}:return 'account'
     if reason in {'browser_no_progress','browser_operation_blocked','browser_step_limit','browser_preparation_incomplete'}:return 'mapping'
@@ -87,6 +90,7 @@ def information_dependency(store,job,reason,fields=None):
     """Only a source that can address these questions releases their hold."""
     from .answers import _compatible_field, AUTOMATIC_ANSWER_VERSION, WRITING_SOURCE_VERSION, STUDENT_QUESTION
     from .config import FACTS
+    from .page_answers import VERSION as PAGE_PLAN_VERSION, RECOVERABLE
     saved_posting=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
     job=json.loads(saved_posting[0]) if saved_posting else job
     facts=store.facts();keys=set();labels=[];questions=[];uses_context=False;uses_history=False;uses_writing=reason=='writing_unsupported'
@@ -103,14 +107,14 @@ def information_dependency(store,job,reason,fields=None):
         candidates={key for key in FACTS if _compatible_field(key,field,job)}
         keys.update(candidates)
         if STUDENT_QUESTION.fullmatch(row['label'].strip()):keys.update({'school','college_start','graduation','degree'})
-        uses_context|=not candidates or row['reason']=='writing_unsupported'
+        uses_context|=not candidates or row['reason'] in RECOVERABLE
         uses_writing|=row['reason']=='writing_unsupported'
         uses_history|=field['section'] in {'education','employment'} or row['reason'] in {'history_confirmation_required','history_changed'}
         questions.append((row['id'],row['reason']))
     scopes=sorted({job['host'],job['host']+'|'+store.company(job['company']),job.get('answer_scope',job['host'])})
     answers=[tuple(row) for row in store.db.execute('SELECT id,question,revision FROM answers WHERE host IN ('
         +','.join('?' for _ in scopes)+') ORDER BY id',scopes) if row['question'] in labels]
-    data={'version':1,'automatic_answers':AUTOMATIC_ANSWER_VERSION,
+    data={'version':1,'automatic_answers':AUTOMATIC_ANSWER_VERSION,'page_plan':PAGE_PLAN_VERSION,
           'questions':questions,'facts':{key:facts[key]['value'] for key in sorted(keys) if key in facts},'answers':answers,
           'provider':{key:store.settings()[key] for key in ('provider','provider_model','model_effort','model_escalation')},
           'posting':job.get('_listing_hash') or digest({key:job.get(key) for key in ('title','description','location')}),'adapter':ADAPTER_VERSION,'mapping':MAPPING_VERSION}
@@ -120,12 +124,16 @@ def information_dependency(store,job,reason,fields=None):
         data['materials']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
         data['documents']=[tuple(row) for row in store.db.execute('SELECT kind,hash FROM documents ORDER BY kind')]
         data['writing_enabled']=store.settings()['tailored_writing']
-    if uses_history or reason in {'history_confirmation_required','history_changed'}:
+    if uses_history or uses_context or reason in {'history_confirmation_required','history_changed'}:
         data['history']=[tuple(row) for row in store.db.execute('SELECT id,revision,confirmed FROM confirmed_history ORDER BY id')]
     if uses_writing:data['writing_sources']=WRITING_SOURCE_VERSION
     return digest(data)
 
 def dependency(store, job, kind, reason=None, *, legacy_information=False, information_fields=None):
+    if reason in {'posting_changed_review','posting_inspection_review'} and job.get('host','').endswith('.myworkdayjobs.com'):
+        from .workday_browser_posting import VERSION
+        saved=store.db.execute('SELECT payload FROM jobs WHERE id=?',(job['id'],)).fetchone()
+        return digest({'workday_posting':VERSION,'posting':json.loads(saved[0]) if saved else job})
     if reason=='company_uncertain':
         return digest({'scope':store.settings()['uncertain_application_scope'],
                        'history':[(r['id'],r['state'],sorted(r['company_keys'])) for r in store.application_history(store.settings(),('submitting','unknown'))]})
@@ -176,6 +184,12 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
             'posting_constraints':{k:posting.get(k) for k in ('min_years','compensation','employment_type','source')},
             'facts':{k:facts[k]['value'] for k in sorted(fact_keys) if k in facts},
             'settings':{k:settings[k] for k in sorted(setting_keys) if k in settings}}
+        if reason=='internship_out_of_scope':
+            from .policy import SUMMER_SCOPE_VERSION
+            data['summer_scope_policy']=SUMMER_SCOPE_VERSION
+        if reason=='graduation_window_review':
+            from .graduation import GRADUATION_POLICY_VERSION
+            data['graduation_policy']=GRADUATION_POLICY_VERSION
         if reason=='expired_posting':data['adapter']=ADAPTER_VERSION
         if reason in {'citizenship_mismatch','citizenship_or_clearance_review'}:
             from .policy import CITIZENSHIP_VERSION
@@ -202,12 +216,17 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
         # below safe_state/draft checks and cannot release an uncertain write.
         settings=store.settings()
         data['provider']={key:settings[key] for key in ('provider','provider_model','model_effort','model_escalation')}
+        if reason=='provider_timeout':data['provider']['model_timeout_seconds']=settings['model_timeout_seconds']
     if reason=='ashby_submission_unsupported':
         from .ashby_submission import VERSION
         data['ashby_submission']=VERSION
     if reason=='ashby_draft_unsupported':
         from .ashby_drafts import VERSION
         data['ashby_draft']=VERSION
+    if job.get('host') in {'jobs.lever.co','jobs.eu.lever.co'}:
+        if reason=='upload_verification_failed':data['lever_resume_replan']=1
+        if reason=='field_verification_failed':data['lever_standard_pronouns']=1
+        if reason in {'unsupported_form','unsupported_widget'}:data['lever_empty_survey_option_id']=2
     if workday is not None:data['workday']=workday
     if reason in {'captcha','captcha_blocked'}:data['captcha_detection']=CAPTCHA_DETECTION_VERSION
     if kind=='unsupported':return digest({'host':job['host'],'adapter':ADAPTER_VERSION})
@@ -227,15 +246,37 @@ def dependency(store, job, kind, reason=None, *, legacy_information=False, infor
         data['document_files']=[(r['filename'], (store.root/'documents'/r['filename']).stat().st_mtime_ns if (store.root/'documents'/r['filename']).is_file() else None) for r in store.db.execute('SELECT filename FROM documents ORDER BY kind')]
         data['materials']=[tuple(r) for r in store.db.execute('SELECT id,revision,confirmed,role FROM materials ORDER BY id')]
     if kind=='account':
+        if job.get('host','').endswith('.myworkdayjobs.com'):
+            data['workday_account_executor']=5
+            policy_revision=store.db.execute("SELECT seq FROM events WHERE kind IN ('workday_registration_configured','workday_registration_disabled') ORDER BY seq DESC LIMIT 1").fetchone()
+            if policy_revision:data['workday_registration_revision']=policy_revision['seq']
         login=store.db.execute("SELECT seq FROM events WHERE kind='browser_login_completed' AND subject=? ORDER BY seq DESC LIMIT 1",(job['host'],)).fetchone()
         if login:data['browser_login_revision']=login['seq']
         data['accounts']=[tuple(r) for r in store.db.execute('SELECT id,state,updated FROM employer_accounts ORDER BY id')]
         from .accounts import account_key
-        key=account_key('https://'+job['host'],store.company(job['company']))
+        company=store.company(job['company'])
+        if job.get('host','').endswith('.myworkdayjobs.com'):
+            from .workday_site import site_for_url
+            company=site_for_url(job['url']).tenant
+        key=account_key('https://'+job['host'],company)
         row=store.db.execute("SELECT seq FROM events WHERE kind='account_credentials_saved' AND subject=? ORDER BY seq DESC LIMIT 1",(key,)).fetchone()
         # A scoped revision, never a password or a hash of password contents.
         if row:data['supplied_credentials_revision']=row['seq']
     return digest(data)
+
+
+def upgrade_scope_holds(store):
+    """Repair legacy policy exclusions without clearing any application fence."""
+    rows=list(store.db.execute("SELECT h.job_id,h.evidence,j.payload FROM job_holds h JOIN jobs j ON j.id=h.job_id WHERE h.reason='ats_out_of_scope' AND h.category!='eligibility'"))
+    if not rows:return 0
+    with store.transaction():
+        for row in rows:
+            job=json.loads(row['payload']);evidence=json.loads(row['evidence'])
+            evidence['category']='eligibility';evidence['next_action']=REASON_GUIDANCE['ats_out_of_scope'][1]
+            store.db.execute("UPDATE job_holds SET category='eligibility',dependency=?,evidence=? WHERE job_id=? AND reason='ats_out_of_scope'",
+                             (dependency(store,job,'eligibility','ats_out_of_scope'),json.dumps(evidence),row['job_id']))
+        store.event('ats_scope_holds_upgraded','worker',{'count':len(rows)})
+    return len(rows)
 
 
 def upgrade_information_holds(store):
@@ -297,6 +338,8 @@ def ready(store, job, at=None, ashby_snapshot=None):
     if row['reason']=='citizenship_or_clearance_review':
         return row['dependency']!=dependency(store,job,'eligibility',row['reason'])
     if row['category']=='review':
+        if row['reason'] in {'posting_changed_review','posting_inspection_review'} and job.get('host','').endswith('.myworkdayjobs.com'):
+            return row['dependency']!=dependency(store,job,'review',row['reason'])
         if row['reason']=='graduation_window_review':
             # Older releases misread "undergraduate" as a graduation cutoff.
             # Recheck only screening evidence; an application-stage review or

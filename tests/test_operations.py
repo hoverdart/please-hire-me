@@ -165,9 +165,17 @@ def test_remote_key_cannot_execute_shell_or_arbitrary_commands(store):
         with pytest.raises(ValueError,match='permits'):execute(store.root,command)
 
 
-def test_remote_health_uses_worker_path_without_forwarding_other_unit_environment(store,tmp_path,monkeypatch,capsys):
+@pytest.mark.parametrize('custom_config', [False, True])
+def test_remote_health_uses_worker_path_without_forwarding_other_unit_environment(store,tmp_path,monkeypatch,capsys,custom_config):
     from hireme.remote_ops import execute
-    home=tmp_path/'home';unit=home/'.config/systemd/user/please-hire-me-worker.service'
+    home=tmp_path/'home'
+    config=home/'.config'
+    if custom_config:
+        config=tmp_path/'custom config'
+        monkeypatch.setenv('XDG_CONFIG_HOME',str(config))
+    else:
+        monkeypatch.delenv('XDG_CONFIG_HOME',raising=False)
+    unit=config/'systemd/user/please-hire-me-worker.service'
     unit.parent.mkdir(parents=True)
     unit.write_text('Environment="PATH=/synthetic/cli:/usr/bin"\nEnvironment="SENSITIVE_VALUE=not-forwarded"\n')
     monkeypatch.setattr(Path,'home',lambda:home)
@@ -233,8 +241,10 @@ def test_operations_config_rejects_ssh_option_injection_and_exposed_keys(tmp_pat
     from hireme.backup_agent import load_config
     for name in ['ssh-key','age-key']:
         (tmp_path/name).write_text('synthetic');(tmp_path/name).chmod(0o600)
+    ssh_binary=tmp_path/'synthetic-ssh'
+    ssh_binary.touch(mode=0o700)
     config={'host':'applicant@pi.local','identity':str(tmp_path/'ssh-key'),'age_identity':str(tmp_path/'age-key'),
-            'age_binary':'/usr/bin/true','ssh_binary':'/usr/bin/ssh','destination':str(tmp_path/'backups'),
+            'age_binary':'/usr/bin/true','ssh_binary':str(ssh_binary),'destination':str(tmp_path/'backups'),
             'state_directory':str(tmp_path/'state'),'recipient':'age1'+'a'*58}
     path=tmp_path/'config.json';atomic_json(path,config)
     assert load_config(path)['host']=='applicant@pi.local'
@@ -243,9 +253,9 @@ def test_operations_config_rejects_ssh_option_injection_and_exposed_keys(tmp_pat
     atomic_json(path,config);(tmp_path/'ssh-key').chmod(0o644)
     with pytest.raises(ValueError,match='private regular'):load_config(path)
     (tmp_path/'ssh-key').chmod(0o600)
-    alias=tmp_path/'ssh-binary';alias.symlink_to('/usr/bin/ssh')
+    alias=tmp_path/'ssh-binary';alias.symlink_to(ssh_binary)
     atomic_json(path,{**config,'ssh_binary':str(alias)})
-    assert load_config(path)['ssh_binary']==str(Path('/usr/bin/ssh').resolve())
+    assert load_config(path)['ssh_binary']==str(ssh_binary.resolve())
 
 
 def test_agent_acknowledges_only_after_restoration_and_retains_recoverable_status(tmp_path,monkeypatch):

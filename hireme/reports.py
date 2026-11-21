@@ -147,6 +147,27 @@ def queue_report(store, run_id):
         if detail.get('run_id') != run_id:
             continue
         terminal[e['subject']]=detail
+    # Screening stops have no browser outcome. Attribute them by durable run ID,
+    # never by a hold's timestamp (old backlog may be refreshed during a run).
+    screening={};started_jobs=set()
+    for event in store.db.execute("SELECT kind,subject,detail FROM events WHERE kind IN ('job_screening_blocked','application_started') AND timestamp>=? ORDER BY seq",(run['started'],)):
+        evidence=json.loads(event['detail'])
+        if evidence.get('run_id')!=run_id:continue
+        if event['kind']=='application_started':started_jobs.add(event['subject'])
+        elif isinstance(evidence.get('reason'),str) and evidence['reason'].strip():
+            screening[event['subject']]=evidence
+    for job_id in terminal.keys()|started_jobs:screening.pop(job_id,None)
+    screening_heading='Pre-application holds recorded this batch — no browser attempt'
+    groups[screening_heading]=[];entries[screening_heading]=[]
+    for job_id,evidence in list(screening.items())[:20]:
+        job=store.db.execute('SELECT company,title,url FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job:continue
+        reason=evidence.get('reason','')
+        label,action=REASON_GUIDANCE.get(reason,(reason.replace('_',' '),'Review the saved screening reason in the dashboard.'))[:2]
+        groups[screening_heading].append(f"{job['company']} — {job['title']}: {label}\nNext action: {action}\n{job['url']}")
+        entries[screening_heading].append({'company':job['company'],'title':job['title'],'url':job['url'],
+            'status':label,'action':action})
+    current_jobs=terminal.keys()|screening.keys()
     outstanding,held_outcomes=_outstanding(store)
     for job_id,detail in terminal.items():
         job = store.db.execute('SELECT company,title,url FROM jobs WHERE id=?', (job_id,)).fetchone()
@@ -163,13 +184,15 @@ def queue_report(store, run_id):
                      'Other outcomes — review before retrying')
             questions = _questions(store, job_id)
             reason = REASON_GUIDANCE.get(detail.get('reason'), (detail.get('reason'),))[0]
+            missing_receipt = detail['outcome']=='confirmed' and not receipt
+            outcome = 'Confirmation could not be verified' if missing_receipt else detail['outcome']
             uncertainty = ('Submission outcome is uncertain. Check with the employer before applying again.'
-                           if detail['outcome'] in {'unknown','submitting'} else
+                           if missing_receipt or detail['outcome'] in {'unknown','submitting'} else
                            'Email verification is pending. Complete verification before applying again.'
                            if detail['outcome']=='awaiting_verification' else '')
             groups[group].append(f"{job['company']} — {job['title']}: "
                                  + (reason if detail['outcome'] == 'blocked' and reason else
-                                    detail['outcome'] + (f" ({reason})" if reason else ''))
+                                    outcome + (f" ({reason})" if reason else ''))
                                  + ('\n'+uncertainty if uncertainty else '')
                                  + (''.join('\n  • ' + line for line in questions) if questions
                                     else f"\n{_short(detail['detail'], 300)}" if detail.get('detail') else '')
@@ -177,13 +200,14 @@ def queue_report(store, run_id):
                                  + f"\n{job['url']}")
             entries[group].append({'company':job['company'],'title':job['title'],'url':job['url'],
                 'status':(reason if detail['outcome']=='blocked' and reason else
-                          OUTCOME_WORDS.get(detail['outcome'],detail['outcome'])+(f" ({reason})" if reason else '')),
+                          OUTCOME_WORDS.get(outcome,outcome)+(f" ({reason})" if reason else '')),
                 'note':uncertainty,'questions':questions,
                 'action':('Wait for employer follow-up; do not apply again.' if receipt else
                           'Review the saved employer result in your workspace before another attempt.' if detail['outcome']=='not_submitted' else ''),
                 'receipt':_receipt(store,job_id,run['started'],structured=True) if receipt else None,
                 'detail':'' if questions or not detail.get('detail') else _short(detail['detail'],300)})
-    outcomes = [heading + '\n\n' + '\n\n'.join(items) for heading, items in groups.items() if items]
+    outcomes = [heading + (f' ({len(screening)}; showing up to 20)' if heading==screening_heading else '')
+                + '\n\n' + '\n\n'.join(items) for heading, items in groups.items() if items]
     detail = json.loads(run['detail']) if run['detail'].startswith('{') else {'reason': run['detail']}
     human=(len(groups['Blocked — review or apply manually'])+len(groups['Not submitted — review the saved result'])
            +len(set(outstanding)-terminal.keys()))
@@ -193,7 +217,7 @@ def queue_report(store, run_id):
     from .presentation import REASON_GUIDANCE
     for records,heading,default in [(outstanding,'Outstanding human interventions from earlier batches','Review this application in the dashboard.'),
                                     (held_outcomes,'Earlier unconfirmed submissions — verify before any retry','Check the existing employer record; do not apply again.')]:
-        items=[item for job_id,item in records.items() if job_id not in terminal]
+        items=[item for job_id,item in records.items() if job_id not in current_jobs]
         if items:
             lines=[];shown=[]
             for item in items[:20]:
@@ -208,13 +232,31 @@ def queue_report(store, run_id):
     attention=bool(outstanding or held_outcomes or recruiting)
     attention_signature=digest({'manual':[(key,item['dependency']) for key,item in sorted(outstanding.items())],
         'uncertain':[(key,item['state'],item['updated']) for key,item in sorted(held_outcomes.items())],'recruiting':recruiting})
-    body = (f"Confirmed submissions: {run['submitted']}\nHuman interventions: {human}\nUnconfirmed results to verify: {unconfirmed}\n\n"
+    paused = run['status'] == 'paused' and detail.get('attempts') == 0
+    control_notice = ('Applications are paused. This schedule made no application attempts. '
+                      'Earlier unresolved items are labeled separately.' if paused else
+                      'Preparation mode: this batch could only prepare drafts; no applications were submitted.'
+                      if detail.get('mode') == 'prepare' else '')
+    if control_notice:notices = [control_notice, *notices]
+    def recorded_count(key):
+        value=detail.get(key)
+        return str(value) if isinstance(value,int) and not isinstance(value,bool) and value>=0 else 'not recorded'
+    activity=(f"This batch: newly discovered roles: {recorded_count('discovered')}; "
+              f"eligible after screening: {recorded_count('eligible')}; "
+              f"browser attempts: {recorded_count('attempts')}; pre-application holds: {len(screening)}. "
+              "Eligible roles may include older postings; attempts are not completed applications.")
+    backlog=(f"Earlier unresolved items (not new failures): {len(set(outstanding)-current_jobs)} human interventions; "
+             f"{len(set(held_outcomes)-current_jobs)} unconfirmed submissions. "
+             "Overall attention totals include existing unresolved work.")
+    notices=[activity,backlog,*notices]
+    body = (f"Confirmed submissions: {run['submitted']}\nHuman interventions: {human}\nUnconfirmed results to verify: {unconfirmed}\n\n"+activity+"\n"+backlog+"\n\n"
+            + (control_notice+'\n\n' if control_notice else '')
             + ('\n\n'.join(recruiting)+'\n\n' if recruiting else '')
             + f"Application batch {run_id}\nStarted: {run['started']}\nFinished: {run['finished']}\n"
             f"Status: {run['status']}\nMode: {detail.get('mode', 'live')}\n"
             + ('\n\n'.join(outcomes) or 'No application outcomes recorded.')
             + ('\n\n'+'\n\n'.join(earlier) if earlier else ''))
-    body+=f"\n\nDiagnostics\nBrowser sessions started: {detail.get('attempts',0)}. These are not completed applications."
+    body+=f"\n\nDiagnostics\nBrowser sessions started: {recorded_count('attempts')}. These are not completed applications."
     if detail.get('reason'):
         body += '\n\nStopped because: ' + detail['reason']
     mail_failures={reason:count for reason,count in detail.get('reasons',{}).items()
@@ -223,13 +265,13 @@ def queue_report(store, run_id):
         body+='\n\nEmail-history checks need attention:\n'
         body+='\n'.join(f'{count} roles held: '+REASON_GUIDANCE[reason][1] for reason,count in mail_failures.items())
     body += FOOTER
-    diagnostics=[f"Browser sessions started: {detail.get('attempts',0)}. These are not completed applications."]
+    diagnostics=[f"Browser sessions started: {recorded_count('attempts')}. These are not completed applications."]
     if detail.get('reason'):diagnostics.append('Stopped because: '+str(detail['reason']))
     notices=list(notices)+[f'{count} roles held by the email-history check: '+REASON_GUIDANCE[reason][1] for reason,count in mail_failures.items()]
     model={'summary':{'confirmed':run['submitted'],'human':human,'unconfirmed':unconfirmed},
            'run':{'id':run_id,'started':run['started'],'finished':run['finished'],'status':run['status'],'mode':detail.get('mode','live')},
            'recruiting':recruiting_groups,'notices':notices,
-           'groups':[{'heading':heading,'tone':TONES.get(heading,'neutral'),'items':items} for heading,items in entries.items()],
+           'groups':[{'heading':heading,'tone':('attention' if heading==screening_heading else TONES.get(heading,'neutral')),'items':items,**({'count':len(screening)} if heading==screening_heading else {})} for heading,items in entries.items()],
            'earlier':earlier_groups,'diagnostics':diagnostics}
     enabled = store.settings()['gmail_reports']
     # Idle schedules remain local history. Completed screening and paused runs
@@ -248,8 +290,13 @@ def queue_report(store, run_id):
     if idle and attention and not already_reported:idle=False
     state='suppressed' if idle else 'pending' if enabled else 'disabled'
     with store.transaction():
+        subject = ("Applications paused — earlier items need review" if paused else
+                   "Draft preparation update" if detail.get('mode') == 'prepare' else
+                   f"Application update: {run['submitted']} confirmed"
+                   + ("; 0 attempted" if detail.get('attempts') == 0 else "")
+                   + (f"; {len(screening)} held before opening" if screening else ""))
         inserted=store.db.execute('INSERT OR IGNORE INTO report_outbox VALUES(?,?,?,?,?,?,?,0,NULL,NULL,NULL)',
-                         (run_id, email, f"Application update: {run['submitted']} confirmed; {human} need you; {unconfirmed} to verify",
+                         (run_id, email, subject,
                           body, f'<{uuid.uuid4().hex}@please-hire-me.local>', state, now()))
         if inserted.rowcount:store.db.execute('INSERT OR REPLACE INTO report_models VALUES(?,?)',(run_id,json.dumps(model)))
         if inserted.rowcount and state=='pending' and attention:store.event('batch_attention_report',run_id,{'signature':attention_signature})
@@ -334,12 +381,22 @@ def _combined(store, rows):
     """One message for every batch finished since the last report, oldest first."""
     if len(rows) == 1:
         return rows[0]['subject'], rows[0]['body']
-    confirmed = sum(r[0] for r in store.db.execute(
-        'SELECT submitted FROM runs WHERE id IN (' + ','.join('?' for _ in rows) + ')', [r['id'] for r in rows]))
+    runs = list(store.db.execute(
+        'SELECT submitted,started FROM runs WHERE id IN (' + ','.join('?' for _ in rows) + ')', [r['id'] for r in rows]))
+    confirmed = sum(r['submitted'] for r in runs)
+    period, notice = _delivery_period(store, runs, len(rows))
     sections = [r['body'][:-len(FOOTER)] if r['body'].endswith(FOOTER) else r['body'].rstrip() for r in rows]
-    body = (f'Confirmed submissions: {confirmed}\nReview the next actions below.\n\n'
+    body = (f'Confirmed submissions: {confirmed}\n{notice}\nReview the next actions below.\n\n'
             + ('\n\n' + '─' * 24 + '\n\n').join(sections) + FOOTER)
-    return f'Recruiting update: {confirmed} confirmed — review next actions', body
+    return f'Saved batch reports ({period}): {confirmed} confirmed', body
+
+
+def _delivery_period(store, runs, count):
+    zone = ZoneInfo(store.settings()['timezone'])
+    dates = sorted(datetime.fromisoformat(r['started'].replace('Z','+00:00')).astimezone(zone).date().isoformat() for r in runs)
+    period = (dates[0] if dates[0] == dates[-1] else dates[0]+' to '+dates[-1]) if dates else 'dates unavailable'
+    return period, (f'Delayed delivery: {count} saved batch reports from {period} ({zone.key}). '
+                    'These are earlier batch results, not applications made by the current schedule.')
 
 
 RECONCILE_AFTER_SECONDS = 900
@@ -359,6 +416,11 @@ def render_report_html(store, rows, subject):
     """HTML alternative for these outbox rows; older rows without a model stay plain text."""
     from .report_email import render_html
     models=_models(store,rows)
+    if models and len(rows)>1:
+        runs=list(store.db.execute('SELECT started FROM runs WHERE id IN ('+
+                                  ','.join('?' for _ in rows)+')',[row['id'] for row in rows]))
+        _,notice=_delivery_period(store,runs,len(rows))
+        models[0]['notices']=[notice,*models[0].get('notices',[])]
     return render_html(models,subject) if models else None
 
 

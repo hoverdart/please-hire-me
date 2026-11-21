@@ -99,9 +99,9 @@ class Posting:
                                 'fields':[{'name':'resume','type':'input_file'}]}]}}}
 
     def form(self):
-        entries=[{'id': self.render + '_' + path, 'field': {'path': path, 'title': label, 'type': 'String'},
+        entries=[{'id': self.render + '_' + path, 'field': {'path': path, 'title': label, 'type': 'Number' if kind=='number' else 'String'},
                   'fieldValue': {'value': self.saved[path]} if path in self.saved else None}
-                 for path, label, _ in self.fields]
+                 for path, label, kind in self.fields]
         entries.append({'id':self.render+'__systemfield_resume',
                         'field':{'path':'_systemfield_resume','title':'Resume','type':'File','isMany':False},
                         'fieldValue':self.attached_file})
@@ -121,7 +121,7 @@ class Posting:
         controls = ''.join(
             f'<div data-field-path="{path}" data-field-entry-id="{self.render}_{path}">'
             f'<label for="{path}">{escape(label)}</label><input id="{path}" name="{path}" '
-            f'type="{kind}" required></div>' for path, label, kind in self.fields)
+            f'type="{kind}"'+(' step="any"' if kind=='number' else '')+' required></div>' for path, label, kind in self.fields)
         lever = (f'<input type="hidden" name="accountId" value="{self.account}">'
                  '<input type="hidden" name="resumeStorageId" value="">'
                  '<input type="hidden" name="h-captcha-response" value="synthetic-native-token">' if self.platform == 'lever' else '')
@@ -147,11 +147,15 @@ class Posting:
                 "if(platform==='greenhouse')window.__remixContext={state:{loaderData:ghLoader}};\n"
                 "const endpoint='/api/non-user-graphql';\n"
                 "const send=data=>fetch(endpoint,{method:'POST',body:JSON.stringify(data)});\n"
+                "if(outcome==='lever_conditional')document.querySelector('[name=name]').addEventListener('input',()=>{"
+                "if(document.getElementById('revealed-city'))return;"
+                "document.querySelector('button[type=submit]').insertAdjacentHTML('beforebegin',"
+                "'<label for=\"revealed-city\">City</label><input id=\"revealed-city\" name=\"city\" required>')});\n"
                 "if(outcome==='blur_validation')document.querySelector('input[type=email]').addEventListener('blur',e=>fetch('https://email-address-validator.us.greenhouse.io/address/validate?address='+encodeURIComponent(e.target.value)).catch(()=>{}));\n"
                 + (f'send({json.dumps(bootstrap)});\n' if self.platform == 'ashby' else '')
                 + "for(const el of document.querySelectorAll('input:not([type=file]):not([type=hidden])')){\n"
                 " if(platform==='ashby')el.addEventListener('input',()=>send({operationName:'ApiSetFormValue',"
-                "query:saveQuery,variables:{...base,path:el.id,value:el.value}}).catch(()=>{}));}\n"
+                "query:saveQuery,variables:{...base,path:el.id,value:el.type==='number'?Number(el.value):el.value}}).catch(()=>{}));}\n"
                 f"document.getElementById({json.dumps(resume_id)}).addEventListener('change',async e=>{{\n"
                 " const file=e.target.files[0];if(!file)return;let data=new FormData();\n"
                 " if(platform==='greenhouse'){const config=await(await fetch(ghLoader.root.ENV.JBEN_URL+'/uncacheable_attributes/presigned_fields?fields%5B%5D=resume')).json();\n"
@@ -159,7 +163,8 @@ class Posting:
                 "  data.append('utf8','✓');for(const [name,value] of Object.entries(config.resume.fields))data.append(name,value);\n"
                 "  data.append('key',key);data.append('authenticity_token','1234');data.append('Content-Type','application/octet-stream');data.append('file',file);\n"
                 "  await fetch(config.url,{method:'POST',body:data});window.fixtureGHUpload={name:file.name,url:config.url+'/'+key};return;}\n"
-                " if(platform==='lever'){data.append('resume',file);data.append('accountId',document.querySelector('[name=accountId]').value);\n"
+                " if(platform==='lever'){if(outcome==='lever_conditional'&&document.querySelector('[name=resumeStorageId]').value)return;"
+                "  data.append('resume',file);data.append('accountId',document.querySelector('[name=accountId]').value);\n"
                 "  const response=await fetch('/parseResume',{method:'POST',body:data});const result=await response.json();\n"
                 "  document.querySelector('[name=resumeStorageId]').value=result.resumeStorageId;\n"
                 "  if(result.position!==undefined)document.querySelector('[name=org]').value=outcome==='company_changed'?'Changed applicant entry':result.position;\n"
@@ -259,6 +264,10 @@ class ClosedATS:
         fixture = self
         def read(network, url, data=None):
             for posting in fixture.postings:
+                if (posting.platform=='greenhouse' and data is None and url==
+                        'https://boards-api.greenhouse.io/v1/boards/'+posting.tenant+'/jobs/'+posting.url.rsplit('/',1)[1]+'?content=true'):
+                    if network.checkpoint:network.checkpoint()
+                    return {'id':posting.url.rsplit('/',1)[1],'title':TITLE,'content':'<p>'+DESCRIPTION+'</p>','absolute_url':posting.url}
                 expected = f'https://api.lever.co/v0/postings/{posting.tenant}/{posting.req}?mode=json'
                 if posting.platform == 'lever' and url == expected and data is None:
                     if network.checkpoint: network.checkpoint()
@@ -415,6 +424,32 @@ def test_real_pipeline_confirms_and_reports_then_excludes_the_same_posting(store
     assert posting.requests == before and network.browser_starts == 1 and not network.unexpected
     assert len(network.mailbox.messages_sent) == 1
     assert {row[0] for row in store.db.execute('SELECT state FROM report_outbox')} == {'sent', 'suppressed'}
+
+
+def test_real_ashby_pipeline_saves_decimal_gpa_and_verifies_one_submission(store,monkeypatch):
+    store.put_facts({'gpa':'3.76/4.00'})
+    posting=Posting('ashby','Synthetic fractional GPA',questions=(('GPA','number'),))
+    network=harness(store,monkeypatch,[posting]);result=network.run()
+    assert result['confirmed']==result['attempts']==1,result
+    assert type(posting.saved['question-0']) is float and posting.saved['question-0']==3.76
+    app=store.db.execute('SELECT state,package FROM applications').fetchone()
+    answer=next(a for a in json.loads(app['package'])['answers'] if a['field']['label']=='GPA')
+    assert app['state']=='confirmed' and answer['value']=='3.76'
+    assert answer['provenance']['fact_key']=='gpa'
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
+    assert not network.unexpected and len(network.mailbox.messages_sent)==1
+    assert network.run()['attempts']==0
+
+
+def test_lever_keeps_verified_resume_when_a_required_question_appears(store,monkeypatch):
+    store.put_facts({'city':'Berkeley'})
+    posting=Posting('lever','Synthetic conditional Lever questions',outcome='lever_conditional')
+    network=harness(store,monkeypatch,[posting])
+    result=network.run()
+    assert result['confirmed']==result['attempts']==1,result
+    assert sum(path=='/parseResume' for _,_,path in posting.requests)==1
+    assert b'Berkeley' in posting.final_body
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='conditional_fields_revealed'").fetchone()[0]==1
 
 
 @pytest.mark.parametrize('initial_company,outcome',[('','confirmed'),('Existing applicant entry','confirmed'),('','company_changed')])
@@ -678,6 +713,10 @@ def test_greenhouse_email_verification_still_requires_its_own_matching_native_ac
     result=network.run()
     assert result['confirmed']==int(state=='confirmed'),result
     assert store.db.execute('SELECT state FROM applications').fetchone()[0]==state
+    from hireme.application_evidence import snapshot
+    application=store.db.execute('SELECT id FROM applications').fetchone()[0]
+    evidence=snapshot(store,application)
+    assert (evidence['verification_method']=='native_ats_acknowledgement')==(state=='confirmed')
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='native_submission_write'").fetchone()[0]==2
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='submit_intent'").fetchone()[0]==1
     message,=network.mailbox.messages_sent
@@ -815,3 +854,34 @@ def test_ten_job_email_regression_reuses_confirmed_facts_and_keeps_real_manual_b
     assert store.db.execute("SELECT count(*) FROM events WHERE kind='submit_intent'").fetchone()[0] == 5
     assert not network.unexpected
     assert len(network.mailbox.messages_sent) == 1
+
+
+@pytest.mark.parametrize('apostrophe',["'",'’'])
+def test_native_ashby_pipeline_accepts_fresh_contracted_employer_receipt_without_retry(store,monkeypatch,apostrophe):
+    import sys
+    from hireme.application_evidence import snapshot
+    monkeypatch.setattr(sys.modules[__name__],'RECEIPT',
+        f'Thank you for your interest in Acme! We{apostrophe}ve received your application, and our team will review it.')
+    posting=Posting('ashby','Synthetic contracted success receipt')
+    network=harness(store,monkeypatch,[posting]);result=network.run()
+    assert result['confirmed']==result['attempts']==1,result
+    app=store.db.execute('SELECT id,state FROM applications').fetchone()
+    assert app['state']=='confirmed' and snapshot(store,app['id'])['verification_method']=='native_ats_acknowledgement'
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='submission_receipt_verified'").fetchone()[0]==1
+    assert store.db.execute("SELECT count(*) FROM events WHERE kind='ashby_submission_write'").fetchone()[0]==1
+    assert network.run()['attempts']==0 and not network.unexpected
+
+
+@pytest.mark.parametrize('region',['us','eu'])
+def test_greenhouse_native_pipeline_retains_rollout_evidence_without_retry(store,monkeypatch,region):
+    from hireme.application_evidence import snapshot
+    from hireme.rollout import commission
+    posting=Posting('greenhouse','Synthetic commissioned greenhouse',region=region)
+    network=harness(store,monkeypatch,[posting]);result=network.run()
+    assert result['confirmed']==result['attempts']==1,result
+    app=store.db.execute('SELECT id FROM applications').fetchone()
+    assert snapshot(store,app['id'])['verification_method']=='native_ats_acknowledgement'
+    assert network.run()['attempts']==0 and not network.unexpected
+    store.update_settings({'allowed_application_ats':['greenhouse'],'max_per_cycle':3,'target_per_cycle':3,'max_per_day':10,'target_per_day':10,
+                           'max_attempts_per_cycle':8,'stop_on_uncertain_outcome':True})
+    assert commission(store,'restricted')['proofs']=={'greenhouse':app['id']}

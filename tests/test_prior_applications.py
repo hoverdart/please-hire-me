@@ -201,7 +201,10 @@ def test_worker_checks_mail_before_opening_browser_or_recording_an_attempt(store
     assert store.db.execute('SELECT COUNT(*) FROM applications').fetchone()[0]==0
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='application_started'").fetchone()
     assert store.db.execute('SELECT reason FROM jobs WHERE id=?',(optiver['id'],)).fetchone()[0].startswith('prior_application_email')
-    assert 'Optiver' not in store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    report=store.db.execute('SELECT body FROM report_outbox').fetchone()[0]
+    assert 'Pre-application holds recorded this batch' in report
+    assert 'browser attempts: 0; pre-application holds: 1' in report
+    assert 'Optiver' in report and 'An earlier application was found in email' in report
 
 
 def test_final_intent_requires_fresh_completed_company_scan(store,optiver,package):
@@ -802,10 +805,13 @@ def test_mail_failure_reports_attention_without_inventing_an_application_attempt
     def unavailable(_):raise Blocked('gmail_reconnect_required')
     monkeypatch.setattr(prior,'GmailClient',unavailable)
     result=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
-    report=store.db.execute('SELECT state,body FROM report_outbox ORDER BY created DESC LIMIT 1').fetchone()
+    report=store.db.execute('SELECT state,subject,body FROM report_outbox ORDER BY created DESC LIMIT 1').fetchone()
     assert result['attempts']==0 and report['state']=='pending'
+    assert report['subject']=='Application update: 0 confirmed; 0 attempted; 1 held before opening'
     assert 'Email-history checks need attention' in report['body']
-    assert 'Browser sessions started: 0' in report['body'] and 'Optiver' not in report['body']
+    assert 'Browser sessions started: 0' in report['body']
+    assert 'Pre-application holds recorded this batch' in report['body']
+    assert 'Optiver' in report['body'] and 'pre-application holds: 1' in report['body']
     assert not store.db.execute('SELECT 1 FROM applications').fetchone()
 
 
@@ -954,3 +960,97 @@ def test_oversized_alias_search_never_reuses_a_completed_scan_or_drops_names(sto
 def test_an_unsuccessful_application_still_counts_when_its_stage_is_unclassified(store,optiver,body):
     assert prior.ingest(store,mail(optiver,subject=f'Your application for the {optiver["title"]} position at Optiver',body=body))
     assert prior.matches(store,optiver)
+
+
+@pytest.mark.parametrize('already_checked',[False,True])
+def test_application_start_refreshes_a_still_valid_but_nearly_expired_write_check(store,optiver,monkeypatch,already_checked):
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    prior.scan(store,company='Optiver',client_factory=factory);complete_catchup(store,service,'Optiver')
+    store.db.execute('UPDATE prior_application_scans SET completed=?',(time.time()-10*60,))
+    prior.require_recent_check(store,optiver)
+    before=len(service.lists)
+    store.prior_mail_checked={store.company('Optiver')} if already_checked else set()
+    store.prior_mail_failures={};store.prior_mail_check_limit=1
+    monkeypatch.setattr(prior,'GmailClient',factory)
+    prior.preflight(store,optiver)
+    assert len(service.lists)>before
+    completed=store.db.execute('SELECT completed FROM prior_application_scans').fetchone()[0]
+    assert 0<=time.time()-completed<=prior.START_FRESH_SECONDS
+    prior.require_recent_check(store,optiver)
+    store.db.execute('UPDATE prior_application_scans SET completed=?',(time.time()-prior.FRESH_SECONDS-1,))
+    with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)
+
+
+def test_company_name_capitalization_preserves_history_cursor_and_freshness(store,optiver):
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[['one'],['two']]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    first=prior.scan(store,company='optiver',client_factory=factory)
+    assert first['more_available']
+    second=prior.scan(store,company='Optiver',client_factory=factory)
+    assert not second['more_available'],service.lists
+    assert service.lists[1]['pageToken']=='1'
+    # Backfill must still perform an overlapping catch-up before it grants a
+    # fresh proof. Case changes neither skip that step nor restart the history.
+    service.pages=[[]]
+    catchup=prior.scan(store,company='OPTIVER',client_factory=factory)
+    assert not catchup['more_available'] and service.lists[-1]['q'].startswith('after:')
+    prior.require_recent_check(store,optiver)
+    prior.require_recent_check(store,{**optiver,'company':'optiver'})
+    prior.require_recent_check(store,{**optiver,'company':'OPTIVER'})
+
+
+def test_changed_company_search_terms_still_require_new_complete_scan(store,optiver):
+    store.update_settings({'gmail_prior_applications':True})
+    service=Mailbox(optiver);service.pages=[[]]
+    factory=lambda _:SimpleNamespace(email='test@candidate.invalid',service=service)
+    prior.scan(store,company='Optiver',client_factory=factory)
+    prior.scan(store,company='Optiver',client_factory=factory)
+    prior.require_recent_check(store,optiver)
+    store.update_settings({'company_aliases':{'Optiver Extra':'Optiver'}})
+    with pytest.raises(Blocked,match='check_required'):prior.require_recent_check(store,optiver)
+    prior.scan(store,company='Optiver',client_factory=factory)
+    assert not service.lists[-1]['q'].startswith('after:')
+
+
+@pytest.mark.parametrize('saved,same',[
+    ('after:123 in:anywhere {"OPTIVER" "Optiver"}',True),
+    ('in:anywhere {"Optiver Group" "Optiver"}',False),
+    ('in:anywhere {"Optiver"} -in:spam',False),
+    ('after:123 in:inbox {"Optiver"}',False),
+    ('in:anywhere {"Other"}',False),
+])
+def test_scan_query_equivalence_preserves_full_mailbox_and_exact_search_terms(saved,same):
+    assert prior._same_search(saved,'in:anywhere {"Optiver"}') is same
+
+
+def test_waiting_history_progress_does_not_spend_new_company_check_slot(store,optiver,monkeypatch):
+    from hireme.worker import cycle
+    other={**optiver,'company':'FreshCo','id':digest('fresh-co'),
+           'url':'https://job-boards.greenhouse.io/freshco/jobs/99992'}
+    store.upsert_job(other)
+    store.update_settings({'gmail_prior_applications':True,'max_attempts_per_cycle':1})
+    monkeypatch.setattr('hireme.worker.eligible',lambda job,*args:(90 if job['id']==optiver['id'] else 60,{}))
+    service=Mailbox(optiver)
+    def search(**kw):
+        service.lists.append(kw)
+        if 'optiver' in kw['q'].lower():
+            token=str(int(kw.get('pageToken','0'))+1)
+            return Response({'messages':[],'nextPageToken':token})
+        return Response({'messages':[]})
+    service.list=search
+    monkeypatch.setattr(prior,'GmailClient',lambda _:SimpleNamespace(email='test@candidate.invalid',service=service))
+    monkeypatch.setattr(prior,'AUTO_SCAN_PAGES',1)
+    first=cycle(store,Path('.'),discover=False,job_ids=[optiver['id']],browser_factory=ReachedBrowser)
+    assert first['attempts']==0 and first['reasons']['prior_application_scan_incomplete']==1
+    monkeypatch.setattr(prior,'AUTO_SCAN_PAGES',2)
+    second=cycle(store,Path('.'),discover=False,job_ids=[optiver['id'],other['id']],browser_factory=ReachedBrowser)
+    assert second['attempts']==1 and second['reasons']['prior_application_scan_incomplete']==1
+    assert [(r[0],) for r in store.db.execute("SELECT subject FROM events WHERE kind='fixture_browser_reached'")]==[(other['id'],)]
+    pending=store.db.execute("SELECT next_page,completed FROM prior_application_scans WHERE company_key='optiver'").fetchone()
+    assert pending['next_page']=='3' and pending['completed'] is None
+    assert store.db.execute("SELECT 1 FROM events WHERE kind='prior_mail_maintenance' AND subject=?",(optiver['id'],)).fetchone()
+    with pytest.raises(Blocked,match='prior_application_check_required'):prior.require_recent_check(store,optiver)
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()

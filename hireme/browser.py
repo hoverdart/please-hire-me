@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, parse_qsl
 
 from .answers import resolve,page_requires_manual_work,field_key
 from .discovery import ATS_HOSTS,PORTAL_HOSTS
-from .util import Blocked,digest,private_dir,public_host,safe_document,textarea_value
+from .util import ASHBY_TENANT,Blocked,digest,private_dir,public_host,safe_document,textarea_value
 
 ASHBY_UPLOAD_HOST='ashbyhq-infra-prd-main-app-uploaded-files-us-east-1.s3.us-east-1.amazonaws.com'
 LEVER_VERIFICATION_TIMEOUT=5000
@@ -206,10 +206,14 @@ SNAPSHOT=r"""selector => {
 CONFIRMED=re.compile(
     r"(?:^|[.!?\n])\s*(?:"
     r"thank you for (?:applying\b|submitting (?:your |the |an )?application\b)|"
+    r"thanks for applying to join our team at [^.!?\n]{1,100}[.!]\s+we['’]ll be in touch shortly with next steps\b|"
+    r"now that you['’]ve taken the first step by submitting your application,\s+"
+    r"(?:our|the) team will carefully review your r[eé]sum[eé] and qualifications\b|"
     r"(?:your |the )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b|"
-    r"we (?:have |have successfully |successfully )?received your application\b|"
+    r"we(?: (?:have |have successfully |successfully )?|['’]ve (?:successfully )?)received your application\b|"
     r"you have successfully applied\b)",re.I)
 INCOMPLETE_SUBMISSION=re.compile(
+    r"\bwe(?:(?: have (?:not(?: yet)?|never)|['’]ve (?:not(?: yet)?|never)| haven['’]t(?: yet)?) (?:successfully )?received| (?:did not|didn['’]t|never) receive) your application\b|"
     r"\b(?:your |the )?application (?:(?:has |was |is )?(?:not |never )|(?:hasn|wasn|isn)['’]t )(?:been )?(?:successfully )?(?:submitted|received|complete)\b|"
     r"\b(?:your |the )?application (?:could not|couldn['’]t|cannot|can['’]t) be (?:successfully )?(?:submitted|received|processed)\b|"
     r"\b(?:application )?submission (?:has |was |is )?(?:failed|unsuccessful)\b|"
@@ -225,7 +229,13 @@ def submission_receipt(text,before=''):
     if INCOMPLETE_SUBMISSION.search(text):return False
     # Text already present in the posting cannot prove that this click succeeded.
     # Compare acknowledged phrases, ignoring layout and capitalization changes.
-    markers=lambda value:{' '.join(match[0].lstrip('.!?\n').casefold().split()) for match in CONFIRMED.finditer(value)}
+    def markers(value):
+        result=set()
+        for match in CONFIRMED.finditer(value):
+            marker=' '.join(match[0].lstrip('.!?\n').casefold().split())
+            if re.match(r"^we(?: |['’]ve )",marker):marker='we have received your application'
+            result.add(marker)
+        return result
     return bool(markers(text)-markers(before) or (
         re.search(r"thanks again for applying[!.]",text,re.I) and
         re.search(r"our talent team will carefully review your qualifications and experience",text,re.I) and
@@ -658,13 +668,18 @@ class Browser:
         return bool(self.test_url)
 
     def _record_native_receipt(self,job,text):
-        """Persist a verified fresh Ashby receipt without retaining its text."""
+        """Bind a fresh rendered receipt to its exact native request."""
         signature=getattr(self.ashby_submission,'request_signature',None)
-        if not signature:return
+        platform='ashby';request_hash=signature[2] if signature else None
+        if not request_hash:
+            from .greenhouse_submission import GreenhouseSubmission
+            if isinstance(self.native_submission,GreenhouseSubmission):
+                platform='greenhouse';request_hash=getattr(self.native_submission,'request_hash',None)
+        if not request_hash:return
         from .util import application_identity
         self.store.event('submission_receipt_verified',self.aid,{
-            'platform':'ashby','posting_identity':list(application_identity(job['url'])),
-            'request_hash':signature[2],'receipt_sha256':digest(text),'fresh':True})
+            'platform':platform,'posting_identity':list(application_identity(job['url'])),
+            'request_hash':request_hash,'receipt_sha256':digest(text),'fresh':True})
 
     @staticmethod
     def _request_key(request):
@@ -992,6 +1007,7 @@ class Browser:
         confirmed=(submission_receipt(text,self.receipt_baseline) and not self.page.locator('input[type=email]').count()
                    and self._native_submission_acknowledged())
         outcome='confirmed' if confirmed else 'awaiting_verification' if self._email_verification(text) else 'unknown'
+        if outcome=='confirmed':self._record_native_receipt(job,text)
         self.store.finish(self.aid,outcome,text,screenshot_name)
         return outcome
 
@@ -1031,7 +1047,9 @@ class Browser:
                 try:
                     self._open_combobox(el); self.page.wait_for_timeout(200)
                     menu=self._menu(el)
-                    if field_key(f['label']) not in ('school','location'):
+                    key=field_key(f['label'])
+                    state_lookup=key=='state' and self.current_host=='jobs.ashbyhq.com'
+                    if key not in ('school','location') and not state_lookup:
                         # ATS dropdowns may hydrate after opening. An empty early
                         # read must not turn a choice into a free-text fact.
                         with contextlib.suppress(Exception):menu.get_by_role('option').first.wait_for(state='visible',timeout=5000)
@@ -1070,8 +1088,8 @@ class Browser:
                         # its menu. Those visible chips remain valid choices.
                         f['options']=list(dict.fromkeys([*f['options'],*chips]))
                         f['value']='\n'.join(chips)
-                    if field_key(f['label']) in ('school','location','major') and el.evaluate('(e)=>e.tagName==="INPUT"'):
-                        key=field_key(f['label']);fact=self.store.facts().get(key)
+                    if (key in ('school','location','major') or state_lookup) and el.evaluate('(e)=>e.tagName==="INPUT"'):
+                        fact=self.store.facts().get(key)
                         if fact:
                             original=el.input_value()
                             found=list(f['options'])
@@ -1079,6 +1097,7 @@ class Browser:
                             # 100 choices until searched. A combined major may
                             # need the offered Other choice beyond that window.
                             queries=(fact['value'], 'Other') if key=='major' else (fact['value'],fact['value'].split(',')[0] if key=='location' else 'Berkeley' if 'berkeley' in fact['value'].casefold() else fact['value'])
+                            if state_lookup and fact['value'].strip().casefold()=='ca':queries=('California',)
                             for query in dict.fromkeys(queries):
                                 self.store.checkpoint();el.fill(query);self.page.wait_for_timeout(1200)
                                 found.extend(self._option_labels(self._menu(el).get_by_role('option'),f))
@@ -1104,7 +1123,7 @@ class Browser:
         from decimal import Decimal, InvalidOperation
         shapes=[]
         for f in fields:
-            shape={k:v for k,v in f.items() if k not in ('value','index','indices','ref','refs','form_index') and not (k=='options' and f['type']=='combobox')}
+            shape={k:v for k,v in f.items() if k not in ('value','index','indices','ref','refs','form_index','history_entry_id','history_key') and not (k=='options' and f['type']=='combobox')}
             if f['type']=='number':
                 # React mirrors the entered value into the value attribute.
                 # Compare the allowed numeric lattice, not its changing origin;
@@ -1191,7 +1210,7 @@ class Browser:
         """The official Application tab is a posting-bound navigation link."""
         if self.current_host!='jobs.ashbyhq.com':return None
         posting=urlsplit(self.ashby_draft.navigation_url if self.ashby_draft else job['url'])
-        if not re.fullmatch(r'/[A-Za-z0-9_-]+/[0-9a-f-]{36}/?',posting.path,re.I):return None
+        if not re.fullmatch(r'/'+ASHBY_TENANT+r'/[0-9a-f-]{36}/?',posting.path,re.I):return None
         entry=self.page.get_by_role('tab',name='Application',exact=True)
         if entry.count()!=1:return None
         data=entry.evaluate('(e)=>({tag:e.tagName,href:e.href,form:!!e.closest("form")})')
@@ -1318,7 +1337,7 @@ class Browser:
                 path=safe_document(self.store.root/'documents'/d['filename'],self.store.root/'documents')
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=d['hash']:raise Blocked('document_tampered')
                 continue
-            if self.lever_resume and d['hash']==self.lever_resume.document['hash']:self.lever_resume.verify()
+            if self.lever_resume and d['kind']=='resume':self.lever_resume.verify(d)
             if not self.preparing and self.current_host in {'boards.greenhouse.io','job-boards.greenhouse.io','boards.eu.greenhouse.io','job-boards.eu.greenhouse.io'} and d['hash'] not in self.uploaded_files:
                 raise Blocked('upload_verification_failed','Greenhouse has not acknowledged the approved PDF upload')
             if not self.preparing and self.current_host=='jobs.ashbyhq.com':
@@ -1501,6 +1520,10 @@ class Browser:
             dropdowns=[f for f in fields if f['type']=='combobox' and field_key(f['label']) not in ('school','location')]
             if len(dropdowns)>=2 and not any(f['options'] for f in dropdowns):
                 raise Blocked('posting_fetch_failed','No dropdown on the application loaded its choices; nothing was submitted')
+            from .greenhouse_submission import HOSTS as greenhouse_hosts, employment_answers
+            employment = employment_answers(self.store,fields) if job['host'] in greenhouse_hosts else {}
+            if employment:
+                fields = [employment[f['index']]['field'] if f['index'] in employment else f for f in fields]
             answers=[]; documents=list(retained_docs); pending=[]; optional=[]; budget_error=None; asked=set()
             for f in fields:
                 self.store.checkpoint()
@@ -1529,8 +1552,12 @@ class Browser:
                     # Resolve known values locally first. The unresolved page is
                     # planned together below, before any applicant value is filled.
                     provider=None if budget_error or (self.store.settings()['tailored_writing'] and hasattr(answer_provider,'plan_form')) else answer_provider
-                    answer_context={**job,'previous_answers':answers,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]}
-                    a=resolve(self.store,job['answer_scope'],f,provider,context=answer_context)
+                    answer_context={**job,'previous_answers':all_answers+answers,'form_questions':[x['label'] for x in fields],'previous_templates':[x['provenance']['template_id'] for x in answers if 'template_id' in x['provenance']], 'previous_writing':[{'question':x['field']['label'],'answer':x['value']} for x in answers if 'sample_parts' in x['provenance'] or 'template_id' in x['provenance']]}
+                    a=employment.get(f['index'])
+                    if a:
+                        self.store.resolve_known_question(job['answer_scope'],f['label'],f['options'],field=f,context=answer_context)
+                    else:
+                        a=resolve(self.store,job['answer_scope'],f,provider,context=answer_context)
                     if a:
                         if f['required'] and a['value']=='No' and 'graduation_window_revision' in a['provenance'] and re.search(r'\bi confirm\b',f['label'],re.I):
                             raise Blocked('graduation_mismatch',f['label'])
@@ -1553,7 +1580,7 @@ class Browser:
             if (pending or optional) and not budget_error:
                 from .page_answers import plan as plan_page
                 try:
-                    planned,remaining=plan_page(self.store,job['answer_scope'],fields,answers,pending+optional,answer_provider,job)
+                    planned,remaining=plan_page(self.store,job['answer_scope'],fields,answers,pending+optional,answer_provider,job,previous=all_answers)
                     pending=[(f,r) for f,r in remaining if f['required'] or _prefilled(f)]
                     answers.extend(planned)
                     answers.sort(key=lambda a:fields.index(a['field']))
@@ -1568,11 +1595,13 @@ class Browser:
             if pending:
                 # Only genuine remaining gaps reach the user. Do not flash
                 # questions in the portal while the page planner is answering.
+                from .page_answers import PROVIDER_FAILURES as connection_failures
                 for f,reason in pending:
-                    question_context={**job,'previous_answers':[a for a in answers if fields.index(a['field'])<fields.index(f)]}
+                    if reason in connection_failures:continue
+                    question_context={**job,'previous_answers':all_answers+[a for a in answers if fields.index(a['field'])<fields.index(f)]}
                     asked.add(self.store.ask(job['id'],job['answer_scope'],f['label'],f['options'],reason,field=f,context=question_context))
                 # This attempt's questions supersede earlier attempts' wording and widgets.
-                self.store.retire_questions(job['id'],asked)
+                if asked:self.store.retire_questions(job['id'],asked)
                 labels='; '.join(f['label'] for f,_ in pending)
                 if budget_error:raise Blocked('model_budget_exhausted',labels+' — '+budget_error.detail)
                 # A failed model call is not missing applicant information. Use
@@ -1611,9 +1640,15 @@ class Browser:
                 self.upload_payloads[d['hash']]=path.read_bytes()
                 if d in retained_docs:continue
                 control=self._control(d['field'])
-                if live and self.current_host in {'jobs.lever.co','jobs.eu.lever.co'} and d['kind']=='resume' and control.get_attribute('id')=='resume-upload-input':
-                    from .lever_resume import LeverResume
-                    self.lever_resume=LeverResume(self,d)
+                if self.current_host in {'jobs.lever.co','jobs.eu.lever.co'} and d['kind']=='resume':
+                    if self.lever_resume:
+                        # A conditional question can rebuild the plan while
+                        # Lever still holds the already-acknowledged PDF.
+                        self.lever_resume.verify(d)
+                        continue
+                    if control.get_attribute('id')=='resume-upload-input':
+                        from .lever_resume import LeverResume
+                        self.lever_resume=LeverResume(self,d)
                 control.set_input_files(str(path))
             if documents:
                 with contextlib.suppress(Exception):self.page.wait_for_load_state('networkidle',timeout=8000)
@@ -1730,6 +1765,8 @@ class Browser:
             if self.write_boundary:self.write_boundary.check()
             if self.ashby_draft:
                 from .ashby_guard import check
+                from .rollout import check_connections
+                check_connections(self.store)
                 # Make the fence check and final submission intent atomic with
                 # respect to another process recovering an interrupted draft.
                 with self.store.transaction():

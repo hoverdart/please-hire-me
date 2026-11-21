@@ -44,7 +44,7 @@ def test_refresh_persists_effective_grants_for_the_next_process(store,monkeypatc
     monkeypatch.setattr(credentials,'refresh',refresh)
     monkeypatch.setattr(Credentials,'from_authorized_user_info',lambda _:credentials)
     service=Service('test@candidate.invalid',None)
-    monkeypatch.setattr(gmail,'_service',lambda _:service)
+    monkeypatch.setattr(gmail,'_service',lambda *_:service)
     client=gmail.GmailClient(store)
     assert credentials.valid
     assert json.loads((folder/'gmail-token.json').read_text())['scopes']==gmail.READ_SCOPES
@@ -76,7 +76,7 @@ def test_incremental_consent_uses_granted_scopes_and_preserves_token_on_failure(
             raise warning
     flow=Flow();flow.credentials=credentials
     monkeypatch.setattr(InstalledAppFlow,'from_client_secrets_file',lambda *a,**kw:flow)
-    monkeypatch.setattr(gmail,'_service',lambda _:Service('test@candidate.invalid',None))
+    monkeypatch.setattr(gmail,'_service',lambda *_:Service('test@candidate.invalid',None))
     if accepted:
         assert gmail.connect(store)['connected']
         assert set(json.loads((folder/'gmail-token.json').read_text())['scopes'])==set(granted)

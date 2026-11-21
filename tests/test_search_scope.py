@@ -296,3 +296,107 @@ def test_next_internship_motivation_uses_writing_sources_not_fact_matching(store
     field={'label':'What are you most excited to work on in your next internship?','type':'textarea','required':True,'options':[],'maxlength':-1}
     assert category(field['label'])=='motivation'
     assert resolve(store,job['host'],field,Model(),context=job)['provenance']['tailored']
+
+
+def test_separate_explicit_spring_and_summer_cohorts_can_select_summer_only(store,job):
+    store.update_settings({'seniority':['summer-internship']})
+    store.put_facts({'earliest_start':'2027-05','latest_start':'2027-06'})
+    candidate={**job,'title':'Software Engineering Intern - Spring/Summer 2027',
+        'description':job['description']+'\nSpring: Around 16 weeks (January - April)\nSummer: Around 12 weeks (May - August)\n'}
+    assert eligible(candidate,store.settings(),store.facts())[0]>0
+
+
+@pytest.mark.parametrize('title,description',[
+    ('Spring/Summer 2027','Learn about our Summer 2027 program.'),
+    ('Spring & Summer 2027','Spring: Around 16 weeks (January - April)\nSummer: Around 12 weeks (May - August)'),
+    ('Spring/Summer 2026','Spring: Around 16 weeks (January - April)\nSummer: Around 12 weeks (May - August)'),
+    ('Spring/Summer 2027','Spring: Around 16 weeks (January - April)\nSummer: Around 12 weeks (May - August)\nMust commit to both Spring and Summer.'),
+    ('Spring/Summer 2027','Spring: Around 16 weeks (January - April)\nSummer: Around 24 weeks (May - October)'),
+])
+def test_season_choices_require_exact_separate_summer_cohort_evidence(store,job,title,description):
+    store.update_settings({'seniority':['summer-internship']})
+    with pytest.raises(Blocked,match='internship_out_of_scope'):
+        eligible({**job,'title':'Software Intern - '+title,'description':job['description']+'\n'+description},store.settings(),store.facts())
+
+
+@pytest.mark.parametrize('title,dates,accepted',[
+    ('Backend Engineer Intern','The internship program will run from June 1 through August 31, 2027.',True),
+    ('Software Developer Intern (2027)','The internship lasts 10 weeks, from June 7 to August 13.',True),
+    ('Software Developer Intern','The internship lasts 10 weeks, from June 7 to August 13.',False),
+    ('Backend Engineer Intern (2028)','The internship program runs from June 1 to August 31, 2027.',False),
+    ('Backend Engineer Intern','The internship application period runs from June 1 to August 31, 2027.',False),
+    ('Backend Engineer Intern','The internship program runs from June 31 to August 31, 2027.',False),
+    ('Backend Engineer Intern','The internship program runs from June 1 to August 31, 2026.',False),
+    ('Backend Engineer Intern','The internship program runs from June 1 to December 31, 2027.',False),
+    ('Backend Engineer Intern (Winter 2027)','The internship program runs from June 1 to August 31, 2027.',False),
+])
+def test_summer_scope_uses_explicit_placement_dates(store,job,title,dates,accepted):
+    store.update_settings({'seniority':['summer-internship']})
+    candidate={**job,'title':title,'description':job['description']+'\n'+dates,'terms':['Summer 2027']}
+    if accepted:
+        assert eligible(candidate,store.settings(),store.facts())[0]>0
+    else:
+        with pytest.raises(Blocked,match='internship_out_of_scope'):
+            eligible(candidate,store.settings(),store.facts())
+
+
+@pytest.mark.parametrize('apostrophe',["'",'’'])
+def test_short_summer_year_requires_full_posting_year_and_checks_availability(store,job,apostrophe):
+    store.update_settings({'seniority':['summer-internship']})
+    candidate={**job,'title':f'Software Engineering Intern - Summer {apostrophe}27'}
+    with pytest.raises(Blocked,match='internship_out_of_scope'):
+        eligible(candidate,store.settings(),store.facts())
+    candidate['description']+='\nThis is a Summer 2027 placement.'
+    assert eligible(candidate,store.settings(),store.facts())[0]>0
+    with pytest.raises(Blocked,match='internship_out_of_scope'):
+        eligible({**candidate,'title':candidate['title']+' (2026)'},store.settings(),store.facts())
+    store.put_facts({'earliest_start':'2027-09'})
+    with pytest.raises(Blocked,match='start_window_mismatch'):
+        eligible(candidate,store.settings(),store.facts())
+
+
+def test_graduate_program_requirement_does_not_mask_a_real_graduation_cutoff(store,job):
+    store.put_facts({'graduation':'2028-06'})
+    candidate={**job,'description':job['description']+
+        '\nMust be enrolled in a bachelor’s degree or graduate program.'}
+    assert eligible(candidate,store.settings(),store.facts())[0]>0
+    candidate['description']+='\nMust graduate by December 2027.'
+    with pytest.raises(Blocked,match='graduation_mismatch'):
+        eligible(candidate,store.settings(),store.facts())
+
+
+@pytest.mark.parametrize('posting',[
+    '<li style="font-size: 12pt;">Expected to graduate by <strong>Summer 2028</strong></li>',
+    '<li>Expected to graduate between <strong>Fall 2027 &amp; Summer&nbsp;2028</strong></li>',
+])
+def test_graduation_cutoffs_survive_employer_html(posting):
+    from hireme.graduation import required
+    required(posting,'2028-05')
+    with pytest.raises(Blocked,match='graduation_mismatch'):
+        required(posting,'2028-09')
+
+
+def test_optional_postgraduate_employment_does_not_hide_candidate_cutoffs():
+    from hireme.graduation import required
+    optional='High-performing interns may be considered for full-time roles after graduation.'
+    required(optional,'2028-05')
+    with pytest.raises(Blocked,match='graduation_mismatch'):
+        required(optional+' Applicants must graduate by December 2027.','2028-05')
+    with pytest.raises(Blocked,match='graduation_window_review'):
+        required('Applicants must graduate before the internship starts.','2028-05')
+
+
+def test_masters_without_apostrophe_is_still_a_graduate_requirement(store,job):
+    store.put_facts({'degree':'BS'})
+    candidate={**job,'title':'Machine Learning Intern (Masters) - Summer 2027'}
+    with pytest.raises(Blocked,match='degree_mismatch'):
+        eligible(candidate,store.settings(),store.facts())
+
+
+@pytest.mark.parametrize('specialty,accepted',[('Software',True),('Hardware',False),('Software Sales',False)])
+def test_reverse_engineering_intern_title_preserves_exact_software_specialty(store,job,specialty,accepted):
+    store.update_settings({'roles':['software'],'seniority':['summer-internship']})
+    item={**job,'title':f'Engineer Intern - {specialty} (Summer 2027)'}
+    if accepted:assert eligible(item,store.settings(),store.facts())[0]>0
+    else:
+        with pytest.raises(Blocked,match='role_mismatch'):eligible(item,store.settings(),store.facts())

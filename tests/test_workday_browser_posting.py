@@ -28,6 +28,21 @@ def test_rendered_workday_identity_verifies_without_a_separate_http_api(posting_
     assert inspect_posting(posting_page,{'url':URL,'title':TITLE},lambda:None)==DESCRIPTION
 
 
+def test_posting_identity_waits_for_client_heading_to_settle_before_authorizing(posting_page):
+    posting_page.locator('h1').evaluate('(node,title)=>{node.textContent="Loading previous view";setTimeout(()=>node.textContent=title,600)}',TITLE)
+    assert inspect_posting(posting_page,{'url':URL,'title':TITLE},lambda:None)==DESCRIPTION
+
+
+@pytest.mark.parametrize('rendered,valid',[('R_2121',True),('R_2121_EXTRA',False),('PREFIX_R_2121',False)])
+def test_rendered_underscore_requisition_requires_its_complete_identifier(posting_page,rendered,valid):
+    posting_page.locator('p').evaluate('(node,value)=>node.textContent=value',rendered)
+    args=(posting_page,{'url':URL,'title':TITLE},lambda:None)
+    if valid:assert inspect_posting(*args,identity={'requisition_id':'R_2121'})==DESCRIPTION
+    else:
+        with pytest.raises(Blocked,match='posting_inspection_review'):
+            inspect_posting(*args,identity={'requisition_id':'R_2121'})
+
+
 @pytest.mark.parametrize('change,reason',[
     ('title','posting_changed_review'),('req','posting_inspection_review'),('expired','expired_posting')])
 def test_changed_or_expired_rendered_posting_does_not_authorize_application(posting_page,change,reason):
@@ -93,3 +108,47 @@ def test_sign_in_provider_choice_is_an_account_hold_before_password_fields(store
         browser.page.set_content('<h1>Sign In</h1><button>Sign in with email</button>')
         browser.allowed_origin=origin(browser.page.url);browser.denied_write=False;browser.owner_verified=False;browser.preparing=True
         with pytest.raises(Blocked,match='account_blocked'):browser._check()
+
+
+def test_public_signed_out_workday_entry_needs_no_authenticated_profile_read(posting_page,store,monkeypatch):
+    from hireme.browser_identity import initial_workday_account
+    posting_page.evaluate("()=>window.workday={tenant:'nvidia',siteId:'NVIDIAExternalCareerSite'}")
+    def forbidden(*args):pytest.fail('A signed-out public posting cannot make an authenticated profile read')
+    monkeypatch.setattr('hireme.browser_identity.verify_workday_account',forbidden)
+    assert initial_workday_account(SimpleNamespace(page=posting_page,job={'url':URL},store=store)) is False
+
+
+@pytest.mark.parametrize('context',[
+    {'tenant':'other','siteId':'NVIDIAExternalCareerSite'},
+    {'tenant':'nvidia','siteId':'Other'},
+    {'tenant':'nvidia','siteId':'NVIDIAExternalCareerSite','user':{'name':'Candidate'}},
+    {'tenant':'nvidia','siteId':'NVIDIAExternalCareerSite','token':'fixture-token'},
+])
+def test_public_entry_cannot_skip_ownership_check_for_signed_in_or_foreign_context(posting_page,store,monkeypatch,context):
+    from hireme.browser_identity import initial_workday_account
+    posting_page.evaluate('value=>window.workday=value',context);checks=[]
+    monkeypatch.setattr('hireme.browser_identity.verify_workday_account',lambda agent:checks.append(agent) or False)
+    assert initial_workday_account(SimpleNamespace(page=posting_page,job={'url':URL},store=store)) is False
+    assert len(checks)==1
+
+
+@pytest.mark.parametrize('signed_in,expected',[(False,False),(True,'blocked')])
+def test_public_profile_read_failure_never_establishes_ownership(posting_page,store,monkeypatch,signed_in,expected):
+    from hireme.browser_identity import initial_workday_account
+    posting_page.evaluate('signed=>window.workday={tenant:"nvidia",siteId:"NVIDIAExternalCareerSite",token:"fixture",user:signed?{name:"Candidate"}:null}',signed_in)
+    def unavailable(*args):raise Blocked('browser_identity_unverified')
+    monkeypatch.setattr('hireme.browser_identity.verify_workday_account',unavailable)
+    agent=SimpleNamespace(page=posting_page,job={'url':URL},store=store)
+    if expected=='blocked':
+        with pytest.raises(Blocked,match='browser_identity_unverified'):initial_workday_account(agent)
+    else:assert initial_workday_account(agent) is False
+
+
+@pytest.mark.parametrize('resource_type',['fetch','xhr'])
+def test_shared_workday_translation_cdn_is_a_read_only_asset_source(resource_type):
+    url='https://www.myworkdaycdn.com/wday/asset/candidate-experience-jobs/compiled-lang/cxs_account_creation/en-US.json'
+    assert asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url,method='GET',resource_type=resource_type))
+    assert not asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url,method='POST',resource_type=resource_type))
+    assert not asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url,method='GET',resource_type='document'))
+    assert not asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url.replace('/wday/asset/','/wday/cxs/'),method='GET',resource_type=resource_type))
+    assert not asset_read('ntst.wd1.myworkdayjobs.com',SimpleNamespace(url=url.replace('www.myworkdaycdn.com','www.myworkdaycdn.com.attacker.invalid'),method='GET',resource_type=resource_type))

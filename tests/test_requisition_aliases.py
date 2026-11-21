@@ -7,6 +7,7 @@ REQ = '12345678-1234-1234-1234-123456789abc'
 
 @pytest.mark.parametrize('first,second', [
     (f'https://jobs.ashbyhq.com/acme/{REQ}', f'https://jobs.ashbyhq.com/acme/{REQ}/application?embed=true'),
+    (f'https://jobs.ashbyhq.com/acme.ai/{REQ}', f'https://jobs.ashbyhq.com/ACME.ai/{REQ}/application'),
     (f'https://jobs.lever.co/acme/{REQ}', f'https://jobs.lever.co/acme/{REQ}/apply?utm_source=test'),
     ('https://boards.greenhouse.io/acme/jobs/123', 'https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123'),
     ('https://boards.eu.greenhouse.io/acme/jobs/123', 'https://job-boards.eu.greenhouse.io/acme/jobs/123?gh_src=test'),
@@ -60,6 +61,19 @@ def test_unsubmitted_preparation_is_not_a_recorded_attempt(store, job, package):
     store._check_budget(second, store.settings())
 
 
+@pytest.mark.parametrize('state',['confirmed','unknown','awaiting_verification'])
+def test_greenhouse_regional_alias_keeps_the_original_submission_lock(store,job,package,state):
+    us='job-boards.greenhouse.io';eu='job-boards.eu.greenhouse.io'
+    first={**job,'id':digest('regional-us'),'host':us,'url':f'https://{us}/acme/jobs/123'}
+    store.upsert_job(first)
+    aid=store.prepare(first,{**package,'job_id':first['id'],'url':first['url']})
+    store.db.execute("UPDATE applications SET state=?,attempted='2020-01-01T00:00:00+00:00' WHERE id=?",(state,aid))
+    alias={**first,'id':digest('regional-eu'),'host':eu,'url':f'https://{eu}/acme/jobs/123'}
+    store.upsert_job(alias)
+    with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(alias,store.settings())
+    assert store.db.execute('SELECT state FROM applications WHERE id=?',(aid,)).fetchone()[0]==state
+
+
 def test_ashby_board_case_cannot_create_another_requisition_identity(store,job,package):
     first={**job,'id':digest('case-original'),'url':f'https://jobs.ashbyhq.com/Serval/{REQ}','host':'jobs.ashbyhq.com'}
     store.upsert_job(first)
@@ -109,3 +123,25 @@ def test_workday_locale_or_title_alias_cannot_repeat_a_recorded_requisition(stor
 def test_workday_alias_comparison_does_not_merge_unknown_tenants_sites_or_requisitions(url):
     known='https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Intern_JR2023495'
     assert application_identity(url)!=application_identity(known)
+
+
+@pytest.mark.parametrize('state',['confirmed','unknown','awaiting_verification','not_submitted','submitting'])
+def test_unconfigured_workday_case_locale_and_location_aliases_preserve_attempt_fences(store,job,package,state):
+    host='fixture-employer.wd1.myworkdayjobs.com'
+    first={**job,'id':digest('unconfigured-workday-original'),'host':host,
+           'url':f'https://{host}/External/job/US-CA/Software-Intern_R_123'}
+    store.upsert_job(first);aid=store.prepare(first,{**package,'job_id':first['id'],'url':first['url']})
+    store.db.execute("UPDATE applications SET state=?,attempted='2020-01-01T00:00:00+00:00' WHERE id=?",(state,aid))
+    second={**first,'id':digest('unconfigured-workday-alias'),'company':'Another feed label',
+            'url':f'https://{host}/en-US/external/job/Updated-Location/Software-Intern_R_123'}
+    store.upsert_job(second);before=dict(store.application_record(aid))
+    assert application_identity(first['url'])==application_identity(second['url'])
+    with pytest.raises(Blocked,match='duplicate_or_uncertain'):store._check_budget(second,store.settings())
+    assert dict(store.application_record(aid))==before
+
+
+def test_configured_workday_site_case_alias_keeps_the_existing_receipt_identity():
+    base='https://nvidia.wd5.myworkdayjobs.com'
+    canonical=base+'/NVIDIAExternalCareerSite/job/US/Software-Intern_JR2023495'
+    assert application_identity(canonical)==('workday','nvidia.wd5.myworkdayjobs.com','NVIDIAExternalCareerSite','JR2023495')
+    assert application_identity(canonical)==application_identity(base+'/en-US/nvidiaexternalcareersite/job/US/Software-Intern_JR2023495')

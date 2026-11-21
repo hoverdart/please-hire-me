@@ -40,18 +40,17 @@ def inspect(store,job):
                     if workday:
                         from urllib.parse import urlsplit
                         from .net import public_host
-                        parsed=urlsplit(route.request.url);shard=job['host'].split('.')[1]
-                        if (parsed.scheme=='https' and parsed.hostname in {shard+'.myworkday.com',shard+'.myworkdaycdn.com'}
-                                and parsed.port in (None,443) and not parsed.username and not parsed.password
-                                and route.request.method in {'GET','HEAD','OPTIONS'}
-                                and re.fullmatch(r'/wday/asset/[A-Za-z0-9._/-]+',parsed.path) and '..' not in parsed.path.split('/')):
+                        from .workday_site import asset_read
+                        parsed=urlsplit(route.request.url)
+                        if asset_read(job['host'],route.request):
                             return route.continue_() if public_host(parsed.hostname) else route.abort()
                     reader._route(route)
                 reader.context.route('**/*',readonly)
                 reader.page.goto(navigation,wait_until='domcontentloaded',timeout=45000)
                 if job['host'].endswith('.myworkdayjobs.com'):
-                    from .workday_browser_posting import inspect_posting
-                    text=inspect_posting(reader.page,job,store.checkpoint)
+                    from .workday_browser_posting import verified_posting
+                    job=verified_posting(reader.page,job,store.checkpoint)
+                    text=job['description']
                 else:
                     reader.page.wait_for_function('()=>document.body&&document.body.innerText.trim().length>0',timeout=20000)
                     if canonical_url(reader.page.url)!=canonical_url(navigation):raise Blocked('posting_changed_review','The public posting moved to a different destination')

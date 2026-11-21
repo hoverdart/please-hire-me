@@ -77,6 +77,17 @@ def test_transient_retry_only_two_delayed_retries(store,job,reason):
     hold(store,job,reason,at=10000)
     assert not ready(store,job,at=999999)
 
+def test_extending_model_timeout_releases_the_pre_submit_timeout_only(store,job,package):
+    hold(store,job,'provider_timeout',at=1000)
+    assert not ready(store,job,at=1001)
+    store.update_settings({'model_timeout_seconds':store.settings()['model_timeout_seconds']+60})
+    assert ready(store,job,at=1001)
+    aid=store.prepare(job,package)
+    store.begin_submit(aid)
+    store.finish(aid,'unknown')
+    assert not ready(store,job,at=1001)
+
+
 @pytest.mark.parametrize('state',['unknown','submitting','awaiting_verification','confirmed','not_submitted'])
 def test_recheck_never_releases_existing_outcome(store,job,package,state):
     store.prepare(job,package)
@@ -211,7 +222,7 @@ def test_unchanged_discovery_refresh_preserves_hold_but_posting_change_releases(
     assert ready(store,changed)
 
 
-def test_report_uses_latest_outcome_once_and_excludes_screening(store,job):
+def test_report_uses_latest_outcome_once_and_excludes_incomplete_screening(store,job):
     from hireme.reports import queue_report
     from hireme.util import now
     store.db.execute('INSERT INTO runs(id,started,finished,status,detail) VALUES(?,?,?,?,?)',('report-r',now(),now(),'finished',json.dumps({'attempts':1})))
@@ -222,6 +233,8 @@ def test_report_uses_latest_outcome_once_and_excludes_screening(store,job):
     queue_report(store,'report-r')
     body=store.db.execute('SELECT body FROM report_outbox WHERE id=?',('report-r',)).fetchone()[0]
     assert body.count(job['url'])==1 and other['url'] not in body and 'missing_answers' not in body
+    assert 'Confirmation could not be verified' in body
+    assert 'pre-application holds: 0' in body
 
 
 def test_review_questions_and_manual_approvals_are_section_scoped(store,job):

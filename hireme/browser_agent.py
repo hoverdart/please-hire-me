@@ -70,11 +70,16 @@ class AdaptiveBrowser(Browser):
             self.profile_directory=profile_path(store,connection_id)
         self.planner=planner;self.operation=None;self.job=None;self.allowed_origin=None
         self.stopped_reason=None;self.journal=None;self.completed_steps=[];self.uploads={}
+        self.account_operation=None;self.account_posting_verified=False;self.workday_account_attempted=False;self.account_tokens={}
 
     def __enter__(self):
         super().__enter__()
         self.page.remove_listener('response',self._upload_response)
+        self.page.on('response',self._account_response)
         return self
+
+    def _account_response(self,response):
+        if self.account_operation:self.account_operation.observe(response)
 
     def _route(self,route):
         request=route.request
@@ -89,6 +94,17 @@ class AdaptiveBrowser(Browser):
                 if parsed.hostname not in self.host_cache:self.host_cache[parsed.hostname]=public_host(parsed.hostname)
                 safe=bool(self.host_cache[parsed.hostname])
             if not safe:return route.abort()
+            from .workday_site import optional_provider_bootstrap
+            if self.job and optional_provider_bootstrap(self.job,request):return route.abort()
+            from .workday_accounts import nonce_read,remember_nonce
+            if same and nonce_read(self,request):
+                response=route.fetch(max_redirects=0,max_retries=0,timeout=10000)
+                if response.status==200:
+                    try:remember_nonce(self,request,response.json())
+                    except (ValueError,TypeError):pass
+                return route.fulfill(response=response)
+            if same and self.account_operation and self.account_operation.allow(request):
+                return route.continue_()
             from .workday_site import asset_read
             if asset_read(self.current_host,request):return route.continue_()
             if same and re.fullmatch(r'/(?:vslog|telemetry|analytics|metrics)(?:/.*)?',parsed.path,re.I):
@@ -157,6 +173,12 @@ class AdaptiveBrowser(Browser):
         if self.connection_id and not getattr(self,'owner_verified',False):
             from .browser_identity import verify_observed_account
             self.owner_verified=verify_observed_account(self)
+        needs_account=bool(self.page.locator('input[type=password]:visible').count()
+            or not getattr(self,'owner_verified',True) and self.page.get_by_role('heading',name=re.compile(r'^sign in$',re.I)).count())
+        if (needs_account and self.job and self.job['host'].endswith('.myworkdayjobs.com')
+                and not self.preparing and self.account_posting_verified and self.store.settings()['employer_accounts']):
+            from .workday_accounts import authenticate
+            authenticate(self)
         if self.page.locator('input[type=password]:visible').count():
             raise Blocked('account_blocked','Sign in using the app’s dedicated employer browser, then resume this saved application')
         if not getattr(self,'owner_verified',True) and self.page.get_by_role('heading',name=re.compile(r'^sign in$',re.I)).count():
@@ -266,6 +288,7 @@ class AdaptiveBrowser(Browser):
             'answers':old_answers+list(answers),'documents':list(docs.values()),'steps':steps,
             'browser_agent':{'version':VERSION,'profile_binding':self.binding,'last_url':_clean_url(self.page.url),
                 'complete':complete,'uploaded_documents':list(self.uploads.values()),
+                **({'remote_application_hash':self.workday_application_hash} if getattr(self,'workday_application_hash',None) else {}),
                 'completed_steps':self.completed_steps}}
 
     def _resolve(self,field,previous):
@@ -350,8 +373,13 @@ class AdaptiveBrowser(Browser):
             if error.reason in {'paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'}:raise
             return None
         provenance=query.get('provenance',{}) if query else {}
-        if provenance.get('fact_key') not in {'school','degree','major','city','location','country','state'} and 'history_entry_id' not in provenance:return None
-        candidates=[query['value']]
+        discovery=(isinstance(provenance.get('job_source'),str)
+            and provenance['job_source']==self.job.get('source')
+            and provenance['job_source'].startswith(('gh:','ash:','lv:','portal:','simplify:')))
+        if not discovery and provenance.get('fact_key') not in {'school','degree','major','city','location','country','state'} and 'history_entry_id' not in provenance:return None
+        # These are read-only menu queries, never approved selections. Resolve
+        # the returned exact choices again before a value can be saved.
+        candidates=(['Simplify','Other'] if provenance['job_source'].startswith('simplify:') else ['Other']) if discovery else [query['value']]
         if field.get('workday_prompt') and (provenance.get('fact_key')=='major' or provenance.get('history_key')=='field_of_study'):
             # Search terms narrow a menu; only the original confirmed value
             # can authorize a selected answer. Native prompts often cannot
@@ -410,6 +438,7 @@ class AdaptiveBrowser(Browser):
     def _choices(self,view):
         choices=[];answers=[];documents=[];pending=[]
         self._bind_history(view)
+        previous=[answer for step in self.completed_steps for answer in step['answers']]
         self.questions=[f['label'] for f in view['fields']]
         # Posting pages may contain contact/newsletter controls. Prefer their
         # application entry over entering applicant data into another form.
@@ -448,6 +477,13 @@ class AdaptiveBrowser(Browser):
                         if error.reason in {'paused','cycle_timeout','model_budget_exhausted','provider_rate_limited'}:raise
                         group=None
                     if group:
+                        key=(field['ui_id'],group['value'],tuple(field['option_groups']))
+                        if key in getattr(self,'expanded_groups',set()):
+                            lookup=self._lookup_choice(field,answers)
+                            if lookup:choices.append(lookup)
+                            elif field['required']:
+                                pending.append(({**field,**self.option_cache.get(field['ui_id'],{})},'required_answer_missing'))
+                            continue
                         choices.append({'id':'expand:'+field['ui_id']+':'+digest(group['value']),
                             'kind':'expand','label':'Inspect '+group['value']+' choices for '+field['label'],
                             'field':field,'value':group['value']})
@@ -468,13 +504,30 @@ class AdaptiveBrowser(Browser):
                     continue
             if field['type']=='combobox' and field['options']:
                 self.option_cache[field['ui_id']]={k:field[k] for k in ('options','option_values') if k in field}
+                if field.get('workday_prompt') and field.get('options_visible'):
+                    from .answers import _discovery_answer
+                    try:
+                        discovery=_discovery_answer(field['label'],[],self.job)
+                        listed=_discovery_answer(field['label'],field['options'],self.job) if discovery else None
+                    except Blocked:discovery=None;listed=None
+                    if discovery and not listed:
+                        position=self._scroll_prompt_options(field)
+                        if position:
+                            choices.append({'id':'scroll_options:'+field['ui_id']+':'+digest(position),
+                                'kind':'scroll_options','label':'Inspect more choices for '+field['label'],'field':field})
+                            continue
+                        lookup=self._lookup_choice(field,answers)
+                        if lookup:
+                            choices.append(lookup)
+                            continue
             try:
-                answer=self._resolve(field,answers)
+                answer=self._resolve(field,[*previous,*answers])
                 if answer:
                     # Virtualized prompts initially expose only a small slice
                     # of their choices. Search the confirmed name before using
                     # a catch-all that would discard a known institution.
-                    lookup=self._lookup_choice(field,answers) if field.get('workday_prompt') and field.get('options_visible') and answer['value'].casefold()=='other' else None
+                    lookup=self._lookup_choice(field,answers) if (field.get('workday_prompt') and field.get('options_visible')
+                        and answer['value'].casefold()=='other' and 'job_source' not in answer.get('provenance',{})) else None
                     if lookup and lookup['answer']['value'].casefold()!='other':
                         choices.append(lookup)
                         continue
@@ -502,6 +555,26 @@ class AdaptiveBrowser(Browser):
                 if field.get('options_visible'):
                     choices.append({'id':'close_options:'+field['ui_id'],'kind':'close_options',
                         'label':'Close inspected choices for '+field['label'],'field':field})
+        # Let visible options and confirmed values settle before reviewing a
+        # stable group of unanswered questions. No documents are uploaded yet.
+        if pending and all(choice['kind']=='upload' for choice in choices):
+            from .page_answers import plan
+            planned,pending=plan(self.store,self.job['answer_scope'],view['fields'],answers,pending,
+                                 self.provider,self.job,previous=previous)
+            for answer in planned:
+                field=answer['field']
+                if not self._matches(answer):
+                    choices.append({'id':'fill:'+field['ui_id'],'kind':'fill',
+                                    'label':'Fill approved answer for '+field['label'],'field':field,'answer':answer})
+            if planned:
+                answers.extend(planned)
+                answers.sort(key=lambda answer:view['fields'].index(answer['field']))
+        # A native date controller can clear a year entered while its required
+        # day is unknown. Resolve the whole group before typing any component.
+        blocked_dates={field['date_group'] for field,_ in pending if field.get('date_group')}
+        if blocked_dates:
+            choices=[choice for choice in choices if not (choice['kind']=='fill'
+                and choice.get('field',{}).get('date_group') in blocked_dates)]
         # Add only enough visible history rows to represent confirmed entries.
         for action in view['actions']:
             section=action.get('section')
@@ -532,10 +605,10 @@ class AdaptiveBrowser(Browser):
     def _choose(self,view,choices):
         # Filling resolved facts is a deterministic tool operation. The planner
         # is used for navigation/competing actions, not to invent field values.
-        immediate=[a for a in choices if a['kind'] in {'options','expand','close_options','search','fill','upload','add'}]
+        immediate=[a for a in choices if a['kind'] in {'options','expand','scroll_options','close_options','search','fill','upload','add'}]
         if immediate:
-            priority={'options':0,'expand':0,'close_options':0,'search':1,'fill':2,'add':3,'upload':4}
-            return min(immediate,key=lambda action:-1 if action['kind']=='expand' or
+            priority={'options':0,'expand':0,'scroll_options':0,'close_options':0,'search':1,'fill':2,'add':3,'upload':4}
+            return min(immediate,key=lambda action:-1 if action['kind'] in {'expand','scroll_options'} or
                 action['kind'] in {'fill','search'} and action['field'].get('options_visible') else priority[action['kind']])
         if len(choices)==1:return choices[0]
         if not choices:return None
@@ -604,12 +677,71 @@ class AdaptiveBrowser(Browser):
         # stable when typing re-renders controls ahead of the original DOM index.
         return inputs.nth(indices[0]) if indices else control
 
+    def _scroll_prompt_options(self,field,*,perform=False):
+        """Inspect the current prompt's own scroll area, without selecting a value."""
+        fresh=observe(self.page)
+        actual=next((f for f in fresh['fields'] if f['ui_id']==field['ui_id']),None)
+        if not actual or not actual.get('workday_prompt') or not actual.get('option_indices'):return None
+        option=self.page.locator('[role=option]').nth(actual['option_indices'][0])
+        return option.evaluate('''(option,perform)=>{
+          const menu=option.closest('[role=listbox]');if(!menu)return null;
+          const boundary=menu.parentElement?.parentElement;
+          for(let node=option.parentElement;node&&node!==boundary;node=node.parentElement){
+            if(node.clientHeight>0&&node.scrollHeight>node.clientHeight+1&&
+                /auto|scroll/.test(getComputedStyle(node).overflowY)){
+              const end=node.scrollHeight-node.clientHeight,top=node.scrollTop;
+              if(end-top<=1)return null;
+              const next=Math.min(end,top+Math.max(1,node.clientHeight*.8));
+              if(perform)node.scrollTop=next;
+              return {top,next,end};
+            }
+          }return null;
+        }''',perform)
+
     def _perform(self,choice,view,answers,documents):
         kind=choice['kind']
-        if kind=='expand':
-            self._prompt_option(choice['field'],choice['value'],group=True).click()
+        if kind=='scroll_options':
+            self._check()
+            if not self._scroll_prompt_options(choice['field'],perform=True):raise Blocked('browser_no_progress')
             self.option_cache.pop(choice['field']['ui_id'],None)
-            self.page.wait_for_timeout(200)
+            deadline=time.monotonic()+5
+            before=(choice['field'].get('options',[]),choice['field'].get('option_groups',[]))
+            while time.monotonic()<deadline:
+                self._check();fresh=observe(self.page)
+                field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
+                if field and (field.get('options',[]),field.get('option_groups',[]))!=before:break
+                self.page.wait_for_timeout(100)
+            self.memory.append({'action':choice['label'],'result':'more choices inspected'})
+            return
+        if kind=='expand':
+            before=(choice['field'].get('options',[]),choice['field'].get('option_groups',[]))
+            option=self._prompt_option(choice['field'],choice['value'],group=True)
+            # Workday arms the nested menu on pointer entry. Let that native
+            # focus settle; an immediate pointer move and click can lose the
+            # expansion. Some versions open children on hover alone.
+            option.hover();self.page.wait_for_timeout(700)
+            fresh=observe(self.page)
+            field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
+            current=(field.get('options',[]),field.get('option_groups',[])) if field else ([],[])
+            expanded=any(current) and current!=before
+            if not expanded:
+                option=self._prompt_option(choice['field'],choice['value'],group=True)
+                arrow=option.locator('svg.wd-icon-chevron-right-small').filter(visible=True)
+                if arrow.count()>1:raise Blocked('option_mismatch',choice['field']['label'])
+                (arrow if arrow.count()==1 else option).click()
+            self.option_cache.pop(choice['field']['ui_id'],None)
+            deadline=time.monotonic()+5
+            while not expanded and time.monotonic()<deadline:
+                self._check();fresh=observe(self.page)
+                field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
+                if field:
+                    current=(field.get('options',[]),field.get('option_groups',[]))
+                    expanded=any(current) and current!=before
+                    if expanded:break
+                self.page.wait_for_timeout(100)
+            if not expanded:raise Blocked('unsupported_widget','The native choice group did not expose its child options')
+            if not hasattr(self,'expanded_groups'):self.expanded_groups=set()
+            self.expanded_groups.add((choice['field']['ui_id'],choice['value'],tuple(choice['field'].get('option_groups',[]))))
             self.memory.append({'action':choice['label'],'result':'choices expanded'})
             return
         if kind=='close_options':
@@ -711,8 +843,14 @@ class AdaptiveBrowser(Browser):
                 elif kind=='search':
                     condition=any(f['ui_id']==choice['field']['ui_id'] and f['options'] for f in fresh['fields'])
                     if choice['field'].get('workday_prompt'):
+                        field=next((f for f in fresh['fields'] if f['ui_id']==choice['field']['ui_id']),None)
+                        returned=bool(field and field.get('options_visible') and field['options']
+                            and (field['options'],field.get('option_groups',[]))!=
+                                (choice['field']['options'],choice['field'].get('option_groups',[])))
+                        selected=bool(field and field.get('selected_options') and
+                            field['selected_options']!=choice['field'].get('selected_options',[]))
                         condition=(time.monotonic()-search_started>=2 and
-                            self._search_input(choice['field']).input_value()==query)
+                            (returned or selected or self._search_input(choice['field']).input_value()==query))
                 elif kind in {'entry','next'}:condition=changed and self._view_ready(fresh)
                 else:condition=changed
                 if condition and operation.complete and time.monotonic()-operation.last_activity>=.75:break
@@ -734,7 +872,8 @@ class AdaptiveBrowser(Browser):
                 self.uploads[checksum]={'hash':checksum,'kind':document['kind'],
                     'operation_id':operation.record,'profile_binding':self.binding}
             if kind=='next':
-                step={'fields':view['fields'],'answers':answers,'documents':documents,'url':_clean_url(view['url'])}
+                step={'fields':view['fields'],'answers':answers,'documents':documents,'url':_clean_url(view['url']),
+                    'operation_id':operation.record}
                 from .workday_site import HOST
                 if not HOST.fullmatch(self.job['host']) or _step_key(step) not in {_step_key(old) for old in self.completed_steps}:
                     self.completed_steps.append(step)
@@ -786,11 +925,16 @@ class AdaptiveBrowser(Browser):
             while time.monotonic()<deadline:
                 self._check();text=self._outcome_text()
                 receipt=self._receipt(text,before)
-                if operation.requests and operation.complete and receipt and not operation.accepted:
+                workday=(self.job['host'].endswith('.myworkdayjobs.com')
+                         and urlsplit(self.job['url']).hostname==self.job['host'])
+                if operation.requests and operation.complete and receipt and (not operation.accepted or workday and not getattr(operation,'verified_readback',None)):
                     from .workday_browser_receipt import verify_submission
                     operation.accepted=verify_submission(self,operation)
-                if operation.requests and operation.complete and operation.accepted and receipt:
+                if operation.requests and operation.complete and operation.accepted and receipt and (not workday or getattr(operation,'verified_readback',None)):
                     operation.acknowledge({'receipt':digest(text),'signature':observe(self.page)['signature']})
+                    if workday:
+                        from .workday_browser_receipt import record_verified_submission
+                        record_verified_submission(self,operation,text)
                     screenshot=self._outcome_screenshot(self.store.root/'screenshots'/(self.aid+'-after.jpg'))
                     self.store.finish(self.aid,'confirmed','Correlated employer UI acknowledgement and fresh application receipt',screenshot)
                     return 'confirmed'
@@ -834,6 +978,10 @@ class AdaptiveBrowser(Browser):
             # No answer, upload or completed step will be reused. A newly
             # confirmed value can invalidate the old local preview; resolve a
             # fresh package instead of requiring its stale answers to validate.
+            remote=metadata.get('remote_application_hash')
+            if (transient and remote and remote==getattr(self,'workday_application_hash',None)
+                    and self.job.get('_workday_saved_application',{}).get('remote_application_hash')==remote):
+                self.resume_workday=True
             return None
         # Adding a newly confirmed fact must not strand otherwise unchanged
         # saved steps. Each recorded answer/document is revalidated against
@@ -857,6 +1005,11 @@ class AdaptiveBrowser(Browser):
         if HOST.fullmatch(self.job['host']):
             # Workday's apply router needs its own authenticated continuation;
             # a cold saved URL can initialize a new, empty client session.
+            remote=metadata.get('remote_application_hash')
+            if remote:
+                expected=getattr(self,'workday_application_hash',None)
+                if expected and expected!=remote:raise Blocked('browser_draft_review')
+                self.workday_application_hash=remote
             self.resume_workday=True
             return None
         return target
@@ -911,7 +1064,9 @@ class AdaptiveBrowser(Browser):
                 raise Blocked('unapproved_destination')
         self.allowed_origin=origin(self.test_url or entry);self.current_host=urlsplit(self.allowed_origin).hostname
         self.stopped_reason=None;self.completed_steps=[];self.uploads={};self.staged_documents={};self.memory=[];self.opened=set();self.searched=set();self.search_queries={};self.option_cache={}
-        self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={};self.frame_entries=0
+        self.operation=None;self.denied_write=False;self.resume_workday=False;self.history_bindings={};self.frame_entries=0;self.expanded_groups=set()
+        self.workday_application_hash=None
+        self.account_operation=None;self.account_posting_verified=False;self.workday_account_attempted=False;self.account_tokens={}
         self.job['answer_scope']=job.get('answer_scope') or job['host']+'|'+self.store.company(job['company'])
         self.store.check_job_decision(job['id']);guard_pending(self.store,job)
         if (self.store.db.execute("SELECT 1 FROM draft_operations WHERE job_id=? AND operation NOT LIKE 'ui:%'",(job['id'],)).fetchone()
@@ -959,10 +1114,14 @@ class AdaptiveBrowser(Browser):
             if self._enter_frame():self._check()
             initial=observe(self.page)
             if workday and not self.test_url:
-                from .workday_browser_posting import inspect_posting
-                posting_text=inspect_posting(self.page,self.job,self.store.checkpoint)
-                from .browser_identity import verify_workday_account
-                self.owner_verified=verify_workday_account(self)
+                from .workday_browser_posting import verified_posting,dismiss_cookie_notice
+                from .workday_browser_continuation import verify as verify_saved
+                self.job.update(verified_posting(self.page,self.job,self.store.checkpoint,
+                    saved_application=lambda current,info:verify_saved(self,current,info)))
+                posting_text=self.job['description']
+                dismiss_cookie_notice(self.page)
+                from .browser_identity import initial_workday_account
+                self.owner_verified=initial_workday_account(self)
                 initial=observe(self.page)
             has_checkpoint=(self.store.db.execute('SELECT 1 FROM applications WHERE job_id=?',(job['id'],)).fetchone()
                 or self.store.db.execute("SELECT 1 FROM events WHERE kind='browser_agent_checkpoint' AND subject=? LIMIT 1",(job['id'],)).fetchone())
@@ -984,6 +1143,22 @@ class AdaptiveBrowser(Browser):
             eligible({**self.job,'description':current_posting},self.store.settings(),self.store.facts())
             self.job['description']=current_posting
             self.store.upsert_job(self.job)
+            self.account_posting_verified=True
+            if (workday and not self.preparing and not self.owner_verified
+                    and self.store.settings()['employer_accounts']):
+                # Establish the account through the career page's own sign-in
+                # before an application entry can initialize employer drafts.
+                from .workday_accounts import authenticate
+                authenticate(self)
+                self.page.goto(self.job['url'],wait_until='domcontentloaded',timeout=45000)
+                self._check()
+                self.job.update(verified_posting(self.page,self.job,self.store.checkpoint,
+                    saved_application=lambda current,info:verify_saved(self,current,info)))
+                eligible(self.job,self.store.settings(),self.store.facts())
+                self.store.upsert_job(self.job)
+                from .browser_identity import verify_workday_account
+                self.owner_verified=verify_workday_account(self)
+                if not self.owner_verified:raise Blocked('account_identity_unconfirmed')
             # A tailored resume binds the verified posting. Generating before
             # this refresh made an otherwise valid resume stale before its
             # first browser action (API HTML vs rendered text also differs).
@@ -1001,10 +1176,13 @@ class AdaptiveBrowser(Browser):
                 # unknown required or prefilled value stays in the question queue.
                 if not choices:
                     asked=set()
+                    from .page_answers import PROVIDER_FAILURES
                     for field,reason in pending:
-                        asked.add(self.store.ask(self.job['id'],self.job['answer_scope'],field['label'],field.get('options',[]),
-                            reason,field=field,context=self.job))
+                        if reason not in PROVIDER_FAILURES:
+                            asked.add(self.store.ask(self.job['id'],self.job['answer_scope'],field['label'],field.get('options',[]),
+                                reason,field=field,context=self.job))
                     if pending:
+                        if not asked:raise Blocked(pending[0][1],'; '.join(f['label'] for f,_ in pending))
                         self.store.retire_questions(self.job['id'],asked)
                         self._save_partial(answers,documents)
                         raise Blocked('missing_answers','; '.join(f['label'] for f,_ in pending))

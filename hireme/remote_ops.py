@@ -15,7 +15,8 @@ from .util import atomic_json, private_dir
 
 def _worker_path():
     """Use the installed worker's CLI search path, not SSH's minimal PATH."""
-    unit=Path.home()/'.config/systemd/user/please-hire-me-worker.service'
+    from .pi import unit_directory
+    unit=unit_directory()/'please-hire-me-worker.service'
     if unit.is_file() and not unit.is_symlink() and unit.stat().st_size<=65536:
         for line in unit.read_text().splitlines():
             if not line.startswith('Environment='):continue

@@ -2000,7 +2000,7 @@ function attentionCount() {
   );
 }
 function renderOverview(submitted) {
-  const count = state.summary?.attention_count ?? attentionCount(),
+  const count = state.summary?.applicant_attention_count ?? attentionCount(),
     ready =
       state.summary?.status_counts.discovered ??
       state.jobs.filter((j) => j.status === "discovered").length;
@@ -2013,7 +2013,7 @@ function renderOverview(submitted) {
   $("#metric-attention-help").textContent =
     count === 0
       ? "You’re all caught up"
-      : `${count === 1 ? "One item needs" : `${count} items need`} a little help`;
+      : `${count === 1 ? "One item needs" : `${count} items need`} your input`;
   $("#metric-opportunities").textContent = String(
     state.summary?.job_count ?? state.jobs.length,
   );
@@ -2161,10 +2161,10 @@ function editHistory(kind, entry = null) {
   form.elements[{ education: "institution", employment: "organization", project: "name" }[kind]].focus();
 }
 const historyLabels = {
-  institution: "Institution", degree: "Degree", field_of_study: "Field of study", gpa: "GPA",
+  institution: "Institution", degree: "Degree", field_of_study: "Field of study", gpa: "GPA", coursework: "Coursework",
   organization: "Organization", title: "Job title", location: "Location", current: "Current",
   start: "Start month", end: "Actual end month", expected_end: "Expected end month", description: "Responsibilities and accomplishments",
-  name: "Project name", role: "Your role", url: "Project link",
+  name: "Project name", role: "Your role", url: "Project link", technologies: "Technologies", resume_section: "Resume section",
 };
 function renderHistory() {
   const form = $("#history-form"), busy = historyBusy || state.demo;

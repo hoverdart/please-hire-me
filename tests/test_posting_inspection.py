@@ -11,6 +11,25 @@ from hireme.util import Blocked,digest
 from hireme.worker import cycle
 
 
+def test_ashby_embedded_form_reads_the_same_public_posting_first():
+    from hireme.ats_adapters import adapter_for
+    base='https://jobs.ashbyhq.com/fixture/12345678-1234-1234-1234-123456789abc'
+    job={'host':'jobs.ashbyhq.com','url':base+'/application?embed=true'}
+    assert adapter_for(job).navigation(job)==(base,None)
+    assert job['url']==base+'/application?embed=true'
+
+
+def test_greenhouse_reports_the_exact_official_posting_as_closed(monkeypatch):
+    from urllib.error import HTTPError
+    from hireme.ats_adapters import adapter_for
+    def unpublished(self,url):
+        raise HTTPError(url,404,'not published',None,None)
+    monkeypatch.setattr('hireme.net.Network.json',unpublished)
+    job={'host':'job-boards.greenhouse.io','url':'https://job-boards.greenhouse.io/fixture/jobs/1234'}
+    with pytest.raises(Blocked,match='expired_posting'):
+        adapter_for(job).navigation(job)
+
+
 @pytest.mark.parametrize('description',['','Sponsorship: Yes','Sponsorship: No'])
 def test_metadata_is_not_a_low_fit_verdict_or_application_authority(store,job,description):
     item={**job,'description':description}
@@ -129,3 +148,24 @@ def test_top_apply_link_keeps_job_text_and_excludes_form_eligibility_questions(s
         text=SingleStepAdapter().posting_text(browser.page.inner_text('body'),page=browser.page)
     assert job['description'] in text and 'graduate before' not in text and 'PhD required' not in text
     assert eligible({**job,'description':text},store.settings(),store.facts())[0]>=45
+
+
+def test_anonymous_workday_refresh_preserves_exact_official_identity(store,monkeypatch):
+    import json
+    from urllib.parse import urlsplit
+    url='https://synthetic.wd5.myworkdayjobs.com/External/job/US/Software-Intern_R123-2'
+    job={'id':digest(url),'url':url,'host':'synthetic.wd5.myworkdayjobs.com','company':'Synthetic',
+         'title':'Discovery title','description':'','source':'fixture','location':'San Francisco, United States'}
+    canonical='Software Engineering Intern Summer 2027'
+    class FixtureBrowser(Browser):
+        def _route(self,route):
+            assert route.request.method=='GET'
+            if urlsplit(route.request.url).path.startswith('/wday/cxs/'):
+                return route.fulfill(status=200,json={'jobPostingInfo':{'externalUrl':url,'jobPostingId':'Software-Intern_R123-2',
+                    'jobPostingSiteId':'External','jobReqId':'R123','title':canonical,'posted':True,'canApply':True}})
+            route.fulfill(status=200,content_type='text/html',body=f'<h1>{canonical}</h1><p>R123</p><div data-automation-id=jobPostingDescription>Build Python and TypeScript software.</div>')
+    monkeypatch.setattr('hireme.browser.Browser',FixtureBrowser)
+    result=inspect(store,job)
+    assert result['title']==canonical and result['_workday_public_identity']['requisition_id']=='R123'
+    assert result['description']=='Build Python and TypeScript software.'
+    assert not store.db.execute('SELECT 1 FROM applications').fetchone()

@@ -1,6 +1,6 @@
 # Raspberry Pi guide
 
-Run these commands **on the Pi**, using its desktop or a Raspberry Pi Connect terminal. The target is a Pi 4 with 4 GB RAM, 64-bit Raspberry Pi OS, reliable power and system Chromium. Model inference runs remotely.
+Run the destination commands **on the Pi**. The target is a Pi 4 with 4 GB RAM, 64-bit Raspberry Pi OS, reliable power and system Chromium. Model inference runs remotely. Use Raspberry Pi OS with Desktop if you need visible employer sign-in or human verification through Raspberry Pi Connect.
 
 ## Install and set up
 
@@ -9,23 +9,52 @@ sudo apt update
 sudo apt install -y git python3-venv chromium
 git clone https://github.com/hoverdart/please-hire-me.git
 cd ~/please-hire-me
-HIREME_PI=1 ./setup.sh
 ```
 
-Setup selects system Chromium, headless application browsing and two discovery workers. Complete the applicant checklist, authenticate your selected model CLI on the Pi, and finish paused. Use the Pi's browser through Connect; sign-in on another computer does not connect the Pi's CLI or Gmail integration.
+Check out the branch or revision you intend to run before installing. Use `HIREME_PI=1 ./setup.sh` for a fresh applicant workspace. Setup selects system Chromium, headless application browsing and two discovery workers. Complete the applicant checklist, connect your selected model provider on the Pi, and finish paused.
 
-For a compatible Ashby form that presents verification after the final click, Preferences can keep the same application browser open while you complete the challenge. Turn off background browsing, set **Wait for human verification** to between 1 and 600 seconds, and stay at the Pi desktop through Connect while the batch runs. A working desktop display is required; use a desktop terminal if the service has no display session. Zero turns the wait off. The worker does not solve challenges, and pause or timeout leaves the recorded outcome uncertain. Verify an uncertain attempt with the employer before applying again; this setting cannot reopen it.
+### Move an existing workspace
 
-The initial dashboard runs in the foreground. Stop it with **Ctrl+C** before installing background services:
+On the source machine, pause submissions, remove the schedule, and wait for active work to finish. [Create and validate a private history backup](guide.md#back-up-and-move-your-data), then transfer it to the Pi over a private channel. Keep the source paused during the cutover.
+
+On the Pi, install the code before creating the destination workspace. Restore requires a new directory.
+
+```bash
+HIREME_PI=1 ./setup.sh --install-only
+.venv/bin/python -m hireme restore /absolute/private/history.zip
+.venv/bin/python -m hireme pi configure
+.venv/bin/python -m hireme dashboard --open
+```
+
+If the Pi already has a workspace at the default path, restore with `--data-dir /absolute/path/to/new-workspace` before the subcommand. Include that same option on every subsequent command, including `pi install`. Use a separate OS user if both workspaces need their own background services.
+
+Confirm that history and documents are present. Reconnect the model provider and any Gmail or platform integrations you use. You can transfer employer passwords separately through the encrypted transfer described in the [backup guide](guide.md#back-up-and-move-your-data). If you use a commissioned rollout, review the saved scope and evidence and recommission it on the Pi before running a batch. The rollout approval file is local to each installation.
+
+For a compatible Ashby form that presents verification after the final click, Preferences can keep the same application browser open while you complete the challenge. Turn off background browsing, set **Wait for human verification** to between 1 and 600 seconds, and stay at the Pi desktop through Connect while the batch runs. Zero turns the wait off. Pause or timeout leaves the recorded outcome uncertain. Verify that outcome with the employer before applying again.
+
+Visible sign-in and verification need access to the Pi's desktop display. If the user service cannot open a browser window, stop the dashboard service and run `.venv/bin/python -m hireme dashboard --open` from a terminal inside the Pi desktop. Close that foreground dashboard before restarting the service.
+
+## Verify and install background services
+
+The initial dashboard runs in the foreground. Stop it with **Ctrl+C**, then check the destination as the user who will run the services:
 
 ```bash
 cd ~/please-hire-me
 .venv/bin/python -m hireme pi preflight
-.venv/bin/python -m hireme pi install
-.venv/bin/python -m hireme open-dashboard
+.venv/bin/python -m hireme doctor --verify-login
 ```
 
-Installation enables a user-owned dashboard service and worker timer. It retires this applicant's previous cron schedule to avoid duplicate scheduling. Check setup before resuming applications. To let user services run after logout/reboot without a desktop login:
+Check that `userspace_bits` is 64, `chromium_launches` and `systemd_user_available` are true, and setup is complete. The Chromium check opens a temporary headless session with a local test page. If the user manager is unavailable, run setup from a login session on the Pi under the account that will own the service.
+
+If system Chromium repeatedly fails to launch, you can install Playwright's browser with `.venv/bin/python -m playwright install chromium` and choose **Bundled Chromium** under **Browser** in Preferences. Check that the selected browser can prepare a draft while submissions are paused. Pi preflight continues to report the state of system Chromium.
+
+```bash
+.venv/bin/python -m hireme pi install
+.venv/bin/python -m hireme open-dashboard
+.venv/bin/python -m hireme schedule status
+```
+
+Installation enables a user-owned dashboard service and worker timer. It retires this applicant's previous cron schedule to avoid duplicate scheduling. After fresh activation or reboot, the first automatic run waits the saved interval. The dashboard's **Start scheduled applications** action also requests an immediate first batch. Confirm the dashboard and schedule work while submissions are paused. When ready to test job discovery or draft preparation, use **Find opportunities** or **Prepare drafts** in the dashboard. To let user services run after logout/reboot without a desktop login:
 
 ```bash
 loginctl enable-linger "$USER"
@@ -108,14 +137,13 @@ After validating the backup:
 ```bash
 systemctl --user stop please-hire-me-dashboard.service
 cd ~/please-hire-me
-git pull --ff-only origin main
-.venv/bin/python -m pip install -r requirements/runtime.lock
-.venv/bin/python -m pip install --no-deps -e .
+git pull --ff-only
+HIREME_PI=1 ./setup.sh --install-only
 systemctl --user start please-hire-me-dashboard.service
 .venv/bin/python -m hireme doctor
 .venv/bin/python -m hireme open-dashboard
 ```
 
-Run each step only after the preceding one succeeds. If Git reports local changes or a diverged branch, resolve those before continuing; do not discard them to force an update. Avoid rerunning `setup.sh` over an active dashboard, since it launches a foreground server.
+Run each step only after the preceding one succeeds. If Git reports local changes or a diverged branch, resolve those before continuing; do not discard them to force an update. The install-only flag keeps the existing workspace settings and leaves dashboard startup to systemd.
 
 Confirm history and documents in the dashboard. Restore the saved interval with **Preferences → Apply saved interval**, check the installed schedule, then resume when ready. A code update does not require reimporting your applicant data. Keep off-device backups, and check available disk space before large local test runs.

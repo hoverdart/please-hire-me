@@ -110,6 +110,29 @@ def test_content_beyond_the_page_limit_is_refused_not_trimmed():
     assert measured['pages'] == 2 and text.count('Confirmed line') == 56
 
 
+def test_reference_tailoring_packs_confirmed_lines_and_leads_with_research_for_a_research_role(store,job,experience):
+    from hireme.resume_styles import validate_style
+    style=validate_style({'template':'reference','reference_hash':'f'*64,'font':'carlito','max_bullets':8,
+                          'max_pages':1,'margin':36,'body_size':10,'line_spacing':1.2,'date_layout':'right',
+                          'section_order':['education','experience','research','projects','skills']})
+    store.update_settings({'resume_style':style})
+    store.put_history_entry('project',{'name':'Research Group','role':'Researcher','resume_section':'research',
+        'description':'Built a global Python trace analyzer.\nEvaluated parallel scheduling.'},source='Approved notes',confirmed=True)
+    for index in range(5):
+        store.put_history_entry('project',{'name':f'Project {index}','description':'\n'.join(
+            f'Completed documented integration work and detailed implementation checks for component {index}-{line}.' for line in range(8))},
+            source='Approved notes',confirmed=True)
+    target={**job,'title':'Research Intern','description':'Build a Python trace analyzer in Rust.'}
+    artifact=tailored_resumes.generate(store,target)
+    pdf=PdfReader(io.BytesIO(tailored_resumes.validate(store,target,artifact)))
+    assert len(pdf.pages)==1
+    extracted=pdf.pages[0].extract_text()
+    assert extracted.index('RESEARCH')<extracted.index('EXPERIENCE')
+    assert 'Built a global Python trace analyzer.' in extracted and 'Implemented image processing in Rust.' in extracted
+    record=tailored_resumes.explain(store,artifact['artifact_id'])
+    assert any('fit the measured page' in line['reason'] for entry in record['selection'] for line in entry['lines'])
+
+
 def test_changing_the_saved_style_builds_a_new_revision_and_keeps_the_old_pdf(store, job, experience):
     first = tailored_resumes.generate(store, job)
     original = tailored_resumes.validate(store, job, first)

@@ -6,13 +6,26 @@ NOT_MATCH_REASONS = frozenset({
     'seniority_mismatch', 'role_mismatch', 'internship_out_of_scope', 'fulltime_out_of_scope', 'parttime_out_of_scope',
     'location_mismatch', 'experience_mismatch', 'degree_mismatch', 'sponsorship_mismatch', 'citizenship_mismatch',
     'graduation_mismatch', 'start_window_mismatch', 'compensation_mismatch', 'company_blocked', 'low_fit',
-    'expired_posting',
+    'expired_posting', 'ats_out_of_scope',
 })
 WAIT_REASONS = frozenset({'company_cooldown', 'company_limit', 'company_same_day', 'daily_limit'})
 QUIET_REASONS = NOT_MATCH_REASONS | WAIT_REASONS
 
+QUESTION_HOLD_REASONS = frozenset({
+    'missing_answers', 'missing_fact', 'required_answer_missing', 'stale_answer', 'answer_too_long',
+    'numeric_answer_needed', 'phone_country_review', 'history_confirmation_required', 'history_changed',
+    'writing_unsupported', 'mapping_review', 'option_mismatch', 'model_budget_exhausted',
+    'missing_document', 'missing_transcript', 'cover_letter_not_enabled',
+})
+QUESTION_RETRY_REASONS = frozenset({
+    'provider_timeout', 'provider_error', 'provider_invalid_output', 'provider_unavailable',
+    'provider_cli_incompatible', 'provider_rate_limited', 'model_budget_exhausted', 'stale_writing_context',
+    'writing_upgrade_needed', 'unsupported_widget', 'unknown_prefilled_value',
+})
+
 # (Reason label, next useful step). Unknown reasons keep their exact evidence in the ledger.
 REASON_GUIDANCE = {
+    'ats_out_of_scope': ('Automatic applications are off for this ATS', 'No action is needed for this posting. Change the enabled ATS scope only after validating its submission path.'),
     'browser_draft_uncertain': ('An employer save needs review', 'An application step was sent without a verified result. Check the employer’s saved application before continuing; automatic retries are held.'),
     'browser_no_progress': ('The application browser needs help with this screen', 'Review the saved step and unresolved questions. Confirm any missing information, then recheck the job.'),
     'browser_operation_blocked': ('The employer requested an unexpected action', 'Review the application step. The browser blocked a write outside the approved action.'),
@@ -142,9 +155,24 @@ def attention_sql(alias='j'):
     return (f"({alias}.status IN ('unknown','awaiting_verification') OR ({alias}.status='blocked' AND {code} NOT IN ({placeholders})))", reasons)
 
 
-def actionable_question_sql(alias='q'):
-    """Retain evidence but hide questions for roles outside the chosen scope."""
+def actionable_question_sql(alias='q', allowed_ats=()):
+    """Applicant questions for jobs that can still reach their saved form."""
     code="TRIM(SUBSTR(excluded.reason,1,CASE WHEN INSTR(excluded.reason,':')>0 THEN INSTR(excluded.reason,':')-1 ELSE LENGTH(excluded.reason) END))"
-    reasons=tuple(sorted(NOT_MATCH_REASONS))
-    placeholders=','.join('?' for _ in reasons)
-    return (f"{alias}.resolved=0 AND {alias}.job_id NOT IN (SELECT job_id FROM job_decisions) AND NOT EXISTS(SELECT 1 FROM jobs excluded WHERE excluded.id={alias}.job_id AND excluded.status='blocked' AND {code} IN ({placeholders}))",reasons)
+    retry=tuple(sorted(QUESTION_RETRY_REASONS)); held=tuple(sorted(QUESTION_HOLD_REASONS))
+    placeholders=lambda values: ','.join('?' for _ in values)
+    hosts={
+        'ashby':"excluded.host='jobs.ashbyhq.com'",
+        'greenhouse':"excluded.host LIKE '%.greenhouse.io'",
+        'lever':"excluded.host IN ('jobs.lever.co','jobs.eu.lever.co')",
+        'workday':"excluded.host LIKE '%.myworkdayjobs.com'",
+        'icims':"(excluded.host LIKE '%.icims.com' OR excluded.host='careers.amd.com')",
+    }
+    if 'other' in allowed_ats:
+        hosts['other']='NOT ('+' OR '.join(hosts.values())+')'
+    scope=[hosts[name] for name in allowed_ats if name in hosts]
+    outside=' OR NOT ('+' OR '.join(scope)+')' if scope else ''
+    return (f"""{alias}.resolved=0 AND {alias}.reason NOT IN ({placeholders(retry)})
+        AND {alias}.job_id NOT IN (SELECT job_id FROM job_decisions)
+        AND NOT EXISTS(SELECT 1 FROM jobs excluded WHERE excluded.id={alias}.job_id AND (
+            excluded.status NOT IN ('discovered','blocked') OR
+            (excluded.status='blocked' AND {code} NOT IN ({placeholders(held)})){outside}))""",(*retry,*held))

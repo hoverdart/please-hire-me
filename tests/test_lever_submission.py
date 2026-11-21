@@ -223,6 +223,22 @@ def test_native_marketing_consent_preserves_default_zero_and_only_approved_check
     with pytest.raises(Blocked,match='field_verification_failed'):LeverSubmission._approved_pairs({'answers':[answer]},form)
 
 
+@pytest.mark.parametrize('change',['none','checked','no_default','duplicate_default','unapproved_wire_value'])
+def test_unanswered_marketing_consent_only_transmits_the_native_zero(store,lever,change):
+    name='consent[marketing]'
+    hidden={'name':name,'type':'hidden','hidden':True,'value':'0'}
+    unchecked={'name':name,'type':'checkbox','hidden':False,'value':'1','checked':change=='checked'}
+    lever.form['controls'].extend([hidden,unchecked] if change!='no_default' else [unchecked])
+    if change=='duplicate_default':lever.form['controls'].append(dict(hidden))
+    lever.form['entries'].append({'name':name,'value':'1' if change=='unapproved_wire_value' else '0'})
+    if change=='none':
+        grant=LeverSubmission(lever.browser,lever.job,lever.package,lever.aid)
+        assert [pair for pair in grant.pairs if pair[0]==name]==[(name,'0')]
+    else:
+        with pytest.raises(Blocked,match='unsupported_form'):
+            LeverSubmission(lever.browser,lever.job,lever.package,lever.aid)
+
+
 @pytest.mark.parametrize('kind',['radio','checkbox-group','select'])
 def test_native_choice_values_are_bound_to_the_package_option_mapping(kind):
     names=['native-choice'] if kind=='select' else ['native-choice','native-choice']
@@ -238,6 +254,47 @@ def test_native_choice_values_are_bound_to_the_package_option_mapping(kind):
     LeverSubmission._approved_pairs(package,form)
     controls[-1]['value']='unapproved-option'
     with pytest.raises(Blocked):LeverSubmission._approved_pairs(package,form)
+
+
+@pytest.mark.parametrize('option_id,accepted',[(True,True),('not-a-uuid',False),(123,False)])
+def test_optional_survey_option_id_is_metadata_only(option_id,accepted):
+    survey='44444444-1111-2222-3333-555555555555'
+    option='44444444-1111-2222-3333-666666666666'
+    account='11111111-2222-3333-4444-555555555555'
+    descriptor={'type':'survey','id':survey,'accountId':account,'fields':[
+        {'type':'multiple-choice','required':False,'options':[{'text':'First choice','optionId':option if option_id is True else option_id}]}]}
+    names=[f'surveysResponses[{survey}][baseTemplate]',f'surveysResponses[{survey}][surveyId]']
+    metadata=[{'name':name,'value':value,'hidden':True} for name,value in zip(names,(json.dumps(descriptor),survey))]
+    control={'name':f'surveysResponses[{survey}][responses][field0]','value':'First choice','hidden':False,'type':'radio','checked':False}
+    form={'controls':[{'name':'accountId','value':account,'hidden':True},*metadata,control],'entries':list(metadata)}
+    if not accepted:
+        with pytest.raises(Blocked,match='unsupported_form'):LeverSubmission._empty_survey_metadata(form)
+        return
+    assert LeverSubmission._empty_survey_metadata(form)==set(names)
+    control['checked']=True
+    with pytest.raises(Blocked,match='unsupported_form'):LeverSubmission._empty_survey_metadata(form)
+
+
+@pytest.mark.parametrize('change',['none','checked','visible','prefilled','different_control','wire_value','wire_duplicate'])
+def test_standard_pronouns_allow_only_the_dormant_empty_custom_control(change):
+    options=['They/them','Use name only']
+    refs=[{'name':'pronouns','id':''},{'name':'pronouns','id':'useNameOnlyPronounsOption'}]
+    field={'label':'Pronouns','type':'checkbox-group','options':options,'option_values':options,'refs':refs}
+    custom={'name':'pronouns','id':'customPronounsTextField','type':'text','hidden':False,'visible':False,'value':''}
+    standard=[{**ref,'type':'checkbox','hidden':False,'value':option,'checked':i==0} for i,(ref,option) in enumerate(zip(refs,options))]
+    form={'customPronounsSelected':change=='checked','controls':[*standard,custom],
+          'entries':[{'name':'pronouns','value':options[0]},{'name':'pronouns','value':''}]}
+    if change=='visible':custom['visible']=True
+    if change=='prefilled':custom['value']='Unapproved custom value'
+    if change=='different_control':custom['id']='someOtherField'
+    if change=='wire_value':form['entries'][1]['value']='Unexpected value'
+    if change=='wire_duplicate':form['entries'].append({'name':'pronouns','value':''})
+    package={'answers':[{'field':field,'value':options[0]}]}
+    if change=='none':
+        assert LeverSubmission._approved_pairs(package,form)==({'pronouns'},None)
+    else:
+        with pytest.raises(Blocked,match='field_verification_failed'):
+            LeverSubmission._approved_pairs(package,form)
 
 
 def test_location_requires_same_approved_selected_name_and_holds_unreviewed_residential_fields(store,lever):

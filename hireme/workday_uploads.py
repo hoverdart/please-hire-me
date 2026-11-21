@@ -23,11 +23,16 @@ class UploadGrant:
         self.scan=scan
         self.boundary=ApprovalBoundary(self.store,journal.job,package,require_live=True,
             profile_binding=lambda:journal.session.profile_binding if journal.session.current(self.store) else None)
-        current=self.store.db.execute('SELECT hash,filename FROM documents WHERE kind=?',(document.get('kind'),)).fetchone()
-        path=safe_document(self.store.root/'documents'/document.get('filename',''),self.store.root/'documents')
-        self.data=path.read_bytes()
-        if (not current or current['hash']!=document.get('hash') or current['filename']!=document.get('filename')
-                or hashlib.sha256(self.data).hexdigest()!=document.get('hash') or not self.data.startswith(b'%PDF-')
+        if document.get('artifact_id') and document.get('kind')=='resume':
+            from .application_artifacts import validate
+            self.data=validate(self.store,journal.job,document)
+        else:
+            current=self.store.db.execute('SELECT hash,filename FROM documents WHERE kind=?',(document.get('kind'),)).fetchone()
+            if not current or current['hash']!=document.get('hash') or current['filename']!=document.get('filename'):
+                raise Blocked('document_changed','The approved Workday PDF has changed')
+            path=safe_document(self.store.root/'documents'/document['filename'],self.store.root/'documents')
+            self.data=path.read_bytes()
+        if (hashlib.sha256(self.data).hexdigest()!=document.get('hash') or not self.data.startswith(b'%PDF-')
                 or not 0<len(self.data)<=5_000_000):
             raise Blocked('document_changed','The approved Workday PDF is missing, changed or exceeds the supported native size')
         self.url=native_url('common','scanfile' if scan else 'attachments')

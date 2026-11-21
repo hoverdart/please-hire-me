@@ -9,7 +9,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
-from .accounts import AccountVault, account_key
+from .accounts import AccountVault, account_key, MIN_PASSWORD_LENGTH
 from .store import worker_lock
 from .util import atomic_json
 
@@ -89,7 +89,7 @@ def import_accounts(store, source: Path, passphrase):
         # Validate the entire archive before writing any credential file.
         for entry in accounts:
             if (not isinstance(entry,dict) or not isinstance(entry.get('password'),str)
-                    or not 20<=len(entry['password'])<=128 or entry.get('email')!=email):
+                    or not MIN_PASSWORD_LENGTH<=len(entry['password'])<=128 or entry.get('email')!=email):
                 raise ValueError('Invalid account credential')
             try:key=account_key(entry['origin'],entry['company'])
             except (ValueError,KeyError,TypeError):raise ValueError('Invalid account scope') from None

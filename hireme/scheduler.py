@@ -49,6 +49,49 @@ def launchd_persistently_enabled(output):
         return False
 
 
+def _launchd_calendar(hours):
+    return [{'Hour': hour, 'Minute': 0} for hour in range(0, 24, hours)]
+
+
+def _launchd_schedule(saved):
+    """Read both current calendar schedules and installed interval schedules."""
+    if 'StartCalendarInterval' not in saved:
+        seconds = saved.get('StartInterval')
+        if type(seconds) is int and seconds > 0:
+            return seconds / 3600, None
+        raise ValueError('Invalid launchd interval')
+    calendar = saved['StartCalendarInterval']
+    if ('StartInterval' in saved or not isinstance(calendar, list) or not calendar or 24 % len(calendar)
+            or any(not isinstance(entry, dict) or set(entry) != {'Hour', 'Minute'}
+                   or any(type(value) is not int for value in entry.values()) for entry in calendar)):
+        raise ValueError('Invalid launchd calendar')
+    hours = 24 // len(calendar)
+    if sorted(calendar, key=lambda entry: entry['Hour']) != _launchd_calendar(hours):
+        raise ValueError('Invalid launchd calendar')
+    return hours, sorted((entry['Hour'], entry['Minute']) for entry in calendar)
+
+
+def _loaded_calendar(output):
+    streams = re.findall(r'^\s*stream = com\.apple\.launchd\.calendarinterval$', output, re.MULTILINE)
+    descriptors = re.findall(
+        r'^\s*stream = com\.apple\.launchd\.calendarinterval\n(?:[^\n]*monitor = [^\n]+\n)?'
+        r'\s*descriptor = \{\n(.*?)^\s*\}', output, re.MULTILINE | re.DOTALL)
+    if len(streams) != len(descriptors):
+        raise ValueError('Unverified launchd calendar triggers')
+    result = []
+    for descriptor in descriptors:
+        fields = {}
+        for line in descriptor.splitlines():
+            match = re.fullmatch(r'\s*"(Hour|Minute)" => (\d+)\s*', line)
+            if not match or match[1] in fields:
+                raise ValueError('Unverified launchd calendar trigger')
+            fields[match[1]] = int(match[2])
+        if set(fields) != {'Hour', 'Minute'}:
+            raise ValueError('Incomplete launchd calendar trigger')
+        result.append((fields['Hour'],fields['Minute']))
+    return sorted(result)
+
+
 def launchd_matches_loaded(output):
     """Check the loaded job, not merely the plist that may have changed since bootstrap."""
     path=Path.home()/'Library/LaunchAgents'/(LABEL+'.plist')
@@ -56,16 +99,18 @@ def launchd_matches_loaded(output):
         if path.is_symlink() or path.stat().st_size>65536:return False
         saved=plistlib.loads(path.read_bytes())
         arguments=saved.get('ProgramArguments')
-        interval=saved.get('StartInterval')
+        _, calendar = _launchd_schedule(saved)
         directory=saved.get('WorkingDirectory')
         environment=saved.get('EnvironmentVariables')
         if (saved.get('Label')!=LABEL or not _is_worker_command(arguments)
-                or type(interval) is not int or not isinstance(directory,str)
-                or not isinstance(environment,dict)
+                or not isinstance(directory,str) or not isinstance(environment,dict)
                 or any(not isinstance(key,str) or not isinstance(value,str) for key,value in environment.items())):
             return False
         directories=re.findall(r'^\s*working directory = (.+)$',output,re.MULTILINE)
         intervals=re.findall(r'^\s*run interval = (\d+) seconds$',output,re.MULTILINE)
+        loaded_calendar = _loaded_calendar(output)
+        schedule_matches = ((not intervals and loaded_calendar == calendar) if calendar is not None
+                            else intervals == [str(saved['StartInterval'])] and not loaded_calendar)
         blocks=re.findall(r'^\s*environment = \{\s*\n(.*?)^\s*\}',output,re.MULTILINE|re.DOTALL)
         if len(blocks)!=1:return False
         loaded_environment={}
@@ -78,9 +123,9 @@ def launchd_matches_loaded(output):
         keys=('PATH','CLAUDE_CONFIG_DIR','CODEX_HOME','XDG_CONFIG_HOME')
         expected_environment={key:environment[key] for key in keys if key in environment}
         actual_environment={key:loaded_environment[key] for key in keys if key in loaded_environment}
-        return (len(directories)==len(intervals)==1
+        return (len(directories)==1 and schedule_matches
                 and _launchd_arguments(output)==arguments
-                and directories[0]==directory and int(intervals[0])==interval
+                and directories[0]==directory
                 and actual_environment==expected_environment)
     except (OSError,ValueError,TypeError,plistlib.InvalidFileException):
         return False
@@ -108,20 +153,30 @@ def _crontab(arguments, **kwargs):
 
 
 def install(store,repo):
-    check_owner(store)
+    current=check_owner(store)
     if store.missing_setup() or not store.settings()['onboarding_complete']:
         raise ValueError('Complete onboarding before installing automatic runs')
-    hours=store.settings()['schedule_hours']
+    settings=store.settings()
+    hours=settings['schedule_hours']
+    if settings['deployment']=='pi' or current.get('kind')=='systemd':
+        if sys.platform!='linux' or not shutil.which('systemctl'):
+            raise ValueError('Pi schedules require Linux with systemd.')
+        from .pi import install as install_pi
+        return install_pi(store,repo,enable=True,dashboard=False)['directory']
     if sys.platform=='darwin':
         directory=Path.home()/'Library/LaunchAgents';directory.mkdir(parents=True,exist_ok=True)
         path=directory/(LABEL+'.plist')
         if path.is_symlink():raise ValueError('Unsafe LaunchAgent path')
         logs=private_dir(store.root/'logs')
         payload={'Label':LABEL,'ProgramArguments':[sys.executable,'-m','hireme','--data-dir',str(store.root.resolve()),'run'],
-          'WorkingDirectory':str(repo.resolve()),'StartInterval':hours*3600,'RunAtLoad':False,
+          'WorkingDirectory':str(repo.resolve()),'RunAtLoad':False,
           'StandardOutPath':str(logs/'worker.out.log'),'StandardErrorPath':str(logs/'worker.err.log'),
           'EnvironmentVariables':{'PATH':os.environ.get('PATH','/usr/local/bin:/usr/bin:/bin'),
               **{k:os.environ[k] for k in ('CLAUDE_CONFIG_DIR','CODEX_HOME','XDG_CONFIG_HOME') if os.environ.get(k)}}}
+        if 24 % hours == 0:
+            payload['StartCalendarInterval'] = _launchd_calendar(hours)
+        else:
+            payload['StartInterval'] = hours * 3600
         # Connection secrets stay in a private file, never argv or logs.
         with tempfile.NamedTemporaryFile(dir=directory,prefix='.'+LABEL,delete=False) as f:
             temporary=Path(f.name)
@@ -133,10 +188,9 @@ def install(store,repo):
         r=subprocess.run(['launchctl','bootstrap',f'gui/{os.getuid()}',str(path)],capture_output=True)
         if r.returncode:raise ValueError('launchd rejected worker; run .venv/bin/python -m hireme daemon in a terminal')
         return str(path)
-    if sys.platform=='linux' and shutil.which('systemctl') and (Path.home()/'.config/systemd/user/please-hire-me-worker.timer').exists():
-        from .pi import install as install_pi
-        return install_pi(store,repo,enable=True)['directory']
     if 24%hours:raise ValueError('Cron requires a schedule dividing 24 hours')
+    if not shutil.which('crontab'):
+        raise ValueError('Install cron, or run the worker with hireme daemon.')
     r=_crontab(['-l'],capture_output=True,text=True)
     lines=[l for l in r.stdout.splitlines() if not l.endswith('# '+LABEL)]
     # Cron does not load the interactive shell's PATH; user-installed CLIs must
@@ -160,8 +214,10 @@ def uninstall(cron_only=False,store=None):
             payload=plistlib.loads(path.read_bytes())
             if payload.get('Label')==LABEL:path.unlink()
     else:
-        if not cron_only and sys.platform=='linux' and shutil.which('systemctl') and (Path.home()/'.config/systemd/user/please-hire-me-worker.timer').exists():
-            subprocess.run(['systemctl','--user','disable','--now','please-hire-me-worker.timer'],capture_output=True,check=True)
+        if not cron_only and sys.platform=='linux' and shutil.which('systemctl'):
+            from .pi import unit_directory
+            if (unit_directory()/'please-hire-me-worker.timer').exists():
+                subprocess.run(['systemctl','--user','disable','--now','please-hire-me-worker.timer'],capture_output=True,check=True)
         if not shutil.which('crontab'):return
         r=_crontab(['-l'],capture_output=True,text=True)
         lines=[l for l in r.stdout.splitlines() if not l.endswith('# '+LABEL)]
@@ -240,23 +296,24 @@ def status(store=None,cron_only=False):
         if not p.is_file():return {'installed':False,'path':str(p)}
         try:
             data=plistlib.loads(p.read_bytes())
-            interval=data.get('StartInterval')
             arguments=data.get('ProgramArguments',[])
             if data.get('Label')!=LABEL or not _is_worker_command(arguments):
                 return {'installed':True,'matches_applicant':False,'path':str(p),'kind':'launchd','error':'The saved schedule could not be verified.'}
-            return _details(arguments,store,interval / 3600 if isinstance(interval,(int,float)) else None,path=str(p),kind='launchd')
+            hours, calendar = _launchd_schedule(data)
+            return _details(arguments,store,hours,path=str(p),kind='launchd',catch_up_on_wake=calendar is not None)
         except (ValueError,TypeError,plistlib.InvalidFileException):
             return {'installed':True,'matches_applicant':False,'path':str(p),'error':'The saved schedule could not be read.'}
     if sys.platform=='linux' and not cron_only and shutil.which('systemctl'):
+        from .pi import unit_directory
         r=_query_schedule(['systemctl','--user','is-enabled','please-hire-me-worker.timer'])
-        directory=Path.home()/'.config/systemd/user'
+        directory=unit_directory()
         if not r.returncode or (directory/'please-hire-me-worker.timer').exists():
             try:
                 commands=[line.split('=',1)[1] for line in (directory/'please-hire-me-worker.service').read_text().splitlines() if line.startswith('ExecStart=')]
                 intervals=[line.split('=',1)[1] for line in (directory/'please-hire-me-worker.timer').read_text().splitlines() if line.startswith('OnUnitInactiveSec=')]
                 if len(commands)!=1 or len(intervals)!=1:raise ValueError('Ambiguous worker unit')
                 command=commands[0];interval=intervals[0]
-                arguments=shlex.split(command.replace('%%','%'))
+                arguments=shlex.split(command.removeprefix(':').replace('%%','%'))
                 if not _is_worker_command(arguments) or not _systemd_loaded_matches(directory):
                     return {'installed':True,'matches_applicant':False,'kind':'systemd',
                             'error':'The loaded service or timer could not be verified.'}
@@ -294,20 +351,9 @@ def status(store=None,cron_only=False):
 def apply_saved_interval(store, repo):
     from .store import worker_lock
     with worker_lock(store.root):
-        current=check_owner(store)
-        if store.missing_setup() or not store.settings()['onboarding_complete']:
-            raise ValueError('Complete onboarding before installing automatic runs')
         try:
-            if store.settings()['deployment']=='pi' or current.get('kind')=='systemd':
-                if sys.platform!='linux' or not shutil.which('systemctl'):
-                    raise ValueError('Pi schedules require Linux with systemd.')
-                from .pi import install as install_pi, WORKER
-                location=install_pi(store,repo,enable=False)['directory']
-                if shutil.which('crontab'):uninstall(cron_only=True,store=store)
-                subprocess.run(['systemctl','--user','daemon-reload'],check=True)
-                subprocess.run(['systemctl','--user','enable','--now',WORKER+'.timer'],check=True)
-            else:location=install(store,repo)
-        except (OSError,subprocess.CalledProcessError) as error:
+            location=install(store,repo)
+        except (OSError,subprocess.SubprocessError) as error:
             raise ValueError('Schedule activation failed. Check the OS scheduler or run .venv/bin/python -m hireme daemon. Application pause settings were not changed.') from error
         interval=store.settings()['schedule_hours']
         store.event('schedule_installed','worker',{'interval_hours':interval})

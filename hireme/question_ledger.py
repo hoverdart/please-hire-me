@@ -10,7 +10,7 @@ def search_questions(store, search='', offset=0, limit=25):
     if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError('Choose a page size between 1 and 100')
     from .presentation import actionable_question_sql
-    condition,values=actionable_question_sql('q')
+    condition,values=actionable_question_sql('q',store.settings()['allowed_application_ats'])
     where = ' WHERE '+condition; parameters = list(values)
     term = search.strip().casefold()
     if term:

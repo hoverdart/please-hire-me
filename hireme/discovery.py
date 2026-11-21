@@ -190,6 +190,7 @@ def source_result(store,sid,jobs=None,error=None):
 
 
 def sweep_boards(store,repo,ats=None,limit=None,deadline_seconds=1800):
+    deadline=time.monotonic()+deadline_seconds
     sources=board_sources(repo,ats,limit,store)
     checks={r['id']:dict(r) for r in store.db.execute('SELECT * FROM sources')}
     current=time.time()
@@ -204,7 +205,7 @@ def sweep_boards(store,repo,ats=None,limit=None,deadline_seconds=1800):
     # group by age, so a large candidate list cannot starve known good sources.
     sources.sort(key=lambda x:(0 if checks.get(':'.join(x),{}).get('status')=='ok' else 1,
                               checks.get(':'.join(x),{}).get('checked','')))
-    net=Network(time.monotonic()+deadline_seconds)
+    net=Network(deadline)
     n=0
     with concurrent.futures.ThreadPoolExecutor(max_workers=store.settings()["discovery_workers"]) as pool:
         for offset in range(0,len(sources),store.settings()["discovery_workers"]):

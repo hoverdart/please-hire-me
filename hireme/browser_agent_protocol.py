@@ -86,6 +86,12 @@ def workday_definition_context(resource,data):
                 if type(item) is not int or not 0<=item<=100000:return False
             elif type(item) is not bool:return False
         return True
+    def phone_type(value):
+        if not isinstance(value,dict):return False
+        extra={'default','metadataType'}
+        return (reference({key:item for key,item in value.items() if key not in extra})
+            and ('default' not in value or type(value['default']) is bool)
+            and ('metadataType' not in value or reference(value['metadataType'])))
     if resource=='previousworker':
         if len(data)==1 and next(iter(data)) in {'currentlyWorkHere','candidateIsPreviousWorker'}:
             return type(next(iter(data.values()))) is bool
@@ -102,7 +108,7 @@ def workday_definition_context(resource,data):
     if resource=='phonenumber':
         return ({'countryPhoneCode','phoneNumber'}<=set(data)<={'id','descriptor','countryPhoneCode','extension','phoneNumber','phoneType'}
             and reference(data['countryPhoneCode']) and all(short(v) for k,v in data.items() if k not in {'countryPhoneCode','phoneType'})
-            and ('phoneType' not in data or reference(data['phoneType'])))
+            and ('phoneType' not in data or phone_type(data['phoneType'])))
     if resource=='socials':return set(data)=={'facebookAccount','linkedInAccount','twitterAccount'} and all(short(v) for v in data.values())
     if resource=='skills':return data=={'skills':None}
     if resource=='termsandconditions':
@@ -189,6 +195,9 @@ def validate_browser_package(store,job,package):
             or type(metadata.get('complete')) is not bool):
         raise Blocked('browser_package_invalid')
     completed=metadata.get('completed_steps')
+    remote=metadata.get('remote_application_hash')
+    if remote is not None and (not isinstance(remote,str) or not re.fullmatch('[a-f0-9]{64}',remote)):
+        raise Blocked('browser_package_invalid')
     if not isinstance(completed,list) or len(completed)>30:raise Blocked('browser_package_invalid')
     recorded=[]
     for index,step in enumerate(completed):
@@ -233,6 +242,29 @@ class UIOperation:
             settings=('adaptive_browser',),require_live=not agent.preparing,
             reserve_retry=False)
 
+    def _bind_workday(self,remote):
+        if not isinstance(remote,str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9._~-]{0,299}',remote):return False
+        checksum=digest(remote);expected=getattr(self.agent,'workday_application_hash',None)
+        if expected and expected!=checksum:
+            self.denied=True;self.failure=True
+            return False
+        self.agent.workday_application_hash=checksum
+        if self.record:
+            row=self.store.db.execute('SELECT target FROM draft_operations WHERE id=?',(self.record,)).fetchone()
+            target=json.loads(row['target']);target['remote_application_hash']=checksum
+            self.store.db.execute('UPDATE draft_operations SET target=?,updated=? WHERE id=?',
+                (json.dumps(target),now(),self.record))
+        return True
+
+    def _workday_path(self,request,tail):
+        if not self.job.get('host','').endswith('.myworkdayjobs.com'):return None
+        from .workday_site import site_for_url
+        parsed=urlsplit(request.url)
+        if parsed.scheme!='https' or parsed.netloc!=self.job['host']:return None
+        site=site_for_url(self.job['url'])
+        if parsed.netloc!=site.host:return None
+        return re.fullmatch(r'/wday/(?:calypso/)?cxs/(?:jobapplication/)?'+re.escape(site.tenant)+tail,parsed.path)
+
     def allow(self,request):
         self.boundary.check(application_id=self.agent.aid if self.final else None)
         if unrelated_write(request):
@@ -272,9 +304,16 @@ class UIOperation:
         if request_key in self.requests:
             self.denied=True
             return False
+        creation=self._workday_path(request,r'/jobpostings/[A-Za-z0-9._~-]+/jobapplications')
+        if creation and getattr(self.agent,'workday_application_hash',None):
+            self.denied=True
+            return False
+        record=self._workday_path(request,r'/jobapplication/([A-Za-z0-9._~-]+)/[^/]+(?:/.*)?')
+        if record and not self._bind_workday(record[1]):return False
         if self.record is None:
             self.record=self.agent.journal.intent([self.key],'ui:'+self.action['kind'],
                 {'control':self.action['id'],'host':self.job['host'],'profile_binding':self.agent.binding,
+                 **({'remote_application_hash':self.agent.workday_application_hash} if getattr(self.agent,'workday_application_hash',None) else {}),
                  'document_hash':self.document['hash'] if self.document else None,
                  'document_hashes':sorted(carried)},self.package)
         self.last_activity=time.monotonic()
@@ -301,6 +340,10 @@ class UIOperation:
             if isinstance(location,str):redirect=urljoin(request.url,location)
         ok=200<=status<300 or bool(redirect and origin(redirect)==self.agent.allowed_origin)
         ok=ok and response_ok(data)
+        if (ok and self.action['kind']=='entry' and isinstance(data,dict)
+                and self._workday_path(request,r'/jobpostings/[A-Za-z0-9._~-]+/jobapplications')
+                and isinstance(data.get('id'),str)):
+            ok=self._bind_workday(data['id'])
         self.responses[key]={'ok':ok,'digest':digest(data) if data is not None else hashlib.sha256(body).hexdigest() if body else digest(status)}
         self.failure=self.failure or not ok
         if not ok:

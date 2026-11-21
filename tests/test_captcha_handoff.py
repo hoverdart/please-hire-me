@@ -1,6 +1,7 @@
 import time
 import json
 import hashlib
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -129,10 +130,17 @@ def test_fixture_solver_fails_closed_and_never_contacts_employers(change,tmp_pat
 def test_fixture_solver_crash_reservation_and_replay_survive_a_fresh_instance(tmp_path):
     challenge=FixtureChallenge('http://127.0.0.1:1234','public-test-key','nonce')
     options={'enabled':True,'authorized_fixture':True,'journal_root':tmp_path/'solver','max_seconds':0.01}
+    release_provider=Event()
+
     def slow(*args,**kwargs):
-        time.sleep(0.05)
+        release_provider.wait()
         return {'token':'late','cost':0.001,'issued_at':time.time(),'nonce':'nonce'}
-    with pytest.raises(Blocked,match='timed out'):FixtureSolver(slow,**options).solve(challenge)
+
+    try:
+        with pytest.raises(Blocked,match='timed out'):FixtureSolver(slow,**options).solve(challenge)
+    finally:
+        release_provider.set()
+
     def forbidden(*args,**kwargs):pytest.fail('A crashed/late experiment must not call the provider again')
     with pytest.raises(Blocked):FixtureSolver(forbidden,**options).solve(challenge)
     with pytest.raises(Blocked):FixtureSolver(forbidden,**options).solve(FixtureChallenge(challenge.origin,challenge.site_key,'other-nonce'))

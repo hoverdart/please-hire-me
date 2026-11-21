@@ -67,10 +67,18 @@ class AshbyTexting:
         declaration = (f'Check Yes or No to indicate your agreement to receive text message updates from {entity} '
                        'regarding your job application. Frequency may vary. Message and data rates may apply. '
                        'Reply STOP to opt out of future messaging. View our privacy policy here: Privacy Policy')
+        declining_terms=False
+        if isinstance(terms,str) and terms and self.value=='notGiven' and terms in links:
+            try:
+                parsed=urlsplit(terms)
+                declining_terms=(parsed.scheme=='https' and bool(parsed.hostname)
+                                 and not parsed.username and not parsed.password and parsed.port in (None,443))
+            except ValueError:pass
+            if declining_terms:declaration+=' and our terms and conditions here: Terms and Conditions'
         if (context.get('shouldAskForTextingConsent') is not True
                 or context.get('shouldAskForWhatsAppConsent') is not False
                 or not isinstance(privacy, str) or not privacy or privacy not in links
-                or terms not in (None, '')
+                or terms not in (None, '') and not declining_terms
                 or not isinstance(entity, str) or not entity.strip()
                 or normalize(declaration) != normalize(field.get('help_text', ''))
                 or field.get('ashby_texting_consent') != 'sms'

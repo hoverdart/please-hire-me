@@ -168,8 +168,11 @@ class WorkdayAdapter:
 
     def resolve_step(self,snapshot,provider=None):
         from .answers import resolve
-        answers=[];missing=[]
-        for field in snapshot['fields']:
+        from .page_answers import plan, PROVIDER_FAILURES
+        answers=[];pending=[]
+        fields=snapshot['fields']
+        scope=self.job.get('answer_scope') or self.job['host']+'|'+self.store.company(self.job['company'])
+        for field in fields:
             self.store.checkpoint()
             if field['type']=='file':continue # Hash-verified upload path remains separate.
             try:
@@ -177,16 +180,25 @@ class WorkdayAdapter:
                     from .workday_history import resolve_field
                     answer=resolve_field(self.store,field)
                 else:
-                    answer=resolve(self.store,self.job['host']+'|'+self.store.company(self.job['company']),field,provider,context=self.job)
+                    answer=resolve(self.store,scope,field,provider,
+                                   context={**self.job,'previous_answers':answers,'form_questions':[f['label'] for f in fields]})
                 if answer:answers.append(answer)
                 elif field.get('required') or field.get('value'):
                     raise Blocked('required_answer_missing' if field.get('required') else 'unknown_prefilled_value',field['label'])
             except Blocked as error:
                 if error.reason in {'paused','cycle_timeout','provider_rate_limited','model_budget_exhausted'}:raise
                 if field.get('required') or field.get('value'):
-                    self.store.ask(self.job['id'],self.job['host']+'|'+self.store.company(self.job['company']),field['label'],field.get('options',[]),error.reason,field=field,context=self.job)
-                    missing.append(field['label'])
-        if missing:raise Blocked('missing_answers','; '.join(missing))
+                    pending.append((field,error.reason))
+        planned,pending=plan(self.store,scope,fields,answers,pending,provider,self.job)
+        answers.extend(planned)
+        answers.sort(key=lambda answer:fields.index(answer['field']))
+        if pending:
+            for field,reason in pending:
+                if reason not in PROVIDER_FAILURES:
+                    self.store.ask(self.job['id'],scope,field['label'],field.get('options',[]),reason,field=field,
+                        context={**self.job,'previous_answers':[a for a in answers if fields.index(a['field'])<fields.index(field)]})
+            reason=pending[0][1] if all(reason in PROVIDER_FAILURES for _,reason in pending) else 'missing_answers'
+            raise Blocked(reason,'; '.join(field['label'] for field,_ in pending))
         return answers
 
     def authorize_step(self,snapshot,url,method,payload,answers,documents,*,package=None,final=False,application_id=None):

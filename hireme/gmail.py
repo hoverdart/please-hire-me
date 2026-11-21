@@ -76,11 +76,13 @@ def import_client(store, path: Path):
     store.event('gmail_client_imported', 'gmail', {})
 
 
-def _service(credentials):
+def _service(credentials,store):
     import httplib2
     from google_auth_httplib2 import AuthorizedHttp
     from googleapiclient.discovery import build
-    return build('gmail','v1',http=AuthorizedHttp(credentials,http=httplib2.Http(timeout=15)),cache_discovery=False)
+    from .gmail_quota import request_builder
+    return build('gmail','v1',http=AuthorizedHttp(credentials,http=httplib2.Http(timeout=15)),
+        cache_discovery=False,requestBuilder=request_builder(store))
 
 
 def connect(store):
@@ -111,7 +113,7 @@ def connect(store):
         credentials=flow.credentials
     if not credentials.refresh_token or not has_granted_scopes(credentials,scopes):
         raise Blocked('gmail_offline_access_missing', 'Authorize the enabled Gmail features with offline access')
-    service = _service(credentials)
+    service = _service(credentials,store)
     actual = service.users().getProfile(userId='me').execute()['emailAddress'].casefold()
     if actual != expected:
         raise Blocked('gmail_account_mismatch', 'Connect the confirmed application email account')
@@ -192,7 +194,7 @@ class GmailClient:
                     refreshed=json.loads(credentials.to_json())
                     if credentials.granted_scopes is not None:refreshed['scopes']=list(credentials.granted_scopes)
                     atomic_json(path, refreshed)
-                service = _service(credentials)
+                service = _service(credentials,store)
             except Blocked:
                 raise
             except Exception:

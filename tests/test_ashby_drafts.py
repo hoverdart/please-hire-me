@@ -631,6 +631,38 @@ def test_number_wire_rejects_lossy_or_ambiguous_values(value):
     with pytest.raises(Blocked,match='ashby_draft_unsupported'):number_wire(value,'Number')
 
 
+@pytest.mark.parametrize('value,expected',[('3.76',3.76),('0.5',.5),('3.99',3.99)])
+def test_number_wire_preserves_fractional_decimal_values(value,expected):
+    assert number_wire(value,'GPA')==expected
+
+
+@pytest.mark.parametrize('value',['3.760','03.76','-0.5','NaN','Infinity','3.76000000000000001','9007199254740990.1'])
+def test_number_wire_rejects_ambiguous_or_rounded_decimals(value):
+    with pytest.raises(Blocked,match='ashby_draft_unsupported'):number_wire(value,'GPA')
+
+
+@pytest.mark.parametrize('ack',[3.76,'3.76',3.77,True])
+def test_decimal_gpa_save_requires_the_exact_numeric_acknowledgement(store,job,package,ack):
+    from hireme.answers import resolve
+    store.put_facts({'gpa':'3.76/4.00'})
+    d,_=draft(store,job,{**package,'facts_hash':digest(store.facts())})
+    field={'index':0,'indices':[0],'label':'GPA','type':'number','required':True,'options':[],
+           'maxlength':-1,'value':'','ashby_path':'fixture-gpa','ashby_entry_id':RENDER+'_fixture-gpa','step':'any'}
+    official=form();entry={'id':field['ashby_entry_id'],'field':{'path':'fixture-gpa','title':'GPA','type':'Number'},'fieldValue':None}
+    official['sections'][0]['fieldEntries'].append(entry);d._remember_form(official)
+    answer=resolve(store,d.job['host'],field,context=d.job)
+    assert answer['value']=='3.76' and answer['provenance']['fact_key']=='gpa'
+    proof={**d.package,'answers':[answer]};d.enable(None,proof['answers'],proof)
+    for changed in ('3.76',3.77,True):
+        r,data=request(changed,path='fixture-gpa');assert not d.allow(r,data,'changed')
+    r,data=request(3.76,path='fixture-gpa');assert d.allow(r,data,'gpa')
+    entry['fieldValue']={'value':ack}
+    d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':official}}),'gpa')
+    assert d.complete is (type(ack) is float and ack==3.76)
+    assert d.failed is not d.complete
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
 @pytest.mark.parametrize('change',['none','wrong_metadata','unknown_format','wrong_control'])
 def test_date_save_uses_exact_calendar_encoding_without_changing_approved_display(store,job,package,change):
     from hireme.answers import resolve
@@ -1262,23 +1294,27 @@ window.post = data => fetch('/api/non-user-graphql', {method:'POST',body:JSON.st
         assert d.failed is (mode=='wrong_ack')
 
 
-def location_draft(store,job,package,*,observe=True,restored=None):
+def location_draft(store,job,package,*,observe=True,restored=None,region=False):
     from hireme.answers import resolve
     d,ashby=draft(store,job,package)
-    field={'index':0,'indices':[0],'label':'Location','type':'combobox','required':True,
-           'options':[LOCATION],'maxlength':-1,'value':'','ashby_path':'_systemfield_location',
+    label='Which state, province, or region do you currently live in?' if region else 'Location'
+    choice='California, United States' if region else LOCATION
+    types=['Region','City','Country'] if region else ['City']
+    if region:store.put_facts({'state':'CA'})
+    field={'index':0,'indices':[0],'label':label,'type':'combobox','required':True,
+           'options':[choice],'maxlength':-1,'value':'','ashby_path':'_systemfield_location',
            'ashby_entry_id':RENDER+'__systemfield_location'}
     answer=resolve(store,ashby['host'],field)
-    proof={**d.package,'answers':[answer]}
+    proof={**d.package,'answers':[answer],'facts_hash':digest(store.facts())}
     saved=form()
     saved['sections'][0]['fieldEntries'].append({'id':field['ashby_entry_id'],
-        'field':{'path':'_systemfield_location','title':'Location','type':'Location','locationTypes':['City']},
+        'field':{'path':'_systemfield_location','title':label,'type':'Location','locationTypes':types},
         'fieldValue':{'value':restored} if restored else None})
     d._remember_form(saved)
     read=SimpleNamespace(method='POST',url='https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiAutocompleteGeoLocation',
         post_data=json.dumps({'operationName':'ApiAutocompleteGeoLocation','query':LOCATION_QUERY,
-                             'variables':{'text':'Berkeley','locationTypes':['City']}}))
-    result={'data':{'result':{'suggestions':[{'name':LOCATION,'geoLocationPath':[
+                             'variables':{'text':'California' if region else 'Berkeley','locationTypes':types}}))
+    result={'data':{'result':{'suggestions':[{'name':choice,'geoLocationPath':[
         {'providerLocationId':'fixture-country'},{'providerLocationId':'fixture-city'}]}]}}}
     if observe:d.observe_locations(read,SimpleNamespace(status=200,json=lambda:result))
     return d,proof,read,result
@@ -1296,6 +1332,14 @@ def test_location_object_requires_official_choice_and_exact_save_ack(store,job,p
     d.observe_save(SimpleNamespace(status=200,json=lambda:{'data':{'setFormValue':saved}}),'location')
     assert d.complete
     assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+def test_state_field_uses_the_exact_verified_region_result(store,job,package):
+    d,proof,_,_=location_draft(store,job,package,region=True)
+    assert proof['answers'][0]['provenance']['fact_key']=='state'
+    d.enable(None,proof['answers'],proof)
+    request_data,payload=request({'text':'California, United States','providerLocationId':'fixture-city'},path='_systemfield_location')
+    assert d.allow(request_data,payload,'region')
 
 
 @pytest.mark.parametrize('mode',['missing','wrong_host','wrong_method','wrong_query','wrong_operation','errors','wrong_types','ambiguous'])

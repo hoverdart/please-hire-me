@@ -16,7 +16,8 @@ EXPORT_COLUMNS = ('Company', 'Role', 'Location', 'Status', 'Fit score', 'Applica
 
 def summary(store, at=None):
     """Count the complete ledger, including records outside dashboard page limits."""
-    local = (at or datetime.now(timezone.utc)).astimezone(ZoneInfo(store.settings()['timezone']))
+    settings=store.settings()
+    local = (at or datetime.now(timezone.utc)).astimezone(ZoneInfo(settings['timezone']))
     start = local.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     # Stored timestamps are UTC ISO strings with second resolution, like util.now().
@@ -27,7 +28,7 @@ def summary(store, at=None):
     model_requests = store.db.execute('SELECT COUNT(*) FROM model_requests WHERE timestamp>=? AND timestamp<?', bounds).fetchone()[0]
     condition, parameters = attention_sql('j')
     from .presentation import actionable_question_sql
-    question_condition,question_parameters=actionable_question_sql('q')
+    question_condition,question_parameters=actionable_question_sql('q',settings['allowed_application_ats'])
     from .human_verification import current_wait
     human=current_wait(store)
     human_job=human['job_id'] if human and human['phase']=='challenge' else None
@@ -38,10 +39,15 @@ def summary(store, at=None):
         UNION SELECT ? WHERE ? IS NOT NULL
     )""", (*question_parameters,*parameters,human_job,human_job)).fetchone()[0]
     accounts = store.db.execute("SELECT COUNT(*) FROM employer_accounts WHERE state='uncertain'").fetchone()[0]
+    applicant_attention=store.db.execute(f"""SELECT COUNT(*) FROM (
+        SELECT q.job_id FROM questions q WHERE {question_condition}
+        UNION SELECT ? WHERE ? IS NOT NULL
+    )""",(*question_parameters,human_job,human_job)).fetchone()[0]
     questions = store.db.execute('SELECT COUNT(*) FROM questions q WHERE '+question_condition,question_parameters).fetchone()[0]
     held = store.db.execute(f"SELECT COUNT(*) FROM jobs j WHERE j.status='blocked' AND {condition}", parameters).fetchone()[0]
     return {'job_count': sum(counts.values()), 'status_counts': counts, 'submitted_today': submitted,
-            'attention_count': attention + accounts, 'question_count': questions, 'held_count': held,
+            'attention_count': attention + accounts, 'applicant_attention_count':applicant_attention+accounts,
+            'question_count': questions, 'held_count': held,
             'model_requests_today': model_requests, 'model_usage':model_usage(store,bounds), 'local_date': local.date().isoformat()}
 
 

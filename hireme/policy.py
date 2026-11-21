@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from .util import Blocked, company_normalizer
 
 # Bump when eligibility semantics change, independently of form/answer mapping.
-ELIGIBILITY_VERSION = 13
+ELIGIBILITY_VERSION = 16
 CITIZENSHIP_VERSION = 2
+SUMMER_SCOPE_VERSION = 2
 
 LOCATIONS = {
  "San Francisco Bay Area": r"san francisco|\bsf\b|bay area|palo alto|mountain view|menlo park|redwood city|san mateo|sunnyvale|santa clara|san jose|oakland|berkeley|cupertino|foster city|emeryville|burlingame",
@@ -55,7 +57,7 @@ CITIZEN=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:us citizen|u
 US_CITIZEN_GATE=re.compile(r"(?:must be|requires?|only|limited to).{0,25}(?:u\.?s\.?|united states) citizen(?:ship|s)?|(?:u\.?s\.?|united states) citizen(?:ship|s)?.{0,25}(?:required|only)",re.I)
 DOCTORAL = r'(?:\bph\.?\s*d\b\.?|\bdoctor(?:al|ate)\b(?:\s+degree)?|\bdoctor of philosophy\b)'
 LOWER_DEGREE = r"(?:\b(?:bachelor(?:['’]s)?|master(?:['’]s)?|undergraduate|b\.?s|b\.?a|b\.?sc|m\.?s|m\.?sc)\b\.?)"
-MASTER_WORD = r"\bmaster(?:['’]s)?\b"
+MASTER_WORD = r"\bmaster(?:['’]?s)?\b"
 MASTER_ABBREVIATION = r'\bm\.?\s*s(?:c)?\b\.?'
 UNDERGRADUATE = r"(?:\b(?:bachelor(?:['’]s)?|undergraduate|associate(?:['’]s)?|b\.?s|b\.?a|b\.?sc)\b\.?)"
 DOCTORAL_FACTS = {'phd','doctorate','doctoral','doctoraldegree','doctoratedegree','doctorofphilosophy'}
@@ -118,7 +120,8 @@ def _graduate_requirement(title, description):
     # MS can also name a software vendor. Require degree wording in prose,
     # and a degree position in titles, rather than interpreting "MS SQL".
     master_context=rf'{MASTER_ABBREVIATION}(?=\s*(?:degree\b|program\b|students?\b|candidates?\b|in\b|or\b|is\b|required\b|mandatory\b|[/,.!?]|$))'
-    graduate=rf'(?:{DOCTORAL}|{MASTER_WORD}|{master_context})'
+    graduate_program=r'\bgraduate\s+(?:degree\s+)?program\b'
+    graduate=rf'(?:{DOCTORAL}|{MASTER_WORD}|{master_context}|{graduate_program})'
     def exclusive(fragment):
         if (re.search(rf'\b(?:no|without requiring)\s+{graduate}',fragment,re.I)
                 or re.search(rf'{graduate}\s*(?:(?:degree|program|students?|candidates?)\s*)?(?:in\s+[^\n;.!?]{{0,80}}?)?(?:is\s+)?\(?\s*(?:not\s+(?:required|necessary)|preferred|optional|(?:is\s+)?a plus)',fragment,re.I)
@@ -135,6 +138,10 @@ def _graduate_requirement(title, description):
     # or MS ..."). Only a clause that addresses the applicant gets that rule;
     # collaborating with, or being mentored by, graduate researchers does not.
     description=re.sub(r'<[^>]+>','\n',description)
+    program_enrollment=rf'(?:^|[\n;:])\s*(?:[-*•]\s*)?(?:currently\s+)?enrolled\s+(?:in\s+)?(?:an?\s+)?{graduate_program}'
+    if any(exclusive(description[max(0,m.start()-30):m.end()+120])
+           for m in re.finditer(program_enrollment,description,re.I)):
+        return True
     study=r'(?:enrolled(?:\s+in)?|pursuing|working\s+(?:toward|towards|on)|studying|hold|have|possess)'
     prerequisite=rf'(?:(?:\bmust\s+|\brequired to\s+)(?:(?:be|currently)\s+){{0,2}}{study}\b|\blimited to\b|\bopen only to\b|\bonly\s+(?:accepting|considering)\b)'
     direct=rf'(?:^|[\n;:])\s*(?:[-*•]\s*)?(?:currently\s+)?(?:pursuing|enrolled\s+in|working\s+(?:toward|towards|on)|studying)\b'
@@ -169,7 +176,7 @@ def fit_score(job,facts):
     return min(100,score),matches
 
 
-SOFTWARE_ROLE = r'\bsoftware\s+(?:engineer\w*|develop\w*|intern\w*|research\w*)\b|\bswe\b|\b(?:front[- ]?end|back[- ]?end|full[- ]?stack|platform)\s+(?:software\s+)?(?:engineer\w*|develop\w*|intern\w*)\b'
+SOFTWARE_ROLE = r'\bsoftware\s+(?:engineer\w*|develop\w*|intern\w*|research\w*)\b|\bswe\b|\b(?:front[- ]?end|back[- ]?end|full[- ]?stack|platform)\s+(?:software\s+)?(?:engineer\w*|develop\w*|intern\w*)\b|\bengineer(?:ing)?\s+intern(?:ship)?\s*[-–:]\s*software(?=\s*(?:[,(\[]|$))'
 TECHNICAL_RESEARCH = r'\b(?:software|computer science|machine learning|artificial intelligence|applied ai|ai for|deep learning|distributed systems|natural language|computer vision|llm|robotics)\b'
 
 
@@ -192,14 +199,53 @@ def _role_matches(job,roles,*,metadata=False):
     return False
 
 
-def _summer_2027(job):
+_SUMMER_INTERNSHIP_DATES = re.compile(
+    r'\b(?:the|this) internship(?: program)? (?:will run|runs|lasts \d{1,2} weeks?,?) from '
+    r'(May|June) (\d{1,2})\s+(?:to|through)\s+(July|August) (\d{1,2})'
+    r'(?:,?\s+(20\d{2}))?(?=[ \t]*(?:[.\r\n]|$))', re.I,
+)
+
+
+def _internship_calendar_title(job):
     title=job.get('title','')
+    if re.search(r'\bsummer\s+2027\b|\b2027\s+summer\b',job.get('description',''),re.I):
+        # Some boards abbreviate the cohort in the title and state the full
+        # year in the posting. Keep an explicit conflicting title year decisive.
+        if not set(re.findall(r'\b20\d{2}\b',title))-{'2027'}:
+            title=re.sub(r"\b(summer)\s*['’]27\b",r'\1 2027',title,flags=re.I)
+    return title
+
+
+def _summer_2027(job):
+    title=_internship_calendar_title(job)
+    description=job.get('description','')
     seasons=set(re.findall(r'\b(winter|spring|summer|fall|autumn)\b',title,re.I))
     if seasons:
+        # A slash title can advertise separate cohorts. Require the employer's
+        # explicit, separate session lengths and dates before choosing summer;
+        # incidental summer prose or a combined placement cannot qualify.
+        if ({s.casefold() for s in seasons}=={'spring','summer'}
+                and re.search(r'\bspring\s*/\s*summer\s+2027\b',title,re.I)
+                and set(re.findall(r'\b20[0-9]{2}\b',title))=={'2027'}
+                and re.search(r'(?im)^[ \t]*Spring:[ \t]*(?:Around[ \t]+)?16[ \t]+weeks?[ \t]*\(January[ \t]*[-–][ \t]*April\)[ \t]*$',description)
+                and re.search(r'(?im)^[ \t]*Summer:[ \t]*(?:Around[ \t]+)?12[ \t]+weeks?[ \t]*\(May[ \t]*[-–][ \t]*August\)[ \t]*$',description)
+                and not re.search(r'(?:must|required|commit).{0,80}\bboth\b.{0,40}\bspring\b.{0,25}\bsummer\b',description,re.I|re.S)):
+            return True
         # Title intent wins over a different program mentioned in body prose:
         # "Software Intern (2027 Start) - Winter" is not a summer posting.
         return {s.casefold() for s in seasons}=={'summer'} and bool(re.search(r'\b2027\b',title))
-    return bool(re.search(r'\bsummer\s*2027\b|\b2027\s*summer\b',job.get('description',''),re.I))
+    if re.search(r'\bsummer\s*2027\b|\b2027\s*summer\b',description,re.I):return True
+    # Some employers give the placement dates without a season label. A
+    # yearless range needs the year in the posting title, never a feed tag.
+    match=_SUMMER_INTERNSHIP_DATES.search(description)
+    title_years=set(re.findall(r'\b20\d{2}\b',title))
+    if not match or title_years-{'2027'} or (match[5] or next(iter(title_years),None))!='2027':return False
+    months={'may':5,'june':6,'july':7,'august':8}
+    try:
+        date(2027,months[match[1].lower()],int(match[2]))
+        date(2027,months[match[3].lower()],int(match[4]))
+    except ValueError:return False
+    return True
 
 
 def _check_required_technologies(description,facts):
@@ -298,7 +344,8 @@ def eligible(job,s,facts):
     grad=facts.get("graduation",{}).get("value","")
     from .graduation import required
     required(desc,grad)
-    start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",title,re.I)
+    calendar_title=_internship_calendar_title(job)
+    start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",calendar_title,re.I)
     reverse_start=re.search(r"(\d{4})\s*(winter|spring|summer|fall|autumn)",title,re.I) if not start else None
     if reverse_start:
         start=re.search(r"(winter|spring|summer|fall|autumn)\s*(\d{4})",reverse_start[2]+' '+reverse_start[1],re.I)

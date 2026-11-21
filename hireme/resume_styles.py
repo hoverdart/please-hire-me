@@ -14,8 +14,9 @@ from pathlib import Path
 from .util import Blocked
 
 SECTIONS = ('education', 'experience', 'projects', 'skills')
-SECTION_TITLES = {'education': 'Education', 'experience': 'Experience', 'projects': 'Projects', 'skills': 'Skills'}
+SECTION_TITLES = {'education': 'Education', 'experience': 'Experience', 'research': 'Research', 'projects': 'Projects', 'skills': 'Skills'}
 INK = '#19233b'
+METRIC = re.compile(r'(?<![\w.])(?:\$[\d,.]+[KM]?\+?|\d[\d,]*(?:\.\d+)?(?:%|[KM]\+?|\+)|\d[\d,]*/\d[\d,]*)(?![\w.])')
 TEMPLATES = {
     # A plain single column with every value on its own text line, for applicant tracking systems.
     'ats': {'font': 'sans', 'body_size': 10.5, 'margin': 54, 'line_spacing': 1.35, 'accent': '#000000',
@@ -33,7 +34,8 @@ TEMPLATES = {
 BOUNDS = {'body_size': (9.0, 12.0), 'margin': (36.0, 72.0), 'line_spacing': (1.15, 1.6), 'max_bullets': (1, 8), 'max_pages': (1, 2)}
 DEFAULT_STYLE = {'template': 'ats', 'mode': 'select', **TEMPLATES['ats']}
 FONT_FILES = {'sans': ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf', 'DejaVuSans-Oblique.ttf'),
-              'serif': ('DejaVuSerif.ttf', 'DejaVuSerif-Bold.ttf', 'DejaVuSerif-Italic.ttf')}
+              'serif': ('DejaVuSerif.ttf', 'DejaVuSerif-Bold.ttf', 'DejaVuSerif-Italic.ttf'),
+              'carlito': ('Carlito-Regular.ttf', 'Carlito-Bold.ttf', 'Carlito-Italic.ttf')}
 
 
 def _luminance(color):
@@ -59,7 +61,7 @@ def validate_style(style):
     if result['mode'] not in ('select', 'rewrite'):
         raise ValueError('Choose exact selection or grounded rewriting')
     if not isinstance(result['font'],str) or result['font'] not in FONT_FILES:
-        raise ValueError('Choose a sans or serif resume font')
+        raise ValueError('Choose Sans serif, Serif or Carlito')
     if result['heading_case'] not in ('upper', 'title') or result['date_layout'] not in ('inline', 'right'):
         raise ValueError('Invalid resume heading or date layout')
     if type(result['rule']) is not bool:
@@ -77,8 +79,9 @@ def validate_style(style):
     if 1.05 / (_luminance(result['accent']) + 0.05) < 4.5:
         raise ValueError('Choose a darker resume accent; this colour is hard to read on white paper')
     order = result['section_order']
-    if not isinstance(order, list) or any(not isinstance(key,str) for key in order) or sorted(order) != sorted(SECTIONS):
-        raise ValueError('Resume section order must list education, experience, projects and skills once each')
+    if (not isinstance(order, list) or any(not isinstance(key,str) for key in order)
+            or len(order)!=len(set(order)) or not set(SECTIONS)<=set(order)<=set(SECTION_TITLES)):
+        raise ValueError('List education, experience, projects and skills once each, with an optional research section')
     result['section_order'] = list(order)
     if template == 'reference':
         if not isinstance(result.get('reference_hash'), str) or not re.fullmatch(r'[0-9a-f]{64}', result['reference_hash']):
@@ -128,28 +131,34 @@ def display_link(value):
 
 def _styles(style):
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.styles import ParagraphStyle
     regular, bold, italic = _fonts(style['font'])
     size = float(style['body_size'])
     leading = size * float(style['line_spacing'])
-    ink = colors.HexColor('#000000' if style['template'] == 'ats' else INK)
+    reference = style['template'] == 'reference'
+    ink = colors.HexColor('#000000' if style['template'] in {'ats','reference'} else INK)
     accent = colors.HexColor(style['accent'])
-    body = ParagraphStyle('body', fontName=regular, fontSize=size, leading=leading, textColor=ink, spaceAfter=size * 0.2,
+    body = ParagraphStyle('body', fontName=regular, fontSize=size, leading=leading, textColor=ink, spaceAfter=0 if reference else size * 0.2,
                           splitLongWords=1)
     return {
         'body': body,
-        'bullet': ParagraphStyle('bullet', parent=body, leftIndent=size * 1.1, firstLineIndent=0, bulletIndent=0,
+        'bullet': ParagraphStyle('bullet', parent=body, leftIndent=size * (1.45 if reference else 1.1), firstLineIndent=0,
+                                 bulletIndent=size * 0.45 if reference else 0,
                                  bulletFontName=regular, bulletFontSize=size),
         'meta': ParagraphStyle('meta', parent=body, fontName=italic, textColor=ink),
-        'right': ParagraphStyle('right', parent=body, alignment=TA_RIGHT, fontName=italic, spaceBefore=size * 0.45, spaceAfter=size * 0.1),
-        'entry': ParagraphStyle('entry', parent=body, fontName=bold, spaceBefore=size * 0.45, spaceAfter=size * 0.1),
-        'section': ParagraphStyle('section', parent=body, fontName=bold, fontSize=size + 1.5, leading=(size + 1.5) * 1.25,
-                                  textColor=accent, spaceBefore=size * 0.9, spaceAfter=size * 0.25, keepWithNext=True),
-        'name': ParagraphStyle('name', parent=body, fontName=bold, fontSize=size + 8, leading=(size + 8) * 1.2,
-                               textColor=accent, spaceAfter=size * 0.3),
+        'right': ParagraphStyle('right', parent=body, alignment=TA_RIGHT, fontName=regular if reference else italic,
+                                spaceBefore=size * 0.45, spaceAfter=size * 0.1),
+        'entry': ParagraphStyle('entry', parent=body, fontName=bold, spaceBefore=size * 0.45, spaceAfter=0 if reference else size * 0.1),
+        'section': ParagraphStyle('section', parent=body, fontName=bold, fontSize=size + (0.5 if reference else 1.5),
+                                  leading=leading if reference else (size + 1.5) * 1.25,
+                                  textColor=accent, spaceBefore=size * (0.50 if reference else 0.9),
+                                  spaceAfter=size * (0.05 if reference else 0.25), keepWithNext=True),
+        'name': ParagraphStyle('name', parent=body, fontName=bold, fontSize=size + (6 if reference else 8),
+                               leading=(size + (6 if reference else 8)) * 1.2, alignment=TA_CENTER if reference else body.alignment,
+                               textColor=accent, spaceAfter=size * (0.12 if reference else 0.3)),
         'contact': ParagraphStyle('contact', parent=body, fontSize=max(9.0, size - 0.5), leading=max(9.0, size - 0.5) * 1.35,
-                                  spaceAfter=size * 0.2),
+                                  alignment=TA_CENTER if reference else body.alignment, spaceAfter=size * 0.2),
         'accent': accent, 'size': size,
     }
 
@@ -159,8 +168,8 @@ def _section_heading(title, style, styles, width):
     text = title.upper() if style['heading_case'] == 'upper' else title
     flowables = [Paragraph(escape(text), styles['section'])]
     if style['rule']:
-        flowables.append(HRFlowable(width=width, thickness=0.6, color=styles['accent'], spaceBefore=0, hAlign='LEFT',
-                                    spaceAfter=styles['size'] * 0.35))
+        flowables.append(HRFlowable(width=width, thickness=0.55, color=styles['accent'], spaceBefore=0, hAlign='LEFT',
+                                    spaceAfter=styles['size'] * (0.17 if style['template']=='reference' else 0.35)))
     return flowables
 
 
@@ -172,30 +181,51 @@ def _entry_block(entry, style, styles, width):
     """
     from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.platypus import Paragraph, Table, TableStyle
+    reference = style['template']=='reference'
     heading, meta, dates = entry.get('heading', ''), entry.get('meta', ''), entry.get('dates', '')
     target = link_target(entry['url']) if entry.get('url') else None
-    meta_markup = f'<link href="{escape(target, quote=True)}">{escape(meta)}</link>' if target else escape(meta)
+    heading_markup=escape(heading)
+    if reference and entry.get('subtitle'):
+        regular,_,italic=_fonts(style['font'])
+        heading_markup+=f' <font name="{regular}">|</font> <font name="{italic}">{escape(entry["subtitle"])}</font>'
+    heading_link=entry.get('heading_link')
+    if heading_link and target:
+        regular=_fonts(style['font'])[0]
+        heading_markup+=f' <font name="{regular}">| <link href="{escape(target,quote=True)}">{escape(heading_link)}</link></font>'
+    meta_markup = f'<link href="{escape(target, quote=True)}">{escape(meta)}</link>' if target and not heading_link else escape(meta)
     block = []
-    if heading and dates and style['date_layout'] == 'right':
+    if heading and (dates or reference and meta) and style['date_layout'] == 'right':
         # The date column is as wide as its text, so a date range stays on one line.
-        date_width = min(width * 0.45, stringWidth(dates, styles['right'].fontName, styles['right'].fontSize) + 6)
-        row = Table([[Paragraph(escape(heading), styles['entry']), Paragraph(escape(dates), styles['right'])]],
+        right = ' | '.join(value for value in (meta,dates) if value) if reference else dates
+        right_markup = ' | '.join(value for value in (meta_markup,escape(dates)) if value) if reference else escape(dates)
+        date_width = min(width * 0.50, stringWidth(right, styles['right'].fontName, styles['right'].fontSize) + 7)
+        row = Table([[Paragraph(heading_markup, styles['entry']), Paragraph(right_markup, styles['right'])]],
                     colWidths=[width - date_width, date_width], hAlign='LEFT')
         row.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('FONTNAME', (0, 0), (-1, -1), styles['body'].fontName),
                                  ('LEFTPADDING', (0, 0), (-1, -1), 0),
                                  ('RIGHTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
                                  ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
         block.append(row)
-        if meta:
+        if reference:
+            row.spaceBefore=styles['size']*0.35
+        if meta and not reference:
             block.append(Paragraph(meta_markup, styles['meta']))
     else:
         if heading:
-            block.append(Paragraph(escape(heading), styles['entry']))
+            block.append(Paragraph(heading_markup, styles['entry']))
         line = ' | '.join(value for value in (meta_markup, escape(dates)) if value)
         if line:
             block.append(Paragraph(line, styles['meta']))
-    lines = [Paragraph(escape(line), styles['bullet'], bulletText='•') if entry.get('bulleted') else
-             Paragraph(escape(line), styles['body']) for line in entry.get('lines', [])]
+    lines=[]
+    for line in entry.get('lines', []):
+        markup=escape(line)
+        if entry.get('bulleted'):
+            if reference:markup=METRIC.sub(lambda match:'<b>'+match[0]+'</b>',markup)
+            lines.append(Paragraph(markup,styles['bullet'],bulletText='•'))
+        else:
+            if reference:
+                markup=re.sub(r'^[A-Za-z /&-]{2,30}:',lambda match:'<b>'+match[0]+'</b>',markup)
+            lines.append(Paragraph(markup,styles['body']))
     return block + lines[:1], lines[1:]
 
 
@@ -204,11 +234,13 @@ def plain_text(content, style=None):
     parts = [content['name'], *content.get('contact', [])]
     right = bool(style) and style['date_layout'] == 'right'
     for key, entries in content['sections']:
-        title = SECTION_TITLES.get(key, key)
+        title = 'Technical Skills' if key=='skills' and style and style['template']=='reference' else SECTION_TITLES.get(key, key)
         parts.append(title.upper() if style and style['heading_case'] == 'upper' else title)
         for entry in entries:
             heading, meta, dates = entry.get('heading', ''), entry.get('meta', ''), entry.get('dates', '')
-            parts.extend([heading, dates, meta] if right and heading and dates else [heading, meta, dates])
+            if entry.get('subtitle'):heading+=' | '+entry['subtitle']
+            if entry.get('heading_link'):heading+=' | '+entry['heading_link']
+            parts.extend([heading, dates, meta] if right and heading and dates and style['template']!='reference' else [heading, meta, dates])
             parts.extend(entry.get('lines', []))
     return [part for part in parts if part]
 
@@ -233,7 +265,8 @@ def render_resume(content, style):
         story.append(Paragraph(' | '.join(contact), styles['contact']))
     for key, entries in content['sections']:
         # A section heading never sits alone at the foot of a page.
-        lead = _section_heading(SECTION_TITLES.get(key, key), style, styles, width)
+        title = 'Technical Skills' if key=='skills' and style['template']=='reference' else SECTION_TITLES.get(key,key)
+        lead = _section_heading(title, style, styles, width)
         for entry in entries:
             together, rest = _entry_block(entry, style, styles, width)
             story.append(KeepTogether(lead + together))
@@ -308,19 +341,22 @@ def style_from_reference(data):
     serif_pattern = r'times|georgia|garamond|cambria|charter|palatino|baskerville|cmr\d|computermodern|minion|libertine|merriweather|sfrm|serif'
     is_serif = lambda name: bool(re.search(serif_pattern, name.casefold())) and 'sans' not in name.casefold()
     serif = sum(len(run[4]) for run in runs if is_serif(run[3])) > sum(len(run[4]) for run in runs) / 2
+    carlito = sum(len(run[4]) for run in runs if 'carlito' in run[3].casefold()) > sum(len(run[4]) for run in runs) / 2
     # Case of short, larger-or-equal lines hints at the heading treatment.
-    headings = [run[4] for run in runs if run[0] >= body and len(run[4]) <= 24 and run[4].replace(' ', '').isalpha()]
+    section_names = {name.casefold() for name in SECTION_TITLES.values()} | {'technical skills','research experience','work experience'}
+    headings = [run[4] for run in runs if run[4].casefold() in section_names]
     upper = sum(text.isupper() for text in headings) > len(headings) / 2 if headings else False
     order = []
     for _, _, _, _, text in sorted(runs, key=lambda run: -run[2]):
-        key = next((section for section, pattern in (('education', r'^education\b'), ('experience', r'^(work |professional |research )?experience\b|^employment\b'),
+        key = next((section for section, pattern in (('education', r'^education\b'), ('experience', r'^(work |professional )?experience\b|^employment\b'),
+                                                    ('research', r'^research(?: experience)?$'),
                                                     ('projects', r'^(selected |personal )?projects\b'), ('skills', r'^(technical )?skills\b'))
                     if re.match(pattern, text.casefold())), None)
         if key and key not in order and len(text) <= 40:
             order.append(key)
     order += [section for section in TEMPLATES['ats']['section_order'] if section not in order]
     measured = {'template': 'reference', 'reference_hash': hashlib.sha256(data).hexdigest(),
-                'font': 'serif' if serif else 'sans',
+                'font': 'carlito' if carlito else 'serif' if serif else 'sans',
                 'body_size': round(clamp(body, 'body_size') * 2) / 2,
                 'margin': float(round(clamp(left, 'margin'))),
                 'line_spacing': round(clamp(spacing, 'line_spacing'), 2),
@@ -332,5 +368,6 @@ def style_from_reference(data):
         notes.append(f'The reference body text is {body:g} pt; the readable range is {BOUNDS["body_size"][0]:g}–{BOUNDS["body_size"][1]:g} pt, so {measured["body_size"]:g} pt is used.')
     if round(left) != measured['margin']:
         notes.append(f'The reference margin is {left:.0f} pt; {measured["margin"]:.0f} pt is used to stay printable.')
-    notes.append('Typeface: an embedded ' + measured['font'] + ' face is used so every installation produces the same PDF. The reference typeface itself is not copied.')
+    notes.append('Typeface: ' + ('embedded Carlito matches the reference.' if carlito else
+                                  'an embedded ' + measured['font'] + ' face approximates the reference.'))
     return validate_style(measured), notes

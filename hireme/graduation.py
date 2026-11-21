@@ -2,11 +2,16 @@
 import re
 from .util import Blocked
 
+GRADUATION_POLICY_VERSION=2
 MONTHS={name.lower():i for i,name in enumerate(('January','February','March','April','May','June','July','August','September','October','November','December'),1)}
 MONTHS.update({k[:3]:v for k,v in list(MONTHS.items())})
+MONTHS['sept']=MONTHS['september']
+MONTH_PERIOD=re.compile(r'\b('+'|'.join(MONTHS)+r')\.(?=\s+20\d{2}\b)',re.I)
 SEASONS={'spring':(3,5),'summer':(6,8),'fall':(9,12),'autumn':(9,12)}
 DATE=r'(?:[A-Za-z]+\.?\s+)?(?:20\d{2})'
-GRADUATION=r'\bgraduat\w*'
+# A graduate program identifies a level of study. It supplies no graduation
+# date and must not turn an enrollment requirement into an unparsed cutoff.
+GRADUATION=r'\bgraduat\w*\b(?!(?:\s+degree)?\s+programs?\b)'
 
 def endpoint(text):
     match=re.fullmatch(r'(?:(\w+)\.?\s+)?(20\d{2})',text.strip())
@@ -24,7 +29,7 @@ def window(text):
     """Return inclusive month bounds or None for unsupported/ambiguous wording."""
     if not re.search(GRADUATION,text,re.I):return None
     text=re.sub(r'\s+',' ',text)
-    match=re.search(GRADUATION+r'.{0,60}?(?:between|from)\s+('+DATE+r')\s*(?:and|to|[-–])\s*('+DATE+r')',text,re.I)
+    match=re.search(GRADUATION+r'.{0,60}?(?:between|from)\s+('+DATE+r')\s*(?:and|to|&|[-–—])\s*('+DATE+r')',text,re.I)
     if match:
         first,last=endpoint(match[1]),endpoint(match[2])
         return (first[0],last[1]) if first and last and first[0]<=last[1] else None
@@ -60,7 +65,14 @@ def qualifies(value, text):
     return matches(value,bounds) if bounds is not None else None
 
 def required(text,value):
+    if '<' in text:
+        from .ats_adapters import posting_html_text
+        text=posting_html_text(text)
+    # Keep periods in month abbreviations from splitting a date range.
+    text=MONTH_PERIOD.sub(r'\1',text)
     for sentence in re.split(r'[\n.!?]+',text):
+        sentence=re.sub(r'\bmay be considered for (?:full[- ]time|permanent) (?:roles|positions) after graduation\b',
+                        '',sentence,flags=re.I)
         if re.search(r'graduation date.{0,60}(?:indicated|included|listed|stated).{0,30}(?:resume|cv)',sentence,re.I):
             continue # Document-content requirement, not a graduation cutoff.
         if not re.search(r'\b(?:must|required|eligible|between|before|after|by)\b.{0,60}'+GRADUATION+'|'+GRADUATION+r'.{0,60}\b(?:must|between|before|after|by|either)\b',sentence,re.I):continue

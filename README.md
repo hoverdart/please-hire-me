@@ -123,7 +123,7 @@ Once you've reviewed your facts, documents, prepared drafts and limits, you can 
 
 These commands enable applications at your saved interval; they do not start an immediate batch. To run a batch now, use `.venv/bin/python -m hireme run`. Review its results in Applications. A blocked question or CAPTCHA stays held while the worker continues with other eligible jobs. An uncertain submission stays held for reconciliation.
 
-macOS uses a user LaunchAgent; Linux uses cron or an existing systemd worker timer. The computer must remain awake and the user session or Linux environment must be running. Scheduled work is separate from the dashboard: closing a browser tab does not stop the worker, and stopping the dashboard terminal does not remove its schedule. Use one scheduler per applicant; `daemon` is a foreground alternative, not an additional schedule.
+macOS uses a user LaunchAgent. An interval that divides 24 hours runs at fixed local times and catches up once on wake if the Mac was asleep. Linux uses cron or an existing systemd worker timer. Keep the user session or Linux environment running. Closing the dashboard leaves the schedule active. Use one scheduler per applicant. The `daemon` command can run the worker in the foreground.
 
 To pause applications, run `.venv/bin/python -m hireme pause`. To remove automatic runs, also run `.venv/bin/python -m hireme schedule uninstall`. [Scheduling and recovery](docs/guide.md#pause-schedule-and-recover) explains the controls and where to inspect results.
 

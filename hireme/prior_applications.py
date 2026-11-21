@@ -6,10 +6,11 @@ resolves an uncertain attempt, follows an email link or enters model context.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from email.utils import getaddresses, parseaddr
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 import json
 import re
+import random
 import time
 import unicodedata
 from urllib.parse import urlsplit
@@ -20,9 +21,11 @@ from .util import Blocked, application_identity, company_key, company_normalizer
 
 MAX_MESSAGES = 25
 FRESH_SECONDS = 15 * 60
+START_FRESH_SECONDS = 60
 MAX_QUERY_BYTES = 1200
 AUTO_SCAN_SECONDS = 30
 AUTO_SCAN_PAGES = 25
+MAINTENANCE_SCAN_SECONDS = 90
 SEARCH_VERSION = 2
 CLASSIFIER_VERSION = 2
 QUERY = 'in:anywhere'
@@ -300,6 +303,18 @@ def _query(store, company):
     return query
 
 
+def _same_search(saved, current):
+    """Compare only our generated query grammar, with Gmail's OR semantics."""
+    def terms(query):
+        query=re.sub(r'^after:[0-9]+ ', '', query)
+        if query==QUERY:return frozenset()
+        match=re.fullmatch(re.escape(QUERY)+r' \{("[^"\r\n]+"(?: "[^"\r\n]+")*)\}',query)
+        if not match:return None
+        return frozenset(' '.join(value.casefold().split()) for value in re.findall(r'"([^"]+)"',match[1]))
+    expected=terms(current)
+    return expected is not None and terms(saved)==expected
+
+
 MAIL_SERVICE_FAILURES = {'prior_application_mail_access_denied', 'prior_application_mail_rate_limited'}
 
 
@@ -322,8 +337,18 @@ def _scan_failure(error):
         except (ValueError,TypeError,AttributeError):pass
     if codes:diagnostic['reasons']=sorted(codes)
     if status==429 or status==403 and codes & {'rateLimitExceeded','userRateLimitExceeded','dailyLimitExceeded'}:
-        return diagnostic,Blocked('prior_application_mail_rate_limited',
-            'Gmail temporarily limited email-history checks. This batch will not repeat the request; saved progress and duplicate holds are preserved. Try again later.')
+        failure=Blocked('prior_application_mail_rate_limited',
+            'Gmail temporarily limited email-history checks. Saved progress and duplicate holds are preserved; try again after the provider limit clears.')
+        failure.rate_retry_allowed='dailyLimitExceeded' not in codes
+        failure.retry_after_seconds=None
+        response=getattr(error,'resp',None)
+        try:
+            value=response.get('retry-after') if hasattr(response,'get') else None
+            if isinstance(value,str) and len(value)<=256:
+                failure.retry_after_seconds=(int(value) if re.fullmatch(r'[0-9]{1,12}',value)
+                    else max(0,parsedate_to_datetime(value).timestamp()-time.time()))
+        except (ValueError,TypeError,OverflowError):pass
+        return diagnostic,failure
     if status in {401,403}:
         return diagnostic,Blocked('prior_application_mail_access_denied',
             'Gmail denied email-history access. Check Gmail permissions and API access in Connections before retrying; reconnecting may be required. No application was attempted.')
@@ -346,7 +371,10 @@ def scan(store, *, company=None, restart=False, client_factory=None, work_deadli
             state=store.db.execute('SELECT * FROM prior_application_scans WHERE owner_hash=? AND company_key=?',(owner,scope)).fetchone()
             protocol=_protocol(store)
             prior_protocol=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(owner,scope)).fetchone()
-            if state and (restart or not state['query'].endswith(query) or not prior_protocol or prior_protocol[0] not in {protocol,protocol+':backfill'}): state=None
+            # Feeds can alternate the capitalization of one employer while
+            # sharing its canonical scan scope. Gmail searches ignore case;
+            # preserve the cursor and proof for the same search terms.
+            if state and (restart or not _same_search(state['query'],query) or not prior_protocol or prior_protocol[0] not in {protocol,protocol+':backfill'}): state=None
             pending=json.loads(state['pending']) if state and state['completed'] is None else []
             next_page=state['next_page'] if state and state['completed'] is None else ''
             started=state['started'] if state and state['completed'] is None else time.time()
@@ -425,12 +453,12 @@ def require_recent_check(store,job):
     protocol=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(owner,_scope(store,job['company']))).fetchone()
     if (not row or row['completed'] is None or not 0<=time.time()-row['completed']<=FRESH_SECONDS
             or not protocol or protocol[0]!=_protocol(store)
-            or not row['query'].endswith(query)):
+            or not _same_search(row['query'],query)):
         raise Blocked('prior_application_check_required','A current company email-history check is required before this application.')
 
 
-def preflight(store,job):
-    try:return _preflight(store,job)
+def preflight(store,job, *, scan_seconds=None):
+    try:return _preflight(store,job,scan_seconds=scan_seconds)
     except Blocked as error:
         if error.reason in {'paused','cycle_timeout'}:raise
         if not error.reason.startswith('prior_application_'):
@@ -443,7 +471,16 @@ def preflight(store,job):
         raise error from None
 
 
-def _preflight(store,job):
+def _require_start_check(store,job):
+    require_recent_check(store,job)
+    if not store.settings()['gmail_prior_applications']:return
+    row=store.db.execute('SELECT completed FROM prior_application_scans WHERE owner_hash=? AND company_key=?',
+        (_owner(store),_scope(store,job['company']))).fetchone()
+    if not row or row['completed'] is None or not 0<=time.time()-row['completed']<=START_FRESH_SECONDS:
+        raise Blocked('prior_application_check_required','Refresh company email history before starting the application form')
+
+
+def _preflight(store,job, *, scan_seconds=None):
     check_saved(store,job)
     if not store.settings()['gmail_prior_applications']: return
     service_failure=getattr(store,'prior_mail_service_failure',None)
@@ -452,22 +489,35 @@ def _preflight(store,job):
     if checked is not None and scope in checked:
         failure=(getattr(store,'prior_mail_failures',None) or {}).get(scope)
         if failure:raise Blocked(*failure)
-        require_recent_check(store,job);return
-    if checked is not None and len(checked)>=getattr(store,'prior_mail_check_limit',store.settings()['max_attempts_per_cycle']):
+        try:_require_start_check(store,job);return
+        except Blocked as error:
+            if error.reason!='prior_application_check_required':raise
+    maintenance=getattr(store,'prior_mail_maintenance_scope',None)
+    if (checked is not None and scope not in checked and scope!=maintenance
+            and len(checked-{maintenance})>=getattr(store,'prior_mail_check_limit',store.settings()['max_attempts_per_cycle'])):
         raise Blocked('prior_application_check_budget','This batch reached its company email-check limit. Saved scan progress will continue next cycle.')
     if checked is not None:checked.add(scope)
     resolve_company(store,job)
     check_saved(store,job)
-    try: require_recent_check(store,job);return
+    try: _require_start_check(store,job);return
     except Blocked: pass
-    deadline=time.monotonic()+AUTO_SCAN_SECONDS
-    failures=0
+    deadline=time.monotonic()+(AUTO_SCAN_SECONDS if scan_seconds is None else scan_seconds)
+    failures=rate_failures=0
     for _ in range(AUTO_SCAN_PAGES):
         store.checkpoint()
         if time.monotonic()>=deadline:break
         try:
             result=scan(store,company=job['company'],work_deadline=deadline)
         except Blocked as error:
+            if (error.reason=='prior_application_mail_rate_limited' and getattr(error,'rate_retry_allowed',False)
+                    and rate_failures<3):
+                delay=max(2**rate_failures+random.uniform(0,.25),getattr(error,'retry_after_seconds',None) or 0)
+                if time.monotonic()+delay<deadline:
+                    store.checkpoint()
+                    store.event('prior_mail_rate_limit_wait',scope,{'seconds':round(delay,3),'retry':rate_failures+1})
+                    time.sleep(delay);store.checkpoint()
+                    rate_failures+=1
+                    continue
             # These are read-only, resumable mailbox operations. A transient
             # transport failure must not waste the whole six-hour cycle, but
             # the freshness proof remains mandatory after bounded retries.
@@ -476,7 +526,7 @@ def _preflight(store,job):
             continue
         check_saved(store,job)
         if not result['more_available']:
-            try:require_recent_check(store,job);return
+            try:_require_start_check(store,job);return
             except Blocked as error:
                 # Only a successfully completed but stale scan can start an
                 # overlapping catch-up here. Other failures must remain held.
@@ -484,8 +534,42 @@ def _preflight(store,job):
                 phase=store.db.execute('SELECT protocol FROM prior_scan_protocols WHERE owner_hash=? AND company_key=?',(_owner(store),scope)).fetchone()
                 catching_up=phase and phase[0]==_protocol(store)+':backfill'
                 if (error.reason!='prior_application_check_required' or not row or row['completed'] is None
-                        or time.time()-row['completed']<=FRESH_SECONDS and not catching_up):raise
+                        or time.time()-row['completed']<=START_FRESH_SECONDS and not catching_up):raise
     raise Blocked('prior_application_scan_incomplete','More application mail remains to scan for this company. Continue the scan before applying.')
+
+
+def advance_waiting_scan(store, jobs):
+    """Advance one existing incomplete scope outside the browser/attempt budget.
+
+    Take the oldest scan checkpoint among eligible held scopes. Preflight keeps
+    its normal owner, duplicate and freshness checks; a failed scope stays
+    cached for this cycle. No new search scope is enrolled here.
+    """
+    if not store.settings()['gmail_prior_applications']:return
+    try:owner=_owner(store)
+    except Blocked:return
+    held={row['job_id'] for row in store.db.execute(
+        "SELECT job_id FROM job_holds WHERE reason='prior_application_scan_incomplete'")}
+    pending={row['company_key']:row['updated'] for row in store.db.execute(
+        "SELECT company_key,updated FROM prior_application_scans WHERE owner_hash=? AND completed IS NULL",(owner,))}
+    choices={}
+    for job in jobs:
+        if job['id'] not in held:continue
+        scope=_scope(store,job['company'])
+        if scope in pending:choices.setdefault(scope,job)
+    if not choices:return
+    scope=min(choices,key=lambda key:(pending[key],key))
+    job=choices[scope]
+    store.prior_mail_maintenance_scope=scope
+    try:
+        preflight(store,job,scan_seconds=MAINTENANCE_SCAN_SECONDS)
+    except Blocked as error:
+        if error.reason in {'paused','cycle_timeout'}:raise
+        # This scope remains held; the ordinary eligibility/attempt loop
+        # can continue to the next company without consuming an attempt here.
+        store.event('prior_mail_maintenance',job['id'],{'reason':error.reason,'run_id':store.active_run_id})
+    else:
+        store.event('prior_mail_maintenance',job['id'],{'reason':'ready','run_id':store.active_run_id})
 
 
 def _evidence_companies(store,row):

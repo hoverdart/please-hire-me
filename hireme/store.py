@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS report_dispatch (report_id TEXT PRIMARY KEY, message_
  outcome TEXT, checked TEXT);
 CREATE TABLE IF NOT EXISTS mail_consumptions (message_id TEXT PRIMARY KEY, challenge_id TEXT NOT NULL,
  consumed REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS gmail_api_quota (id INTEGER PRIMARY KEY CHECK(id=1), next_allowed REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS recruiting_feedback (id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL,
  message_id TEXT NOT NULL, received TEXT NOT NULL, sender TEXT NOT NULL, subject TEXT NOT NULL,
  excerpt TEXT NOT NULL, category TEXT NOT NULL, candidates TEXT NOT NULL, match_reason TEXT NOT NULL,
@@ -178,6 +179,8 @@ CREATE INDEX IF NOT EXISTS jobs_fit ON jobs(score DESC,first_seen DESC,id);
 CREATE INDEX IF NOT EXISTS jobs_dashboard_rank ON jobs(status,reason,score DESC,first_seen DESC,id);
 CREATE INDEX IF NOT EXISTS questions_unresolved_job ON questions(resolved,job_id);
 CREATE INDEX IF NOT EXISTS events_kind_subject_seq ON events(kind,subject,seq DESC);
+CREATE INDEX IF NOT EXISTS events_kind_timestamp ON events(kind,timestamp);
+CREATE INDEX IF NOT EXISTS job_holds_reason_job ON job_holds(reason,job_id);
 CREATE INDEX IF NOT EXISTS employer_accounts_state ON employer_accounts(state);
 CREATE INDEX IF NOT EXISTS runs_status_started ON runs(status,started);
 """
@@ -717,7 +720,9 @@ class Store:
             # UUID across tenants conservatively; this comparison never grants
             # navigation, merges jobs or rewrites historical company identity.
             ashby_uuid_match=identity[0]==prior[0]=='ashby' and identity[2]==prior[2]
-            if prior==identity or ashby_uuid_match:
+            greenhouse_region_match=({identity[0],prior[0]}=={'job-boards.greenhouse.io','job-boards.eu.greenhouse.io'}
+                                     and identity[1:]==prior[1:])
+            if prior==identity or ashby_uuid_match or greenhouse_region_match:
                 raise Blocked('duplicate_or_uncertain','This requisition already has a recorded attempt under another link')
         ck=self.company(job["company"],s)
         if ck in {self.company(x,s) for x in s["skip_companies"]+s["interview_companies"]}:
@@ -793,6 +798,9 @@ class Store:
     def begin_submit(self, aid):
         from .answers import validate_package
         from .policy import eligible
+        if not self.db.in_transaction:
+            from .rollout import check_connections
+            check_connections(self)
         with self.transaction():
             self.checkpoint()
             app=self.db.execute("SELECT * FROM applications WHERE id=?",(aid,)).fetchone()
@@ -995,7 +1003,7 @@ class Store:
         def rows(q,parameters=()): return [dict(x) for x in self.db.execute(q,parameters)]
         from .presentation import attention_sql,actionable_question_sql
         condition,parameters=attention_sql('j')
-        question_condition,question_parameters=actionable_question_sql('q')
+        question_condition,question_parameters=actionable_question_sql('q',self.settings()['allowed_application_ats'])
         priority=f"({condition} OR EXISTS(SELECT 1 FROM questions q WHERE q.job_id=j.id AND {question_condition}))"
         from .saved_views import list_views
         from .context_inbox import open_needs

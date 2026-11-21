@@ -51,6 +51,64 @@ def test_workday_date_navigation_help_does_not_change_field_identity(store):
         assert not after.get('help_text') and after['value']=='8'
 
 
+def test_questionnaire_numeric_month_and_year_use_confirmed_graduation_precision(store,job,package):
+    from hireme.answers import resolve,validate_package
+    from hireme.util import digest
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content('''<div data-automation-id=formField-graduation><label>What is your anticipated graduation date?*</label>
+            <input data-automation-id=dateSectionMonth-input maxlength=2>
+            <input data-automation-id=dateSectionYear-input maxlength=4></div>''')
+        fields=observe(browser.page)['fields']
+        answers=[resolve(store,job['host'],f,context=job) for f in fields]
+        assert [a['value'] for a in answers]==['05','2028']
+        for answer in answers:
+            browser._fill_ui(answer)
+            assert browser._matches(answer)
+        package.update(answers=answers,steps=[{'fields':fields}],facts_hash=digest(store.facts()))
+        validate_package(store,job,package)
+
+
+def test_month_only_graduation_cannot_fill_an_exact_day_component(store,job):
+    from hireme.answers import resolve
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content('''<div data-automation-id=formField-graduation><label>What is your anticipated graduation date?*</label>
+            <input data-automation-id=dateSectionDay-input maxlength=2></div>''')
+        field=observe(browser.page)['fields'][0]
+        assert field['history_date_part']=='day_number'
+        with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],field,context=job)
+        assert browser.page.locator('input').input_value()==''
+
+
+@pytest.mark.parametrize('options,expected',[(['April','May','June'],'May'),(['4','5','6'],'5')])
+def test_date_component_choices_keep_their_exact_native_month_encoding(store,job,options,expected):
+    from hireme.answers import resolve
+    field={'label':'What is your anticipated graduation date?* month','type':'combobox','required':True,
+        'options':options,'history_date_part':'month_number','value':''}
+    assert resolve(store,job['host'],field,context=job)['value']==expected
+
+
+def test_incomplete_date_group_waits_for_its_missing_day_before_typing_other_components(store,job,monkeypatch):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.job={**job,'answer_scope':job['host']};browser.preparing=False;browser.provider=None
+        browser.opened=set();browser.searched=set();browser.option_cache={};browser.completed_steps=[]
+        monkeypatch.setattr(browser,'_check',lambda:None)
+        browser.page.set_content('''<h1>My Information</h1><div data-automation-id=formField-graduation>
+          <label>What is your anticipated graduation date?*</label>
+          <input id=month data-automation-id=dateSectionMonth-input>
+          <input id=day data-automation-id=dateSectionDay-input>
+          <input id=year data-automation-id=dateSectionYear-input></div><button>Save and continue</button>''')
+        view=observe(browser.page);choices,answers,_,pending=browser._choices(view)
+        assert not choices and len(pending)==1 and pending[0][0]['history_date_part']=='day_number'
+        assert [browser.page.locator('#'+name).input_value() for name in ('month','day','year')]==['','','']
+        # This synthetic applicant explicitly supplies the missing day. It is
+        # an approval of one exact field, never a day inferred from May 2028.
+        field=pending[0][0]
+        qid=store.ask(job['id'],job['host'],field['label'],[],'missing_fact',field=field,context=job)
+        store.answer_question(qid,'19')
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not pending and [c['answer']['value'] for c in choices]==['05','19','2028']
+
+
 def test_workday_agreement_retains_surrounding_terms_and_links(store):
     with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
         browser.page.set_content('''<section data-fkit-id=termsAndConditions--null>
@@ -107,11 +165,39 @@ def test_nested_workday_prompt_uses_its_own_options_and_verifies_selected_label(
         assert final['options']==[] and final['value']=='Company Website'
 
 
+def test_expansion_waits_for_native_child_choices_without_clicking_the_group_again(store):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content(PROMPT)
+        browser.page.locator('#source').click()
+        field=observe(browser.page)['fields'][0]
+        browser.page.get_by_role('option',name='Website not checked',exact=True).evaluate('''node=>{
+          node.onclick=()=>{window.groupClicks=(window.groupClicks||0)+1;menu.replaceChildren();
+            setTimeout(()=>menu.replaceChildren(option('Company Website',false)),700);};
+        }''')
+        browser._check=lambda:None
+        browser.option_cache={};browser.memory=[]
+        browser._perform({'kind':'expand','field':field,'value':'Website','label':'Inspect Website'},
+            observe(browser.page),[],[])
+        assert browser.page.evaluate('window.groupClicks')==1
+        assert observe(browser.page)['fields'][0]['options']==['Company Website']
+
+
 @pytest.mark.parametrize('source,expected',[('portal:Acme','Website'),('gh:Acme','Website'),('user',None),('simplify:internships',None)])
 def test_website_source_category_requires_known_employer_board_provenance(source,expected):
     from hireme.answers import _discovery_answer
     answer=_discovery_answer('How Did You Hear About Us?*',['Website','Employee Referral'],{'source':source,'company':'Acme'})
     assert (answer['value'] if answer else None)==expected
+
+
+def test_recorded_job_board_source_can_expand_combined_category_without_claiming_a_social_referral():
+    from hireme.answers import _discovery_answer
+    context={'source':'simplify:internships','company':'Acme'}
+    answer=_discovery_answer('How Did You Hear About Us?*',
+        ['Company Website','Job Board/ Social Media','Referral'],context)
+    assert answer=={'value':'Job Board/ Social Media','provenance':{'job_source':'simplify:internships'}}
+    assert _discovery_answer('How Did You Hear About Us?*',['LinkedIn','Indeed'],context) is None
+    assert _discovery_answer('How Did You Hear About Us?*',['LinkedIn','Indeed','Other'],context)['value']=='Other'
+    assert _discovery_answer('How Did You Hear About Us?*',['Job Board/ Social Media'],{'source':'user'}) is None
 
 
 def test_visible_menu_is_not_shared_with_unrelated_comboboxes(store):
@@ -226,6 +312,57 @@ def test_virtualized_school_prompt_searches_confirmed_institution_before_other(s
         assert not answers and not pending
 
 
+def test_virtualized_referral_search_keeps_recorded_source_and_selects_only_a_returned_other_choice(store,job,monkeypatch):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.job={**job,'answer_scope':job['host'],'source':'simplify:internships'}
+        browser.preparing=False;browser.provider=None;browser.opened=set();browser.searched=set();browser.option_cache={}
+        monkeypatch.setattr(browser,'_check',lambda:None)
+        html='''<h1>My Information</h1><div data-automation-id=formField-source>
+          <label for=source>How Did You Hear About Us?*</label><div data-automation-id=multiSelectContainer>
+          <input id=source data-uxi-widget-type=selectinput data-uxi-multiselect-id=source-widget aria-required=true></div></div>
+          <div role=option><div data-uxi-multiselect-id=source-widget><p data-automation-id=promptOption>LinkedIn</p></div></div>'''
+        browser.page.set_content(html)
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not answers and not pending
+        assert len(choices)==1 and choices[0]['kind']=='search' and choices[0]['query_text']=='Simplify'
+        field=choices[0]['field'];browser.searched.add(field['ui_id'])
+        browser.search_queries={field['ui_id']:{'Simplify'}}
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not answers and not pending and choices[0]['query_text']=='Other'
+        browser.search_queries[field['ui_id']].add('Other')
+        browser.page.set_content(html.replace('LinkedIn','Other'))
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not pending and len(answers)==1 and answers[0]['value']=='Other'
+        assert answers[0]['provenance']=={'job_source':'simplify:internships'}
+        assert choices[0]['kind']=='fill'
+
+
+def test_virtualized_referral_scroll_reads_only_its_current_category_before_selecting_other(store,job,monkeypatch):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.job={**job,'answer_scope':job['host'],'source':'simplify:internships'}
+        browser.preparing=False;browser.provider=None;browser.opened=set();browser.searched=set();browser.option_cache={};browser.memory=[]
+        monkeypatch.setattr(browser,'_check',lambda:None)
+        browser.page.set_content('''<h1>My Information</h1><div data-automation-id=formField-source>
+          <label for=source>How Did You Hear About Us?*</label><div data-automation-id=multiSelectContainer>
+          <input id=source data-uxi-widget-type=selectinput data-uxi-multiselect-id=source-widget aria-required=true></div></div>
+          <div id=menu role=listbox style="height:100px;overflow-y:auto"><div id=options></div><div style="height:500px"></div></div>
+          <div id=unrelated role=listbox style="height:100px;overflow-y:auto"><div style="height:500px">Another prompt</div></div>
+          <script>function render(label){options.innerHTML='<div role=option><div data-uxi-multiselect-id=source-widget><p data-automation-id=promptOption>'+label+'</p></div></div>';}
+          render('LinkedIn');menu.onscroll=()=>render('Other');</script>''')
+        view=observe(browser.page);choices,answers,_,pending=browser._choices(view)
+        assert not answers and not pending and choices[0]['kind']=='scroll_options'
+        assert browser._choose(view,[{'kind':'fill','field':{},'id':'fill-other'},*choices])==choices[0]
+        browser._perform(choices[0],view,[],[])
+        assert browser.page.locator('#menu').evaluate('e=>e.scrollTop')>0
+        assert browser.page.locator('#unrelated').evaluate('e=>e.scrollTop')==0
+        assert browser.page.locator('#source').input_value()==''
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not pending and len(answers)==1 and answers[0]['value']=='Other'
+        assert answers[0]['provenance']=={'job_source':'simplify:internships'}
+        assert choices[0]['kind']=='fill'
+        assert not store.db.execute('SELECT 1 FROM draft_operations').fetchone()
+
+
 def test_prefilled_workday_chip_is_validated_without_opening_virtualized_choices(store,job,monkeypatch):
     store.put_facts({'phone':'+1 555 123 4567','country':'United States'})
     with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
@@ -262,7 +399,8 @@ def test_workday_fkit_rows_and_empty_history_actions_have_scoped_identity(store)
         assert not fields[4].get('section')
 
 
-def test_workday_prompt_search_executes_enter_without_saving_an_answer(store,job,monkeypatch):
+@pytest.mark.parametrize('clears_query,returns_choices',[(False,True),(True,True),(True,False)])
+def test_workday_prompt_search_executes_enter_without_saving_an_answer(store,job,monkeypatch,clears_query,returns_choices):
     from hireme.draft_journal import DraftJournal
     from hireme.browser_agent_protocol import origin
     store.put_facts({'school':'Testville University'})
@@ -270,7 +408,7 @@ def test_workday_prompt_search_executes_enter_without_saving_an_answer(store,job
       <label for=school>School*</label><div data-automation-id=multiSelectContainer>
       <input id=school data-uxi-widget-type=selectinput data-uxi-multiselect-id=school-widget enterkeyhint=search>
       </div></div><div id=menu></div><script>
-      school.onkeydown=e=>{if(e.key==='Enter'){window.searchExecuted=true;menu.innerHTML=
+      school.onkeydown=e=>{if(e.key==='Enter'){window.searchExecuted=true;if(window.clearSearch)school.value='';if(!window.returnChoices)return;menu.innerHTML=
       '<div role=option><div data-uxi-multiselect-id=school-widget><p data-automation-id=promptOption>Testville University</p></div></div>';}};
       </script>'''
     with AdaptiveBrowser(store,test_url=job['url']) as browser:
@@ -285,9 +423,12 @@ def test_workday_prompt_search_executes_enter_without_saving_an_answer(store,job
         view=observe(browser.page);field=view['fields'][0]
         choice=browser._lookup_choice(field,[])
         assert field['search_on_enter'] and choice['answer']['value']=='Testville University'
-        browser._perform(choice,view,[],[])
+        browser.page.evaluate('flags=>{window.clearSearch=flags[0];window.returnChoices=flags[1]}',[clears_query,returns_choices])
+        if returns_choices:browser._perform(choice,view,[],[])
+        else:
+            with pytest.raises(Blocked,match='browser_no_progress'):browser._perform(choice,view,[],[])
         assert browser.page.evaluate('!!window.searchExecuted')
-        assert observe(browser.page)['fields'][0]['options']==['Testville University']
+        assert observe(browser.page)['fields'][0]['options']==(['Testville University'] if returns_choices else [])
         assert not store.db.execute('SELECT 1 FROM draft_operations').fetchone()
 
 
@@ -320,3 +461,117 @@ def test_add_another_inserts_only_missing_confirmed_history_rows(store,job,monke
         browser.page.set_content('<h1>My Experience</h1><div data-automation-id=applyFlowMyExpPage><section><h2>Work Experience</h2>'+rows+'<button>Add Another</button></section></div>')
         choices,*_=browser._choices(observe(browser.page))
         assert bool([c for c in choices if c['kind']=='add']) is needs_add
+
+
+def test_recorded_simplify_listing_uses_exact_platform_or_career_website_group():
+    from hireme.answers import _discovery_answer
+    question='How Did You Hear About Us?*';context={'source':'simplify:internships'}
+    groups=['Arrowstreet Contacted Me','Campus Recruiting','Career/Networking Website',
+            'Career Event','Direct Applicant','Employee Referral']
+    assert _discovery_answer(question,groups,context)=={
+        'value':'Career/Networking Website','provenance':{'job_source':'simplify:internships'}}
+    assert _discovery_answer(question,['LinkedIn','Simplify','Other'],context)['value']=='Simplify'
+    assert _discovery_answer(question,['LinkedIn','SimplifyJobs','Other'],context)['value']=='SimplifyJobs'
+    assert _discovery_answer(question,groups,{'source':'user'}) is None
+    assert _discovery_answer(question,groups,{'source':'gh:fixture'}) is None
+
+
+def test_group_expansion_clicks_its_visible_native_chevron_once(store):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content(PROMPT)
+        browser.page.locator('#source').click()
+        field=observe(browser.page)['fields'][0]
+        browser.page.get_by_role('option',name='Website not checked',exact=True).evaluate('''node=>{
+          node.onclick=null;
+          const arrow=document.createElementNS('http://www.w3.org/2000/svg','svg');
+          arrow.classList.add('wd-icon-chevron-right-small');
+          arrow.setAttribute('width','24');arrow.setAttribute('height','24');
+          arrow.style.background='black';
+          arrow.addEventListener('click',()=>{window.groupClicks=(window.groupClicks||0)+1;
+            menu.replaceChildren(option('Company Website',false));});
+          node.querySelector('[data-uxi-multiselect-id]').append(arrow);
+        }''')
+        browser._check=lambda:None;browser.option_cache={};browser.memory=[]
+        browser._perform({'kind':'expand','field':field,'value':'Website','label':'Inspect Website'},
+            observe(browser.page),[],[])
+        assert browser.page.evaluate('window.groupClicks')==1
+        assert observe(browser.page)['fields'][0]['options']==['Company Website']
+
+
+@pytest.mark.parametrize('hover_opens',[False,True])
+def test_group_focus_settles_before_one_click_and_hover_opening_is_not_clicked_again(store,hover_opens):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content(PROMPT)
+        browser.page.locator('#source').click()
+        field=observe(browser.page)['fields'][0]
+        browser.page.get_by_role('option',name='Website not checked',exact=True).evaluate('''(node,hoverOpens)=>{
+          window.groupClicks=0;window.armed=false;
+          node.onmouseenter=()=>setTimeout(()=>{window.armed=true;
+            if(hoverOpens)menu.replaceChildren(option('Company Website',false));},200);
+          node.onclick=()=>{window.groupClicks++;
+            if(window.armed)menu.replaceChildren(option('Company Website',false));};
+        }''',hover_opens)
+        browser._check=lambda:None;browser.option_cache={};browser.memory=[]
+        browser._perform({'kind':'expand','field':field,'value':'Website','label':'Inspect Website'},
+            observe(browser.page),[],[])
+        assert browser.page.evaluate('window.groupClicks')==(0 if hover_opens else 1)
+        assert observe(browser.page)['fields'][0]['options']==['Company Website']
+
+
+def test_source_search_returning_parent_does_not_expand_the_same_exhausted_group_again(store,job):
+    with AdaptiveBrowser(store,test_url='http://127.0.0.1') as browser:
+        browser.page.set_content(PROMPT.replace("option('Website',true)","option('Career/Networking Website',true)"))
+        browser.page.locator('#source').click()
+        field=observe(browser.page)['fields'][0]
+        browser.job={**job,'answer_scope':job['host'],'source':'simplify:internships'}
+        browser.provider=None;browser._check=lambda:None
+        browser.opened={field['ui_id']};browser.searched={field['ui_id']}
+        browser.search_queries={field['ui_id']:{'Simplify','Other'}}
+        browser.expanded_groups={(field['ui_id'],'Career/Networking Website',tuple(field['option_groups']))}
+        browser.option_cache={field['ui_id']:{'options':['Glassdoor','LinkedIn'],'option_values':['Glassdoor','LinkedIn']}}
+        choices,answers,_,pending=browser._choices(observe(browser.page))
+        assert not any(choice['kind']=='expand' for choice in choices)
+        assert not any(answer['field']['ui_id']==field['ui_id'] for answer in answers)
+        missing=[(f,reason) for f,reason in pending if f['ui_id']==field['ui_id']]
+        assert missing[0][0]['options']==['Glassdoor','LinkedIn']
+        assert missing[0][1]=='required_answer_missing'
+
+
+def test_country_territory_phone_code_uses_both_confirmed_phone_and_country(store,job):
+    from hireme.answers import resolve
+    store.put_facts({'phone':'+1 555 123 4567','country':'United States'})
+    field={'label':'Country / Territory Phone Code*','type':'combobox','required':True,
+           'options':['United States of America (+1)'],'value':''}
+    answer=resolve(store,job['host'],field,context=job)
+    assert answer['value']=='United States of America (+1)'
+    assert 'phone_country' in answer['provenance']
+
+
+def test_simplify_can_use_an_observed_other_career_site_without_claiming_another_named_source():
+    from hireme.answers import _discovery_answer
+    options=['Other Career Site','Other Recruitment Marketing']
+    answer=_discovery_answer('How Did You Hear About Us?*',options,{'source':'simplify:internships'})
+    assert answer=={'value':'Other Career Site','provenance':{'job_source':'simplify:internships'}}
+    assert _discovery_answer('How Did You Hear About Us?*',['Simply Hired','Other Recruitment Marketing'],{'source':'simplify:internships'}) is None
+
+
+def test_adult_satisfies_age_or_minor_permit_question_without_inventing_permit_status(store,job):
+    from hireme.answers import resolve
+    field={'label':'Are you at least 18 years of age? Or, if you are under age 18, can you provide necessary work permits?*',
+           'type':'select','required':True,'options':['Yes','No']}
+    store.put_facts({'over_18':'Yes'})
+    answer=resolve(store,job['host'],field,context=job)
+    assert answer['value']=='Yes' and 'adult_disjunction_revision' in answer['provenance']
+    store.put_facts({'over_18':'No'})
+    with pytest.raises(Blocked,match='missing_fact'):resolve(store,job['host'],field,context=job)
+
+
+def test_primary_mobile_contact_uses_personal_cell_without_selecting_business_or_alternate_number(store,job):
+    from hireme.answers import resolve
+    store.put_facts({'phone_type':'Mobile'})
+    field={'label':'Phone Device Type*','type':'combobox','required':True,'options':[
+        'Alternate Business','Alternate Busn Fax','Alternate Busn Home','Alternate Cell - Personal',
+        'Business','Business Fax','Cell - Business','Cell - Personal','Home']}
+    answer=resolve(store,job['host'],field,context=job)
+    assert answer['value']=='Cell - Personal'
+    assert answer['provenance']['fact_key']=='phone_type'

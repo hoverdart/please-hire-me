@@ -1,0 +1,516 @@
+import base64
+import json
+import time
+from types import SimpleNamespace
+from urllib.parse import parse_qs,urlsplit
+from html import escape
+
+import pytest
+
+from hireme.accounts import AccountVault
+from hireme.browser_agent import AdaptiveBrowser
+from hireme.util import Blocked,digest
+from hireme.workday_account_policy import configure
+from hireme.workday_accounts import authenticate
+
+ORIGIN='https://acme.wd1.myworkdayjobs.com'
+URL=ORIGIN+'/External/job/US/Synthetic_R12345'
+SECRET='Example42!xyz'
+TOKEN='a'*96
+
+
+def auth_html():
+    return '''<!doctype html><h1>Software Engineer Intern Summer 2027</h1>
+    <div data-automation-id="signInContent"><h2>Sign In</h2><div id=auth></div></div>
+    <script>window.workday={tenant:'acme',siteId:'External',token:'fixture-csrf'};
+    function render(create=false){
+      document.getElementById('auth').innerHTML=`<form data-automation-id=signInFormo>
+        <label>Email<input data-automation-id=email></label><label>Password<input data-automation-id=password type=password></label>
+        ${create?'<label>Verify<input data-automation-id=verifyPassword type=password></label><label><input data-automation-id=createAccountCheckbox type=checkbox>I agree to creating this account</label>':''}
+        <div role=button tabindex=0 aria-label="${create?'Create Account':'Sign In'}" data-automation-id=click_filter>${create?'Create Account':'Sign In'}</div>
+        <button aria-hidden=true style="display:none" type=submit>${create?'Create Account':'Sign In'}</button>
+        <button type=button data-automation-id="${create?'signInLink':'createAccountLink'}">${create?'Sign In':'Create Account'}</button></form>`;
+      document.querySelector('button[type=button]').onclick=()=>render(!create);
+      document.querySelector('[role=button]').onclick=async()=>{
+        const root=document.querySelector('form');if(create&&!root.querySelector('input[type=checkbox]').checked)return;
+        const config=await(await fetch('/External/login')).json();
+        const body=new URLSearchParams({username:root.querySelector('[data-automation-id=email]').value,
+          password:root.querySelector('[data-automation-id=password]').value,sessionSecureToken:config.sessionSecureToken});
+        try{const data=await(await fetch('/en-US/External/'+(create?'register':'login'),{method:'POST',
+          headers:{'Content-Type':'application/x-www-form-urlencoded'},body})).json();
+          if(data.type==='SUCCESS'){
+            if(create)document.getElementById('auth').innerHTML='<p>Check your email to activate your account.</p>';
+            else document.body.innerHTML='<h1>Your application</h1><p>Signed in</p>';
+          }}catch{}
+      };
+    }render();</script>'''
+
+
+@pytest.fixture
+def account_browser(store,monkeypatch):
+    job={'id':digest(URL),'url':URL,'host':'acme.wd1.myworkdayjobs.com','company':'Acme',
+         'title':'Software Engineer Intern Summer 2027','description':'Build Python and TypeScript software.',
+         'location':'San Francisco, United States','source':'fixture'}
+    store.upsert_job(job);store.update_settings({'live_enabled':False,'allowed_application_ats':['workday']})
+    configure(store,SECRET,SECRET,accept_account_terms=True)
+    store.update_settings({'live_enabled':True,'employer_accounts':True,'gmail_verification':True})
+    state={'writes':[],'activated':False,'logged_in':False,'nonce':0,'mode':'normal','activation_gets':0,'unexpected':[]}
+    owner=store.facts()['email']['value']
+    class Response:
+        def __init__(self,status,data,ctype='application/json'):
+            self.status=status;self.data=data;self.headers={'content-type':ctype}
+        def body(self):return (json.dumps(self.data) if self.headers['content-type']=='application/json' else self.data).encode()
+        def json(self):return self.data
+    def reply(request):
+        parsed=urlsplit(request.url)
+        if parsed.path=='/favicon.ico':return Response(204,'','text/html')
+        if request.method=='GET' and parsed.path.endswith('/userprofile'):
+            return Response(200,{'emailAddress':owner}) if state['logged_in'] else Response(401,{})
+        if request.method=='GET' and parsed.path=='/External/login':
+            state['nonce']+=1;return Response(200,{'sessionSecureToken':'nonce-'+str(state['nonce'])})
+        if request.method=='GET' and parsed.path=='/External/activate/'+TOKEN+'/':
+            assert store.db.execute("SELECT state FROM employer_accounts").fetchone()[0]=='activating'
+            assert store.db.execute('SELECT 1 FROM mail_consumptions').fetchone()
+            state['activation_gets']+=1;state['activated']=True;return Response(200,auth_html(),'text/html')
+        if request.method=='GET' and request.url==URL:return Response(200,auth_html(),'text/html')
+        if request.method=='POST' and parsed.path in {'/en-US/External/register','/en-US/External/login'}:
+            action=parsed.path.rsplit('/',1)[-1];body=parse_qs(request.post_data)
+            assert body=={'username':[owner],'password':[SECRET],'sessionSecureToken':['nonce-'+str(state['nonce'])]}
+            assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]==('creating' if action=='register' else 'signing_in')
+            state['writes'].append(action)
+            if state['mode']=='lost_ack_owned' and action=='register':
+                state['logged_in']=True;state['activated']=True
+                return Response(503,{'type':'SUCCESS'})
+            if state['mode']=='lost_ack' or state['mode']=='lost_ack_mail' and action=='register':return Response(503,{})
+            if action=='login':
+                assert state['activated'];state['logged_in']=True
+            return Response(200,{'type':'SUCCESS'})
+        state['unexpected'].append((request.method,parsed.hostname,parsed.path))
+        return Response(400,{'type':'ERROR'})
+    def mail():
+        body=base64.urlsafe_b64encode(('<a href="'+ORIGIN+'/External/activate/'+TOKEN+'/">Activate</a>').encode()).decode()
+        return {'internalDate':str(int(time.time()*1000)),'payload':{'headers':[
+            {'name':'From','value':'noreply@otp.workday.com'},{'name':'To','value':owner},
+            {'name':'Authentication-Results','value':'mx.google.com; dkim=pass header.i=@otp.workday.com;'}],
+            'body':{'data':body}}}
+    class Messages:
+        def list(self,**kwargs):return SimpleNamespace(execute=lambda:{'messages':[{'id':'activation-message'}]} if state['mode'] not in {'no_mail','lost_ack'} else {})
+        def get(self,**kwargs):return SimpleNamespace(execute=mail)
+    api=Messages()
+    monkeypatch.setattr('hireme.gmail.GmailClient',lambda selected:SimpleNamespace(email=owner,
+        service=SimpleNamespace(users=lambda:SimpleNamespace(messages=lambda:api))))
+    monkeypatch.setattr('hireme.browser_agent.public_host',lambda host:True)
+    with AdaptiveBrowser(store) as browser:
+        browser.job=job;browser.allowed_origin=ORIGIN;browser.current_host=job['host'];browser.preparing=False
+        browser.account_posting_verified=True;browser.owner_verified=False
+        browser.account_operation_timeout=.5;browser.account_verification_timeout=.05
+        def route(real):
+            class Transport:
+                request=real.request
+                def abort(self):real.abort()
+                def fetch(self,**kwargs):return reply(self.request)
+                def fulfill(self,*,response):real.fulfill(status=response.status,headers=response.headers,body=response.body())
+                def continue_(self,**kwargs):self.fulfill(response=reply(self.request))
+            browser._route(Transport())
+        browser.page.route('**/*',route);browser.page.goto(URL)
+        yield browser,state
+
+
+def test_workday_registration_activation_and_signin_are_autonomous_and_separate_from_submission(store,account_browser):
+    browser,state=account_browser
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and state['activation_gets']==1 and not state['unexpected']
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
+    assert browser.owner_verified and browser.account_operation is None
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+    assert SECRET not in json.dumps(store.snapshot()) and SECRET.encode() not in store.path.read_bytes()
+    assert TOKEN.encode() not in store.path.read_bytes()
+
+
+def test_account_signin_can_use_exact_native_submit_click_filter(store,account_browser,monkeypatch):
+    browser,state=account_browser;original=auth_html
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',lambda:original().replace("create?'Create Account':'Sign In'","create?'Create Account':'Submit'"))
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and state['activation_gets']==1
+    assert browser.owner_verified
+
+
+@pytest.mark.parametrize('variant',['unrecognized','ambiguous'])
+def test_generic_submit_cannot_expand_the_account_login_control(store,account_browser,monkeypatch,variant):
+    browser,state=account_browser;original=auth_html
+    def changed():
+        html=original().replace("create?'Create Account':'Sign In'","create?'Create Account':'Submit'")
+        if variant=='unrecognized':return html.replace('data-automation-id=click_filter','data-other-id=click_filter')
+        return html.replace('<button aria-hidden=true',"${create?'':'<div role=button aria-label=Submit data-automation-id=click_filter>Submit</div>'}<button aria-hidden=true")
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',changed)
+    browser.page.goto(URL)
+    with pytest.raises(Blocked,match='unsupported_account_form'):authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==1
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='account_signin_intent'").fetchone()
+
+
+def test_known_account_signs_in_without_creating_or_activating_again(store,account_browser):
+    browser,state=account_browser
+    assert authenticate(browser)
+    state['logged_in']=False;browser.owner_verified=False;browser.workday_account_attempted=False
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login','login'] and state['activation_gets']==1
+
+
+def test_existing_account_can_sign_in_to_read_unknown_draft_without_reopening_application_writes(store,account_browser):
+    from hireme.draft_journal import DraftJournal
+    from hireme.workday_accounts import AuthGrant
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser
+    assert authenticate(browser)
+    journal=DraftJournal(store,browser.job)
+    operation=journal.intent([('ui','entry')],'ui:entry',{}, {})
+    store.db.execute("UPDATE draft_operations SET state='unknown' WHERE id=?",(operation,))
+    state['logged_in']=False;browser.owner_verified=False;browser.workday_account_attempted=False
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login','login']
+    assert store.db.execute('SELECT state FROM draft_operations WHERE id=?',(operation,)).fetchone()[0]=='unknown'
+    with pytest.raises(Blocked,match='browser_draft_uncertain'):
+        store._check_budget(browser.job,store.settings())
+    with pytest.raises(Blocked,match='browser_draft_uncertain'):
+        AuthGrant(browser,'register',credentials(store,browser.job))
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+
+
+@pytest.mark.parametrize('change',['pause','facts','posting','disable'])
+def test_signin_boundary_rechecks_owner_approval_before_transport(store,account_browser,change):
+    from hireme.workday_accounts import SigninBoundary
+    browser,_=account_browser;boundary=SigninBoundary(browser)
+    if change=='pause':store.update_settings({'live_enabled':False})
+    elif change=='disable':store.update_settings({'employer_accounts':False})
+    elif change=='facts':store.put_facts({'email':'changed@candidate.invalid'})
+    else:store.upsert_job({**browser.job,'title':'Different Software Engineer Intern Summer 2027'})
+    with pytest.raises(Blocked):boundary.check()
+
+
+def test_lost_creation_acknowledgement_never_repeats_registration(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    assert state['writes']==['register']
+    browser.workday_account_attempted=False
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    assert state['writes']==['register'] and store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='uncertain'
+
+
+def test_lost_registration_reply_with_authenticated_mail_activates_without_recreation(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack_mail'
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and state['activation_gets']==1
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
+    assert store.db.execute("SELECT 1 FROM events WHERE kind='workday_account_registration_mail_verified'").fetchone()
+
+
+def test_activation_mail_arriving_after_uncertain_registration_can_resume(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    state['mode']='lost_ack_mail';browser.workday_account_attempted=False
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and state['activation_gets']==1
+
+
+def test_pause_after_recovery_mail_prevents_activation_transport(store,account_browser,monkeypatch):
+    from hireme.workday_account_mail import find_activation
+    browser,state=account_browser;state['mode']='lost_ack_mail'
+    def paused(*args,**kwargs):
+        link=find_activation(*args,**kwargs);store.update_settings({'live_enabled':False});return link
+    monkeypatch.setattr('hireme.workday_account_mail.find_activation',paused)
+    with pytest.raises(Blocked):authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==0
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='uncertain'
+
+
+@pytest.mark.parametrize('event,detail',[
+    ('workday_account_activation_intent',{}),
+    ('workday_account_write_dispatched',{'operation':'login'}),
+    ('workday_account_operation_uncertain',{'operation':'login','dispatched':True}),
+])
+def test_recovery_mail_cannot_retry_activation_or_uncertain_login(store,account_browser,event,detail):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    key=store.db.execute('SELECT id FROM employer_accounts').fetchone()[0]
+    store.event(event,key,detail)
+    state['mode']='lost_ack_mail';browser.workday_account_attempted=False
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==0
+    assert not store.db.execute('SELECT 1 FROM mail_consumptions').fetchone()
+
+
+def test_recovery_mail_requires_a_dispatched_registration_intent(store,account_browser):
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser
+    credentials(store,browser.job,create=True)
+    key=AccountVault(store).begin_creation(ORIGIN,'acme')
+    store.db.execute("UPDATE employer_accounts SET state='uncertain' WHERE id=?",(key,))
+    store.event('workday_account_operation_uncertain',key,{'operation':'register','dispatched':False})
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    assert not state['writes'] and state['activation_gets']==0
+    assert not store.db.execute('SELECT 1 FROM mail_consumptions').fetchone()
+
+
+def test_missing_mail_keeps_creation_pending_instead_of_resending_it(store,account_browser):
+    browser,state=account_browser;state['mode']='no_mail'
+    with pytest.raises(Blocked,match='account_verification_pending'):authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==0
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='activation_pending'
+    state['mode']='normal';browser.workday_account_attempted=False
+    assert authenticate(browser)
+    assert state['writes']==['register','login']
+
+
+def test_pause_after_account_intent_prevents_transport_and_keeps_uncertainty(store,account_browser,monkeypatch):
+    browser,state=account_browser;begin=AccountVault.begin_creation
+    def paused(vault,*args):
+        key=begin(vault,*args);store.update_settings({'live_enabled':False});return key
+    monkeypatch.setattr(AccountVault,'begin_creation',paused)
+    with pytest.raises(Blocked):authenticate(browser)
+    assert not state['writes'] and store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='uncertain'
+
+
+def test_account_grant_requires_intent_exact_values_and_one_dispatch(store,account_browser):
+    from urllib.parse import urlencode
+    from hireme.workday_accounts import AuthGrant
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser;credential=credentials(store,browser.job,create=True)
+    grant=AuthGrant(browser,'register',credential)
+    def request(**changes):
+        body={'username':credential['email'],'password':credential['password']};body.update(changes)
+        return SimpleNamespace(method='POST',url=ORIGIN+'/en-US/External/register',
+            headers={'content-type':'application/x-www-form-urlencoded'},post_data_buffer=urlencode(body).encode())
+    assert not grant.allow(request())
+    AccountVault(store).begin_creation(ORIGIN,'acme')
+    for changes in ({'username':'different@candidate.invalid'},{'password':'ChangedSecret42!'},
+                    {'extra':'unexpected'},{'sessionSecureToken':'unobserved-token'}):
+        assert not grant.allow(request(**changes))
+    assert grant.allow(request()) and not grant.allow(request())
+    assert not state['writes']
+
+
+@pytest.mark.parametrize('resume_saved',[False,True])
+def test_workday_account_to_verified_application_uses_production_browser_flow(store,account_browser,monkeypatch,resume_saved):
+    """Closed HTTPS employer + Gmail; exercise the real auth and final UI grants."""
+    browser,state=account_browser
+    old_html=auth_html
+    remote='b'*32
+    app_html='''<h1>Software Engineer Intern Summer 2027</h1><h2>Application</h2>
+      <label>Resume<input id=resume name=resume type=file required></label>
+      <button onclick="(async()=>{let data=new FormData();data.append('resume',document.getElementById('resume').files[0]);
+        let response=await fetch('/wday/cxs/acme/jobapplication/REMOTE/finalize',{method:'POST',body:data});
+        if(response.ok)document.body.innerHTML='&lt;h1>Your application has been received.&lt;/h1>';
+      })()">Submit application</button>'''.replace('REMOTE',remote)
+    final_html=app_html
+    if resume_saved:
+        handler='''(async()=>{let response=await fetch('/wday/cxs/acme/jobapplication/REMOTE/name',{
+            method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:document.getElementById('full').value})});
+            if(response.ok)document.body.innerHTML=FINAL;})()'''.replace('REMOTE',remote).replace('FINAL',json.dumps(final_html))
+        app_html='<h1>My Information</h1><label>Full name<input id=full required></label><button type=button onclick="'+escape(handler,quote=True)+'">Save and continue</button>'
+    state['draft_saved']=False;state['name_saves']=0;state['final_sent']=False
+    def html():
+        if state['logged_in']:
+            return ('<h1>Software Engineer Intern Summer 2027</h1>'
+                '<div data-automation-id=jobPostingDescription>Build Python and TypeScript software in San Francisco, United States.</div><p>R12345</p>'
+                '<button onclick="location.href=\'/External/userHome\'">Candidate Home</button>'
+                '<button id=entry>Apply Manually</button><script>window.workday={tenant:"acme",siteId:"External",token:"fixture-csrf"};'
+                'entry.onclick=()=>document.body.innerHTML='+json.dumps(app_html).replace('<',r'\u003c')+';</script>')
+        original=old_html().replace("document.body.innerHTML='<h1>Your application</h1><p>Signed in</p>';",
+            'document.body.innerHTML='+json.dumps(app_html).replace('<',r'\u003c')+';')
+        # Public posting has a native entry button; sign-in appears only after it.
+        return original+'''<div data-automation-id=jobPostingDescription>Build Python and TypeScript software in San Francisco, United States.</div><p>R12345</p>
+          <button id=entry data-automation-id=utilityButtonSignIn>Apply Manually</button><style>[data-automation-id=signInContent]{display:none}</style>
+          <script>entry.onclick=()=>{fetch('/wday/calypso/cxs/jobapplication/acme/External/seek/v2/button',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({applicationUri:location.href,hirerId:'synthetic-seek',redirectUri:location.href,seekHirerJobReference:null})}).catch(()=>{});entry.disabled=true;setTimeout(()=>{document.querySelector('[data-automation-id=signInContent]').style.display='block';entry.remove();},900);};</script>'''
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',html)
+    # Existing fixture transport remains the network boundary for account writes.
+    # These exact official posting/receipt reads and finalizer add the application.
+    def official(route):
+        info={'externalUrl':URL,'jobPostingId':'Synthetic_R12345',
+          'jobPostingSiteId':'External','jobReqId':'R12345','title':browser.job['title'],'posted':True,'canApply':not state['draft_saved']}
+        if state['draft_saved']:info['jobApplication']={'id':remote,'draft':True,'dateCompleted':None}
+        route.fulfill(status=200,json={'jobPostingInfo':info})
+    browser.page.route(ORIGIN+'/wday/cxs/acme/External/job/US/Synthetic_R12345',official)
+    finals=[]
+    def final(route):
+        assert store.db.execute("SELECT 1 FROM events WHERE kind='submit_intent'").fetchone()
+        assert store.db.execute("SELECT 1 FROM draft_operations WHERE operation='ui:submit' AND state='intent'").fetchone()
+        raw=route.request.post_data_buffer
+        doc=store.db.execute("SELECT filename FROM documents WHERE kind='resume'").fetchone()[0]
+        assert (store.root/'documents'/doc).read_bytes() in raw
+        finals.append(route.request.url)
+        state['final_sent']=True
+        route.fulfill(status=200,json={'id':remote})
+    # Route through production authorization before the closed upstream reply.
+    final_url=ORIGIN+'/wday/cxs/acme/jobapplication/'+remote+'/finalize'
+    def final_transport(real):
+        class Transport:
+            request=real.request
+            def abort(self):real.abort()
+            def fetch(self,**kwargs):
+                final(SimpleNamespace(request=self.request,fulfill=lambda **kwargs:None))
+                return SimpleNamespace(status=200,headers={'content-type':'application/json'},body=lambda:json.dumps({'id':remote}).encode())
+            def fulfill(self,*,response):real.fulfill(status=response.status,headers=response.headers,body=response.body())
+        browser._route(Transport())
+    browser.page.route(final_url,final_transport)
+    if resume_saved:
+        def name_transport(real):
+            class Transport:
+                request=real.request
+                def abort(self):real.abort()
+                def fetch(self,**kwargs):
+                    assert json.loads(self.request.post_data)=={'name':store.facts()['full_name']['value']}
+                    state['name_saves']+=1;state['draft_saved']=True
+                    return SimpleNamespace(status=200,headers={'content-type':'application/json'},body=lambda:b'{"saved":true}')
+                def fulfill(self,*,response):real.fulfill(status=response.status,headers=response.headers,body=response.body())
+            browser._route(Transport())
+        browser.page.route(ORIGIN+'/wday/cxs/acme/jobapplication/'+remote+'/name',name_transport)
+        home='<button id=related aria-label="Related Actions '+browser.job['title']+'">Actions</button><div id=menu hidden><a role=menuitem href="'+URL+'/apply">Continue Application</a></div><script>related.onclick=()=>menu.hidden=false;</script>'
+        browser.page.route(ORIGIN+'/External/userHome',lambda route:route.fulfill(content_type='text/html',body=home))
+        browser.page.route(URL+'/apply',lambda route:route.fulfill(content_type='text/html',body='<script>window.workday={tenant:"acme",siteId:"External",token:"fixture-csrf"};</script>'+final_html))
+    browser.page.route(ORIGIN+'/wday/calypso/cxs/candidatehome/acme/External/application/'+remote+'/config',
+      lambda route:route.fulfill(status=200,json={'application':{'applicationId':remote,'jobPostingAnchorId':'Synthetic_R12345',
+        'jobRequisitionId':'R12345','postingTitle':browser.job['title'],'draft':not state['final_sent'],'active':True,
+        'applicationType':'EXTERNAL','status':'Application Received' if state['final_sent'] else None,'dateApplied':'November 15, 2026' if state['final_sent'] else None}}))
+    store.update_settings({'remote_drafts':True})
+    browser.operation_timeout=2;browser.receipt_timeout=2
+    if resume_saved:
+        save=browser._save_partial
+        def stop_after_saved(*args,**kwargs):
+            result=save(*args,**kwargs)
+            if state['draft_saved'] and browser.completed_steps:raise Blocked('missing_answers')
+            return result
+        monkeypatch.setattr(browser,'_save_partial',stop_after_saved)
+        with pytest.raises(Blocked,match='missing_answers'):browser.apply(browser.job)
+        assert not finals and state['name_saves']==1
+        monkeypatch.setattr(browser,'_save_partial',save)
+    assert browser.apply(browser.job)=='confirmed'
+    assert len(finals)==1 and state['writes']==['register','login'] and state['activation_gets']==1
+    from hireme.application_evidence import snapshot
+    assert snapshot(store,browser.aid)['verification_method']=='verified_ui_application_readback'
+    if resume_saved:assert state['name_saves']==1
+
+
+def test_employer_without_an_account_agreement_can_register(store,account_browser,monkeypatch):
+    browser,state=account_browser;original=auth_html
+    def without_agreement():
+        return original().replace('<label><input data-automation-id=createAccountCheckbox type=checkbox>I agree to creating this account</label>','').replace("if(create&&!root.querySelector('input[type=checkbox]').checked)return;",'')
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',without_agreement)
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login'] and browser.owner_verified
+
+
+def test_unknown_account_agreement_is_held_before_registration(store,account_browser,monkeypatch):
+    browser,state=account_browser;original=auth_html
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',lambda:original().replace('data-automation-id=createAccountCheckbox','data-automation-id=unknownAgreement'))
+    browser.page.goto(URL)
+    with pytest.raises(Blocked,match='account_agreement_review'):authenticate(browser)
+    assert state['writes']==[] and not store.db.execute('SELECT 1 FROM employer_accounts').fetchone()
+
+
+def test_explicit_uncertain_registration_recovery_only_signs_in_once(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked,match='account_result_uncertain'):authenticate(browser)
+    state['mode']='normal';state['activated']=True
+    browser.workday_account_attempted=False
+    assert authenticate(browser,reconcile=True)
+    assert state['writes']==['register','login'] and state['activation_gets']==0
+    assert store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
+
+
+def test_interrupted_recovery_never_accumulates_registration_or_password_attempts(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked):authenticate(browser)
+    browser.workday_account_attempted=False
+    with pytest.raises(Blocked):authenticate(browser,reconcile=True)
+    browser.workday_account_attempted=False
+    with pytest.raises(Blocked):authenticate(browser,reconcile=True)
+    assert state['writes']==['register','login']
+
+
+def test_native_account_controls_have_time_to_finish_mounting(store,account_browser,monkeypatch):
+    browser,state=account_browser;original=auth_html
+    def delayed():
+        return original().replace("document.querySelector('[role=button]').onclick=async()=>{",
+          "const readyAt=performance.now()+500;document.querySelector('[role=button]').onclick=async()=>{if(performance.now()<readyAt)return;")
+    monkeypatch.setattr('tests.test_workday_accounts.auth_html',delayed)
+    browser.page.goto(URL)
+    assert authenticate(browser)
+    assert state['writes']==['register','login']
+
+
+@pytest.mark.parametrize('data,expected',[
+    ({'type':'ERROR','message':'Private error'},'rejected'),
+    ({'type':'SUCCESS'},'accepted'),({'widget':'root'},'accepted'),
+    ({'widget':{'unknown':'shape'}},None),({'type':'INFO','message':'Unverified'},None),
+])
+def test_native_account_response_diagnostics_exclude_messages(store,account_browser,data,expected):
+    from hireme.workday_accounts import AuthGrant
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser;grant=AuthGrant(browser,'login',credentials(store,browser.job,create=True))
+    grant.capture(200,data)
+    assert grant.result==expected
+    detail=store.db.execute("SELECT detail FROM events WHERE kind='workday_account_native_response' ORDER BY seq DESC LIMIT 1").fetchone()[0]
+    assert not any(value in detail for value in ('Private error','Unverified',SECRET))
+
+
+def test_redirect_response_uses_the_already_validated_request_identity(store,account_browser):
+    from urllib.parse import urlencode
+    from hireme.workday_accounts import AuthGrant
+    from hireme.workday_account_policy import credentials
+    browser,state=account_browser;credential=credentials(store,browser.job,create=True)
+    grant=AuthGrant(browser,'register',credential);AccountVault(store).begin_creation(ORIGIN,'acme')
+    request=SimpleNamespace(method='POST',url=ORIGIN+'/en-US/External/register',
+        headers={'content-type':'application/x-www-form-urlencoded'},
+        post_data_buffer=urlencode({'username':credential['email'],'password':credential['password']}).encode(),
+        _impl_obj=SimpleNamespace(_guid='exact-native-request'))
+    assert grant.allow(request)
+    class RedirectWrapper:
+        method=request.method;url=request.url
+        _impl_obj=SimpleNamespace(_guid='another-request')
+        @property
+        def post_data_buffer(self):raise AssertionError('Do not reread a disposed native credential body')
+    wrapped=RedirectWrapper();response=SimpleNamespace(request=wrapped,status=200,body=lambda:b'{"type":"SUCCESS"}')
+    grant.observe(response);assert grant.status is None
+    wrapped._impl_obj._guid='exact-native-request'
+    grant.observe(response);assert grant.result=='accepted'
+
+
+def test_lost_registration_response_can_settle_from_fresh_owner_without_another_write(store,account_browser):
+    browser,state=account_browser;state['mode']='lost_ack_owned'
+    # No account row existed at entry; only the native operation creates its
+    # intent. A fresh authenticated self read then proves the usable owner.
+    assert authenticate(browser)
+    assert state['writes']==['register'] and state['activation_gets']==0
+    assert browser.owner_verified and store.db.execute('SELECT state FROM employer_accounts').fetchone()[0]=='confirmed'
+    assert store.db.execute("SELECT 1 FROM events WHERE kind='workday_account_operation_reconciled'").fetchone()
+
+
+@pytest.mark.parametrize('message,expected',[
+    ('Execution context was destroyed private-owner@example.test','document_replaced'),
+    ('No resource with given identifier found private-password','response_body_unavailable'),
+    ('POST data is not available private-password','request_body_unavailable'),
+    ('An unknown error includes private-password','unclassified'),
+])
+def test_browser_failure_diagnostics_never_retain_private_exception_text(message,expected):
+    from hireme.workday_accounts import failure_code
+    assert failure_code(RuntimeError(message))==expected
+
+
+def test_recovery_can_resume_modal_preparation_without_repeating_a_credential_post(store,account_browser,monkeypatch):
+    from hireme import workday_accounts
+    browser,state=account_browser;state['mode']='lost_ack'
+    with pytest.raises(Blocked):authenticate(browser)
+    original=workday_accounts._entry
+    monkeypatch.setattr(workday_accounts,'_entry',lambda agent:(_ for _ in ()).throw(RuntimeError('Modal loading failed')))
+    browser.workday_account_attempted=False
+    with pytest.raises(RuntimeError):authenticate(browser,reconcile=True)
+    assert not store.db.execute("SELECT 1 FROM events WHERE kind='account_signin_intent'").fetchone()
+    monkeypatch.setattr(workday_accounts,'_entry',original)
+    browser.workday_account_attempted=False;state['mode']='normal';state['activated']=True
+    assert authenticate(browser,reconcile=True)
+    assert state['writes']==['register','login']

@@ -39,6 +39,10 @@ BASIC = {'first_name', 'last_name', 'preferred_name', 'email', 'phone',
          'resume_text', 'cover_letter_text'}
 CONSENTS = {'gdpr_consent_given', 'gdpr_processing_consent_given',
             'gdpr_retention_consent_given', 'gdpr_demographic_data_consent_given'}
+EMPLOYMENT_CONTROL = re.compile(r'(company-name|title|start-date-month|start-date-year|end-date-month|end-date-year|current-role)-0(?:_1)?')
+EMPLOYMENT_KEYS = {'company-name': 'organization', 'title': 'title', 'start-date-month': 'start',
+                   'start-date-year': 'start', 'end-date-month': 'end', 'end-date-year': 'end',
+                   'current-role': 'current'}
 
 
 def _unsupported():
@@ -122,6 +126,55 @@ def _phone(value, actual, answers):
 def _identity(field):
     ref = field.get('ref') or {}
     return {value for value in (ref.get('id'), ref.get('name')) if isinstance(value, str) and value}
+
+
+def employment_answers(store, fields):
+    """Bind the native Greenhouse employment row to one confirmed past role."""
+    from .workday_history import resolve_field
+    controls = [field for field in fields if field.get('section') == 'employment']
+    row = {}
+    for field in controls:
+        refs = [EMPLOYMENT_CONTROL.fullmatch(name) for name in _identity(field)]
+        if not refs or not all(refs) or field.get('section_entry', 0) != 0:
+            return {}
+        names = {ref[1] for ref in refs}
+        if len(names) != 1:
+            return {}
+        name = names.pop()
+        widget = ({'checkbox'} if name == 'current-role' else {'select', 'combobox'} if name.endswith('-month')
+                  else {'text', 'number'} if name.endswith('-year') else {'text'})
+        if name in row or field['type'] not in widget:
+            return {}
+        row[name] = field
+    if not {'company-name', 'title', 'start-date-month', 'start-date-year',
+            'end-date-month', 'end-date-year'} <= row.keys() or not any(f['required'] for f in controls):
+        return {}
+
+    # Visible date inputs require a past role to preserve the form shape. A
+    # checked current-role flag or existing values must match the saved row.
+    history = sorted((entry for entry in store.history_entries('employment') if 'end' in entry['values']),
+                     key=lambda entry: (entry['values']['end'], entry['values'].get('start', '')), reverse=True)
+    existing = lambda field: field.get('value', '') not in ('', None) and not (
+        field['type'] == 'checkbox' and field.get('value') == 'No')
+    candidates = []
+    for entry in history:
+        answers = {}
+        for name, field in row.items():
+            key = EMPLOYMENT_KEYS[name]
+            if not field['required'] and not existing(field) and key not in entry['values']:
+                continue
+            try:
+                answer = resolve_field(store, {**field, 'history_entry_id': entry['id'], 'history_key': key})
+            except Blocked:
+                break
+            if existing(field) and ' '.join(field['value'].casefold().split()) != ' '.join(answer['value'].casefold().split()):
+                break
+            answers[field['index']] = answer
+        else:
+            candidates.append(answers)
+    if not candidates or any(existing(field) for field in controls) and len(candidates) != 1:
+        raise Blocked('history_confirmation_required', 'The Greenhouse employment row does not match one complete, confirmed past role')
+    return candidates[0]
 
 
 def _json(raw):
@@ -382,21 +435,49 @@ class GreenhouseSubmission:
         # The renderer may identify the same posting on its canonical boards
         # host, with gh_jid repeating the requisition. Neither grants a new
         # destination: the submit endpoint and region remain independently bound.
-        public = _https(self.metadata.get('public_url'), {canonical, 'job-' + canonical}) if isinstance(self.metadata, dict) else None
+        raw_public = self.metadata.get('public_url') if isinstance(self.metadata, dict) else None
+        public = _https(raw_public, {canonical, 'job-' + canonical})
         public_valid = bool(public and public.path == path
                             and parse_qsl(public.query, keep_blank_values=True) in ([], [('gh_jid', identifier)]))
+        if not public_valid and not embedded and current.hostname in {'boards.greenhouse.io','job-boards.greenhouse.io'}:
+            alternate = _https(raw_public, HOSTS - {canonical, 'job-' + canonical})
+            if alternate and alternate.path == path and not alternate.query:
+                # A board may show a canonical listing in another region.
+                # The official posting confirms the alias. The current renderer
+                # still independently binds the final endpoint and receipt.
+                from .ats_adapters import GreenhouseAdapter
+                try:
+                    GreenhouseAdapter().embedded(job, checkpoint=self.store.checkpoint,
+                        deadline=self.deadline, _expected_public_url=raw_public)
+                except Blocked as error:
+                    if error.reason != 'posting_changed_review':raise
+                else:public_valid = True
         if embedded and isinstance(self.metadata, dict):
             # The public URL may name the employer's custom careers page. It
             # is identity evidence only; it never gains navigation/write access.
             raw = self.metadata.get('public_url')
+            custom_candidate = False
             try:
                 candidate = urlsplit(raw) if isinstance(raw, str) else None
+                custom_candidate = bool(candidate and candidate.scheme == 'https' and candidate.hostname
+                    and candidate.hostname not in HOSTS and not candidate.username and not candidate.password
+                    and candidate.port in (None,443) and not candidate.fragment
+                    and [v for k,v in parse_qsl(candidate.query,keep_blank_values=True) if k=='gh_jid'] in ([],[identifier]))
                 public_valid = public_valid or bool(candidate and candidate.scheme == 'https' and candidate.hostname
                     and not candidate.username and not candidate.password and candidate.port in (None, 443)
                     and not candidate.fragment and candidate.path == '/jobs/' + identifier
                     and parse_qsl(candidate.query, keep_blank_values=True) == [('gh_jid', identifier)])
             except ValueError:
                 public_valid = False
+            if not public_valid and custom_candidate:
+                # Custom sites use paths such as /careers/<id>. Their URL
+                # shape cannot establish identity. Require the exact URL from
+                # a fresh official response for this board, job and title.
+                # The resulting grant still sends only to Greenhouse.
+                from .ats_adapters import GreenhouseAdapter
+                GreenhouseAdapter().embedded(job,checkpoint=self.store.checkpoint,deadline=self.deadline,
+                    _expected_public_url=raw)
+                public_valid = True
         if (not isinstance(self.metadata, dict) or not public_valid
                 or not isinstance(self.metadata.get('questions'), list)
                 or not isinstance(self.metadata.get('fingerprint'), str)
@@ -679,9 +760,8 @@ class GreenhouseSubmission:
             if field.get('section_entry') not in (None, 0):
                 _unsupported()
             names = _identity(field)
-            pattern = (r'(school|degree|discipline|start-month|start-year|end-month|end-year)--0' if education else
-                       r'(company-name|title|start-date-month|start-date-year|end-date-month|end-date-year|current-role)-0(?:_1)?')
-            parts = [re.fullmatch(pattern, name) for name in names]
+            pattern = re.compile(r'(school|degree|discipline|start-month|start-year|end-month|end-year)--0') if education else EMPLOYMENT_CONTROL
+            parts = [pattern.fullmatch(name) for name in names]
             matches = [match[1] for match in parts if match]
             if len(set(matches)) != 1:
                 _unsupported()
@@ -761,7 +841,8 @@ class GreenhouseSubmission:
                 return False
             self.used = True
             self.request_key = key
-            self.store.event('native_submission_write', self.aid, {'platform': 'greenhouse'})
+            self.request_hash = hashlib.sha256(raw).hexdigest()
+            self.store.event('native_submission_write', self.aid, {'platform': 'greenhouse', 'request_hash': self.request_hash})
             return True
         except (ValueError, TypeError, AttributeError, KeyError):
             return False
@@ -770,6 +851,13 @@ class GreenhouseSubmission:
         if not self.used or self.response_seen or key != self.request_key:
             return
         self.response_seen = True
+        from .util import application_identity
+        evidence = {'evidence_version': 1, 'posting_identity': list(application_identity(self.job['url'])),
+                    'http_status': response.status, 'request_hash': self.request_hash}
+        # The reviewed client acknowledges response.ok, without interpreting
+        # the body, and can immediately navigate away. Do not block its reply
+        # callback on a body read that can disappear during that navigation.
+        evidence['acknowledgement_sha256'] = digest(evidence)
         self.acknowledged = 200 <= response.status < 300
         self.failed = not self.acknowledged
         if not self.acknowledged and not self.verification_used:
@@ -782,7 +870,8 @@ class GreenhouseSubmission:
                     and recipient.strip().casefold() == owner.strip().casefold())
             except (ValueError, TypeError, AttributeError):
                 pass
-        self.store.event('native_submission_response', self.aid, {'platform': 'greenhouse', 'acknowledged': self.acknowledged})
+        self.store.event('native_submission_response', self.aid, {'platform': 'greenhouse', 'acknowledged': self.acknowledged,
+            'verification_available': self.verification_available, **evidence})
 
     def receipt_matches(self, page_url):
         return self.used and self.acknowledged and page_url == self.confirmation_url

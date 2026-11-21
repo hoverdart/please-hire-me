@@ -238,3 +238,52 @@ def test_writing_review_uses_only_cited_facts_and_rejects_absence_inferences(mon
     assert 'Silence is not evidence of absence' in calls[1][0]
     assert [x['id'] for x in calls[1][1]['samples']]==['s1']
     assert calls[2][1]['repair_feedback']=='Silence does not establish absence of experience'
+
+
+@pytest.mark.parametrize('stderr,reason',[
+    ("error: unexpected argument '--ignore-user-config' found",'provider_cli_incompatible'),
+    ('error: unknown feature: browser_use','provider_cli_incompatible'),
+    ("ERROR: You've hit your usage limit. Try again later.",'provider_rate_limited'),
+    ('Rate limit exceeded','provider_rate_limited'),
+    ('network connection failed','provider_error'),
+    ('Applicant wrote: usage limit reached','provider_error'),
+])
+def test_codex_failed_diagnostics_are_classified(monkeypatch,stderr,reason):
+    from hireme.util import Blocked
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _: '/fixture/codex')
+    def run(args,**kwargs):
+        if args[1:]==['login','status']:
+            return SimpleNamespace(returncode=0,stdout='',stderr='Logged in using ChatGPT')
+        assert '--ignore-user-config' in args and '--ignore-rules' in args
+        assert args[args.index('--sandbox')+1]=='read-only'
+        for feature in ('shell_tool','plugins','apps','browser_use','computer_use','multi_agent','multi_agent_v2','code_mode','code_mode_host','sleep_tool'):
+            assert any(args[i:i+2]==['--disable',feature] for i in range(len(args)-1))
+        return SimpleNamespace(returncode=1,stdout='',stderr=stderr)
+    monkeypatch.setattr('hireme.provider.subprocess.run',run)
+    provider=CodexProvider()
+    with pytest.raises(Blocked,match=reason):provider.request('Synthetic',{}, {})
+    assert provider.last_response=={'returncode':1}
+
+
+def test_codex_success_and_stdout_do_not_trigger_diagnostic_classification():
+    from hireme.provider import _codex_failure_reason
+    assert _codex_failure_reason(SimpleNamespace(returncode=0,stdout='',stderr='Usage limit reached')) is None
+    assert _codex_failure_reason(SimpleNamespace(returncode=1,stdout='Usage limit reached',stderr=''))=='provider_error'
+
+
+def test_codex_incompatible_configuration_is_not_retried_per_field(store,monkeypatch):
+    from hireme.util import Blocked
+    store.update_settings({'provider':'codex-cli'})
+    monkeypatch.setattr('hireme.provider.shutil.which',lambda _: '/fixture/codex')
+    calls=[]
+    def run(args,**kwargs):
+        calls.append(args)
+        if args[1:]==['login','status']:
+            return SimpleNamespace(returncode=0,stdout='',stderr='Logged in using ChatGPT')
+        return SimpleNamespace(returncode=2,stdout='',stderr="error: unexpected argument '--ignore-user-config' found")
+    monkeypatch.setattr('hireme.provider.subprocess.run',run)
+    manager=ManagedProvider(store,10)
+    for _ in range(3):
+        with pytest.raises(Blocked,match='provider_cli_incompatible'):manager.request('Synthetic',{}, {})
+    assert len(calls)==2  # one login check, one inference; no weaker retry
+    assert store.db.execute('SELECT count(*) FROM model_requests').fetchone()[0]==1

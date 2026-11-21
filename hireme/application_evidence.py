@@ -18,7 +18,7 @@ KINDS = ('submit_intent','verification_intent','native_submission_write',
          'native_submission_response','ashby_submission_write','ashby_submission_response',
          'native_submission_not_dispatched','submission_response','submission_error',
          'unknown','confirmed','not_submitted','crash_recovered','human_reconciliation',
-         'post_submit_write_blocked','human_verification','submission_receipt_verified')
+         'post_submit_write_blocked','human_verification','submission_receipt_verified','workday_ui_submission_verified')
 
 
 def ats_for(url):
@@ -49,30 +49,75 @@ def native_verdict(events, url):
     writes=[e for e in after if e['kind'] in {'native_submission_write','ashby_submission_write'}]
     replies=[e for e in after if e['kind'] in {'native_submission_response','ashby_submission_response'}]
     closed=[e for e in after if e['kind']=='native_submission_not_dispatched']
+    platform=ats_for(url)
+    if platform=='greenhouse':
+        if any(e['detail'].get('platform')!='greenhouse' for e in writes+replies):return None
+        verifications=[e for e in after if e['kind']=='verification_intent']
+        if len(writes)==len(replies)==2 and len(verifications)==1:
+            first=replies[0]['detail'];request=writes[0]['detail'];intent=verifications[0]
+            # Only the already-authorized owner-bound code continuation can
+            # precede the final acknowledged request. This never grants a
+            # retry for an unknown transport or an arbitrary failed POST.
+            if (not writes[0]['seq']<replies[0]['seq']<intent['seq']<writes[1]['seq']<replies[1]['seq']
+                    or request.get('platform')!='greenhouse' or first.get('platform')!='greenhouse'
+                    or first.get('verification_available') is not True or first.get('acknowledged') is not False
+                    or first.get('http_status') not in {403,422,428} or first.get('evidence_version')!=VERSION
+                    or first.get('posting_identity')!=list(application_identity(url))
+                    or not isinstance(request.get('request_hash'),str) or len(request['request_hash'])!=64
+                    or request['request_hash']!=first.get('request_hash')
+                    or request['request_hash']==writes[1]['detail'].get('request_hash')
+                    or first.get('acknowledgement_sha256')!=digest({key:first.get(key) for key in (
+                        'evidence_version','posting_identity','http_status','request_hash')})):
+                return None
+            writes=writes[1:];replies=replies[1:]
+        elif verifications:return None
     if closed and not writes and not replies and ats_for(url)=='lever':
         if all(e['detail'].get('platform')=='lever' for e in closed):
             return ('not_submitted','closed_native_grant',closed[-1]['timestamp'])
     if len(writes)!=1 or len(replies)!=1 or closed or replies[0]['seq']<=writes[0]['seq']:return None
-    proof=replies[0]['detail'];platform=ats_for(url)
+    proof=replies[0]['detail']
     # Lever's acknowledged reply is itself the fresh, native HTML receipt.
     # Ashby's FormSubmitSuccess is an acknowledgement only: preserve a
     # separate observed receipt before it can settle an uncertain outcome.
-    receipt_verified=platform=='lever' or platform=='ashby' and any(
+    receipt_verified=platform=='lever' or platform in {'ashby','greenhouse'} and any(
         e['kind']=='submission_receipt_verified' and e['seq']>replies[0]['seq']
         and e['detail'].get('platform')==platform and e['detail'].get('fresh') is True
         and e['detail'].get('posting_identity')==list(application_identity(url))
         and e['detail'].get('request_hash')==proof.get('request_hash')
         and isinstance(e['detail'].get('receipt_sha256'),str)
         and len(e['detail']['receipt_sha256'])==64 for e in after)
+    response_proof=proof.get('response_sha256')
+    if platform=='greenhouse':
+        response_proof=proof.get('acknowledgement_sha256')
+        if response_proof!=digest({key:proof.get(key) for key in (
+                'evidence_version','posting_identity','http_status','request_hash')}):return None
     if (proof.get('acknowledged') is True and proof.get('evidence_version')==VERSION
             and receipt_verified
             and proof.get('platform')==platform and proof.get('posting_identity')==list(application_identity(url))
             and isinstance(proof.get('http_status'),int) and 200<=proof['http_status']<300
-            and isinstance(proof.get('response_sha256'),str) and len(proof['response_sha256'])==64
+            and isinstance(response_proof,str) and len(response_proof)==64
             and isinstance(proof.get('request_hash'),str) and len(proof['request_hash'])==64
             and writes[0]['detail'].get('request_hash')==proof['request_hash']):
         return ('confirmed','native_ats_acknowledgement',replies[0]['timestamp'])
     return None
+
+
+def verified_ui_verdict(store,aid,job_id,url,events):
+    if ats_for(url)!='workday':return None
+    intents=[e for e in events if e['kind']=='submit_intent']
+    proofs=[e for e in events if e['kind']=='workday_ui_submission_verified']
+    if len(intents)!=1 or len(proofs)!=1 or proofs[0]['seq']<=intents[0]['seq']:return None
+    event=proofs[0];proof=event['detail']
+    if (proof.get('platform')!='workday' or proof.get('evidence_version')!=VERSION
+            or proof.get('posting_identity')!=list(application_identity(url))
+            or proof.get('owner_verified') is not True or proof.get('fresh') is not True):return None
+    if any(not isinstance(proof.get(k),str) or len(proof[k])!=64 for k in (
+            'request_hash','response_sha256','receipt_sha256','evidence_hash','remote_application_hash')):return None
+    operation=store.db.execute('SELECT * FROM draft_operations WHERE id=?',(proof.get('operation_id'),)).fetchone()
+    if (not operation or operation['job_id']!=job_id or operation['operation']!='ui:submit'
+            or operation['state']!='acknowledged' or not operation['acknowledgement']
+            or operation['request_commitment']!=proof['request_hash']):return None
+    return ('confirmed','verified_ui_application_readback',event['timestamp'])
 
 
 def snapshot(store, aid, *, include_mail=False):
@@ -80,9 +125,10 @@ def snapshot(store, aid, *, include_mail=False):
         j.url,j.company,j.title FROM application_records a LEFT JOIN jobs j ON j.id=a.job_id WHERE a.id=?''',(aid,)).fetchone()
     if not row:raise ValueError('Unknown application attempt')
     row=dict(row);events=event_history(store,aid);url=row['url'] or ''
-    proof=native_verdict(events,url)
+    proof=native_verdict(events,url) or verified_ui_verdict(store,aid,row['job_id'],url,events)
     fields={'platform','acknowledged','evidence_version','posting_identity','http_status',
-            'response_sha256','request_hash','receipt_sha256','fresh','rejection_code','reason','stage','type','host','method','status','phase'}
+            'response_sha256','acknowledgement_sha256','verification_available','request_hash','receipt_sha256','fresh','rejection_code','reason','stage','type','host','method','status','phase',
+            'operation_id','owner_verified','evidence_hash','remote_application_hash'}
     # Never copy request bodies, CAPTCHA tokens, query strings or arbitrary paths.
     evidence={'events':[{'seq':e['seq'],'kind':e['kind'],'timestamp':e['timestamp'],
                          'detail':{k:v for k,v in e['detail'].items() if k in fields},

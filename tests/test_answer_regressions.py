@@ -289,10 +289,70 @@ def test_disclosures_follow_their_confirmed_fact(store, job, label, key):
     assert resolve(store, job['host'], field(label), context=job)['value'] == 'No'
 
 
-def test_first_and_last_legal_name_uses_exact_confirmed_name(store,job):
-    answer=resolve(store,job['host'],field('First and Last Legal Name*','text',[]),context=job)
+@pytest.mark.parametrize('label',[
+    'First and Last Legal Name*',
+    'What is your full legal name as it appears on your government-issued ID?',
+    'Please state your full legal name:',
+])
+def test_full_legal_name_uses_exact_confirmed_name(store,job,label):
+    store.save_writing_answer(job['host'],label,[],{'value':'An outdated name','provenance':{}})
+    answer=resolve(store,job['host'],field(label,'text',[]),context=job)
     assert answer['value']==store.facts()['full_name']['value']
     assert answer['provenance']['fact_key']=='full_name'
+
+
+@pytest.mark.parametrize('label,key,value,widget,options,expected',[
+    ('If you are currently enrolled in or have graduated from a university within the past 24 months, what is your current or final GPA?',
+     'gpa','3.76/4.00','radio',['4.0','3.5 - 3.9','3.0 - 3.4'],'3.5 - 3.9'),
+    ('When did you begin your current degree program? Please answer in MM/YYYY format (e.g. 08/2022)',
+     'college_start','2024-08','text',[],'08/2024'),
+    ('When do you expect to complete your current degree program? Please answer in MM/YYYY format (e.g. 08/2022)',
+     'graduation','2028-05','text',[],'05/2028'),
+])
+def test_exact_current_degree_questions_use_confirmed_facts(store,job,label,key,value,widget,options,expected):
+    store.put_facts({key:value})
+    answer=resolve(store,job['host'],field(label,widget,options),context=job)
+    assert answer['value']==expected
+    assert answer['provenance']['fact_key']==key
+
+
+def test_ashby_requires_other_degree_explanation_only_for_that_choice(store,job):
+    store.put_facts({'degree':'BS'})
+    before=field('What degree are you currently pursuing?','radio',['Bachelor’s degree','Other'],index=38)
+    other=field('If you selected Other, please specify below:','text',[],index=40)
+    host='jobs.ashbyhq.com'
+    parent=resolve(store,host,before,context=job)
+    context={**job,'previous_answers':[parent]}
+    assert resolve(store,host,other,context=context)['value']=='Not applicable'
+    with pytest.raises(Blocked):resolve(store,host,{**other,'index':41},context=context)
+
+
+def test_approved_relocation_chooses_exact_posting_city_and_state(store,job):
+    store.put_facts({'onsite':'Yes','summer_2027_relocate':'Yes'})
+    store.update_settings({'contextual_preferences':True})
+    context={**job,'location':'San Diego, CA, US; California; United States','title':'Summer 2027 Software Intern'}
+    choices=['San Diego, TX','San Diego, California (San Diego Metro Area)','Seattle, WA']
+    for label,kind in [('Preferred Work Location','checkbox-group'),
+                       ('Which of our office(s) would you be willing to work from/relocate to? Select all that apply','radio')]:
+        store.save_writing_answer(job['host'],label,choices,{'value':choices[0],'provenance':{}})
+        answer=resolve(store,job['host'],field(label,kind,choices),context=context)
+        assert answer['value']==choices[1]
+        with pytest.raises(Blocked):resolve(store,job['host'],field(label,kind,[choices[0],choices[2]]),context=context)
+
+
+def test_export_category_matches_explicit_us_citizenship(store,job):
+    store.put_facts({'citizenship':'United States'})
+    question=field('This position may require access to information and technology that is subject to export controls, such as EAR. Are you any of the following?',
+                   'radio',['A United States Citizen','A lawful permanent resident of the United States','Other'])
+    assert resolve(store,job['host'],question,context=job)['value']=='A United States Citizen'
+
+
+def test_california_state_choice_excludes_similarly_named_places(store,job):
+    store.put_facts({'state':'CA'})
+    question=field('Which state, province, or region do you currently live in?','combobox',
+                   ['California, United States','California, Pennsylvania, United States'])
+    assert resolve(store,job['host'],question,context=job)['value']=='California, United States'
+    with pytest.raises(Blocked):resolve(store,job['host'],{**question,'options':question['options'][1:]},context=job)
 
 
 @pytest.mark.parametrize('label,key',[

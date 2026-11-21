@@ -39,6 +39,12 @@ def test_unknown_graduation_precision_and_wording():
     with pytest.raises(Blocked):matches('2027',window('Graduate before September 2027'))
     with pytest.raises(Blocked):required('Must graduate sometime soon','2028-05')
 
+def test_posting_graduation_range_with_abbreviated_months():
+    posting='Must graduate between Sept. 2027 and Jun. 2028. Must be available full-time.'
+    required(posting,'2028-06')
+    with pytest.raises(Blocked,match='graduation_mismatch'):
+        required(posting,'2028-07')
+
 def test_hp_iq_cutoff_question_is_answered_from_confirmed_date(store,job):
     f={'label':'Will you be graduating before September 2027?*','type':'select','options':['Yes','No'],'required':True,'maxlength':-1}
     result=resolve(store,job['host'],f,context=job)
@@ -213,3 +219,42 @@ def test_any_greenhouse_board_redirect_can_use_its_verified_embed(monkeypatch):
     assert url=='https://job-boards.greenhouse.io/embed/job_app?for=towerresearchcapital&token=8024128' and 'Posting' in text
     with pytest.raises(Blocked,match='posting_changed_review'):GreenhouseAdapter().embedded({**job,'title':'Another role'})
     with pytest.raises(Blocked,match='unexpected_redirect'):GreenhouseAdapter().embedded({**job,'url':'https://job-boards.eu.greenhouse.io/x/jobs/1'})
+
+
+def test_custom_greenhouse_careers_entry_uses_one_official_read_and_the_same_native_embed(monkeypatch):
+    from hireme.ats_adapters import GreenhouseAdapter
+    job={'url':'https://job-boards.greenhouse.io/fixture/jobs/123','host':'job-boards.greenhouse.io',
+         'title':'Software Engineer Intern Summer 2027'}
+    calls=[]
+    def read(network,url):
+        calls.append(url)
+        return {'id':123,'title':job['title'],'content':'<p>Approved Python internship posting</p>',
+                'absolute_url':'https://careers.fixture.invalid/roles/123'}
+    monkeypatch.setattr('hireme.net.Network.json',read)
+    url,body=GreenhouseAdapter().navigation(job)
+    assert url=='https://job-boards.greenhouse.io/embed/job_app?for=fixture&token=123'
+    assert 'Approved Python internship posting' in body
+    assert calls==['https://boards-api.greenhouse.io/v1/boards/fixture/jobs/123?content=true']
+    assert job['url']=='https://job-boards.greenhouse.io/fixture/jobs/123'
+
+
+@pytest.mark.parametrize('change,reason',[('id','posting_fetch_failed'),('title','posting_changed_review'),('content','posting_fetch_failed')])
+def test_custom_careers_entry_cannot_avoid_exact_posting_verification(monkeypatch,change,reason):
+    from hireme.ats_adapters import GreenhouseAdapter
+    job={'url':'https://job-boards.greenhouse.io/fixture/jobs/123','host':'job-boards.greenhouse.io','title':'Software Engineer Intern Summer 2027'}
+    data={'id':123,'title':job['title'],'content':'<p>Posting</p>','absolute_url':'https://careers.fixture.invalid/roles/123'}
+    data[change]={'id':999,'title':'Different role','content':''}[change]
+    monkeypatch.setattr('hireme.net.Network.json',lambda *args:data)
+    with pytest.raises(Blocked,match=reason):GreenhouseAdapter().navigation(job)
+
+
+@pytest.mark.parametrize('target',[
+    'javascript:submit()', 'http://careers.fixture.invalid/123',
+    'https://user:password@careers.fixture.invalid/123', 'https://careers.fixture.invalid:bad/123',
+    'https://job-boards.eu.greenhouse.io/other/jobs/123',None,
+])
+def test_non_custom_or_invalid_advertised_urls_do_not_create_navigation_authority(monkeypatch,target):
+    from hireme.ats_adapters import GreenhouseAdapter
+    job={'url':'https://job-boards.greenhouse.io/fixture/jobs/123','host':'job-boards.greenhouse.io','title':'Software Engineer Intern Summer 2027'}
+    monkeypatch.setattr('hireme.net.Network.json',lambda *args:{'id':123,'title':job['title'],'content':'<p>Posting</p>','absolute_url':target})
+    assert GreenhouseAdapter().navigation(job)==(job['url'],None)

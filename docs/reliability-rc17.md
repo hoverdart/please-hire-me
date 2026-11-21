@@ -35,7 +35,7 @@ Hosted iCIMS postings gain a requisition identity (host and numeric ID), so a re
 
 The exact AMD careers URL shape resolves to the same numeric requisition on AMD's fixed iCIMS host. The saved source URL and job ID remain unchanged. Hosted and careers links share duplicate comparisons, including historical manual applications and unacknowledged UI saves under another feed name. Other hosts, credentials, lookalikes and unknown paths gain no bridge.
 
-`icims` is its own entry in the application scope, including the recognized AMD careers bridge; allowing `other` does not include it. Staged rollout still commissions Lever and Ashby only. Steps that save through an account-profile endpoint are refused. Public AMD careers and iCIMS entry pages were observed read-only on November 14, 2026, without applicant data, login or CAPTCHA interaction. Full application execution has synthetic coverage only; no live iCIMS application was submitted or accepted.
+`icims` is its own entry in the application scope, including the recognized AMD careers bridge; allowing `other` does not include it. Staged rollout supports Lever, Ashby, Greenhouse and Workday with each platform’s required native evidence; iCIMS remains excluded. Steps that save through an account-profile endpoint are refused. Public AMD careers and iCIMS entry pages were observed read-only on November 14, 2026, without applicant data, login or CAPTCHA interaction. Full application execution has synthetic coverage only; no live iCIMS application was submitted or accepted.
 
 ## Limits
 
@@ -54,3 +54,7 @@ Recovery preserves existing remote-draft uncertainty holds even when the applica
 Schema initialization and upgrades commit their tables, indexes, initial configuration and readiness marker together. A failure rolls back the whole initialization, including an older marker upgrade. WAL and full synchronization remain enabled; batching avoids a separate disk synchronization for every schema statement on slower storage. Opening an already initialized ledger still needs no writer lock.
 
 A configured paused schedule exits successfully with zero attempts even when its rollout pin is stale. Dry-run commissioning cannot turn that scheduled stop into preparation, and a concurrent Resume cannot bypass rollout validation. Enabled runs and explicit preparation still require current evidence; incomplete setup remains an error. Reporting and feedback retain their independent controls.
+
+Batch reports show actionable screening holds separately from browser attempts. A recorded confirmation without a matching application record requires review. Restricted runs prioritize working boards for the enabled ATS and load posting bodies in bounded batches. Graduation screening recognizes HTML-formatted date ranges and abbreviated months while retaining holds for ambiguous requirements.
+
+Pi setup can install dependencies before restoring a private workspace. Preflight tests a disposable Chromium launch and checks access to the systemd user manager. Installing a schedule from the dashboard updates the worker timer without launching a second dashboard. See the [Pi guide](pi.md) for installation and upgrade steps.

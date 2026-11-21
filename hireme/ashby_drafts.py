@@ -6,10 +6,10 @@ import json
 import re
 from urllib.parse import urlsplit,parse_qsl
 
-from .util import Blocked, digest, textarea_value
+from .util import ASHBY_TENANT, Blocked, digest, textarea_value
 
 # Reevaluate only Ashby draft mapping holds when this reviewed protocol changes.
-VERSION = 3
+VERSION = 6
 
 # Reviewed public ApiSetFormValue operation, including its read-only fragments.
 # A vendor query change needs review instead of granting another mutation.
@@ -25,7 +25,18 @@ def same(left, right):
 
 
 def number_wire(value, label):
-    """Encode only a lossless, canonical nonnegative JavaScript integer."""
+    """Preserve canonical integers and round-tripping fractional decimals."""
+    if isinstance(value,str) and len(value)<=64 and re.fullmatch(r'(?:0|[1-9][0-9]*)\.[0-9]*[1-9]',value):
+        from decimal import Decimal
+        import math
+        exact=Decimal(value);number=float(value)
+        # JSON numbers use JavaScript's binary64 representation. Require its
+        # serialized decimal to equal the approved value, without rounding a
+        # GPA or changing large numbers. Integral encodings retain their
+        # existing strict integer path and acknowledgement checks below.
+        if (math.isfinite(number) and exact<=9007199254740991
+                and Decimal(json.dumps(number))==exact):return number
+        raise Blocked('ashby_draft_unsupported',label+' — Ashby number encoding needs review')
     if not isinstance(value,str) or not re.fullmatch(r'(?:0|[1-9][0-9]*)',value) or len(value)>16:
         raise Blocked('ashby_draft_unsupported',label+' — Ashby number encoding needs review')
     number=int(value)
@@ -99,7 +110,7 @@ class AshbyDraft:
     def __init__(self, store, job):
         self.store=store
         parsed=urlsplit(job['url'])
-        match=re.fullmatch(r'/([A-Za-z0-9_-]+)/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
+        match=re.fullmatch(r'/('+ASHBY_TENANT+r')/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
         self.identity=(match[1].casefold(),match[2].lower()) if match and parsed.hostname=='jobs.ashbyhq.com' else None
         self.job=job;self.forms={};self.grants={};self.pending={};self.saved=set();self.failed=False
         self.package=None;self.remaining=0
@@ -116,7 +127,7 @@ class AshbyDraft:
         company budget or stored posting URL.
         """
         parsed=urlsplit(url)
-        match=re.fullmatch(r'/([A-Za-z0-9_-]+)/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
+        match=re.fullmatch(r'/('+ASHBY_TENANT+r')/([0-9a-f-]{36})(?:/application)?/?',parsed.path,re.I)
         if (not self.identity or not match or parsed.scheme!='https' or parsed.hostname!='jobs.ashbyhq.com'
                 or parsed.port not in (None,443) or parsed.username or parsed.password
                 or match[2].lower()!=self.identity[1]):
@@ -178,7 +189,7 @@ class AshbyDraft:
                     or not re.match(r'^\s*query\s+ApiJobPosting\b',data['query'])
                     or str(variables.get('jobPostingId','')).lower()!=self.identity[1]):return
             tenant=variables.get('organizationHostedJobsPageName')
-            if not isinstance(tenant,str) or not re.fullmatch(r'[A-Za-z0-9_-]+',tenant):return
+            if not isinstance(tenant,str) or not re.fullmatch(ASHBY_TENANT,tenant):return
             result=response.json()
             posting=result.get('data',{}).get('jobPosting',{})
             if result.get('errors') or str(posting.get('id','')).lower()!=self.identity[1]:return
@@ -275,7 +286,7 @@ class AshbyDraft:
 
     def compile(self, browser, answers, package):
         """Validate native encodings without enabling any draft transport."""
-        from .answers import selections,validate_package
+        from .answers import field_key,selections,validate_package
         from .approval_boundary import ApprovalBoundary
         boundary=ApprovalBoundary(self.store,self.job,package,reserve_retry=False)
         validate_package(self.store,self.job,package)
@@ -351,7 +362,10 @@ class AshbyDraft:
                 if len(choices)!=1:raise Blocked('ashby_draft_unsupported','Ashby school choice is unverified or ambiguous')
                 value=[{'canonicalSchoolId':next(iter(choices)),'schoolName':value}]
             elif kind=='combobox' and metadata.get('type')=='Location':
-                if answer.get('provenance',{}).get('fact_key')!='location':
+                fact_key=answer.get('provenance',{}).get('fact_key')
+                region=(fact_key=='state' and field_key(field['label'])=='state'
+                        and 'Region' in (metadata.get('locationTypes') or []))
+                if fact_key!='location' and not region:
                     raise Blocked('ashby_draft_unsupported','Ashby location has no confirmed location source')
                 choices=self.locations.get(json.dumps(metadata.get('locationTypes'),sort_keys=True),{}).get(value,set())
                 # An existing exact official value can also restore a selection

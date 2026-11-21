@@ -150,7 +150,7 @@ def launch_dashboard_preparation_fixture(root,repo,port):
     from hireme.util import digest
     worker.sweep_lists=lambda *args:None
     worker.sweep_portals=lambda *args:None
-    worker.sweep_boards=lambda *args:None
+    worker.sweep_boards=lambda *args,**kwargs:None
     class FakeBrowser:
         def __init__(self,store):self.store=store
         def __enter__(self):return self
@@ -1283,9 +1283,10 @@ def test_workspace_real_counts_search_sort_and_mobile_navigation(store, tmp_path
         ('fixture-submission', jobs[0]['id'], 'cedar labs', 'confirmed',
          '{"answers":[]}', 'fixture', stamp, stamp, stamp))
     # A blocked job with a question should count once in the attention queue.
+    store.db.execute('UPDATE jobs SET reason=? WHERE id=?', ('missing_answers', jobs[1]['id']))
     store.db.execute('INSERT INTO questions VALUES(?,?,?,?,?,?,0)',
                      ('fixture-question', jobs[1]['id'], jobs[1]['host'],
-                      'Which work location do you prefer?', '["Remote", "New York"]', 'unknown_fact'))
+                      'Which work location do you prefer?', '["Remote", "New York"]', 'missing_fact'))
     sock = socket.socket(); sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]; sock.close()
     process = multiprocessing.Process(target=launch, args=(str(store.root), str(Path.cwd()), port))
     process.start()
@@ -1413,7 +1414,7 @@ def test_demo_is_read_only_and_export_requires_auth(tmp_path):
             open_view(page, 'setup')
             page.locator('#setup-diagnostics').evaluate('(element)=>element.open=true')
             page.locator('#check-setup').click()
-            expect(page.locator('.diagnostic-check')).to_have_count(6)
+            expect(page.locator('.diagnostic-check')).to_have_count(7)
             expect(page.locator('#setup-check-status')).to_contain_text('Sample workspace')
             with page.expect_download() as report:
                 page.locator('#download-setup-report').click()
@@ -1424,7 +1425,7 @@ def test_demo_is_read_only_and_export_requires_auth(tmp_path):
             page.route('**/api/diagnostics', lambda route: route.fulfill(status=503, content_type='application/json', body='{"error":"Synthetic interrupted connection"}'))
             page.locator('#check-setup').click()
             expect(page.locator('#setup-check-error')).to_be_visible()
-            expect(page.locator('.diagnostic-check')).to_have_count(6)
+            expect(page.locator('.diagnostic-check')).to_have_count(7)
             expect(page.locator('#download-setup-report')).to_be_enabled()
             page.unroute('**/api/diagnostics')
             page.locator('#check-setup').click()
