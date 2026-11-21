@@ -165,9 +165,17 @@ def test_remote_key_cannot_execute_shell_or_arbitrary_commands(store):
         with pytest.raises(ValueError,match='permits'):execute(store.root,command)
 
 
-def test_remote_health_uses_worker_path_without_forwarding_other_unit_environment(store,tmp_path,monkeypatch,capsys):
+@pytest.mark.parametrize('custom_config', [False, True])
+def test_remote_health_uses_worker_path_without_forwarding_other_unit_environment(store,tmp_path,monkeypatch,capsys,custom_config):
     from hireme.remote_ops import execute
-    home=tmp_path/'home';unit=home/'.config/systemd/user/please-hire-me-worker.service'
+    home=tmp_path/'home'
+    config=home/'.config'
+    if custom_config:
+        config=tmp_path/'custom config'
+        monkeypatch.setenv('XDG_CONFIG_HOME',str(config))
+    else:
+        monkeypatch.delenv('XDG_CONFIG_HOME',raising=False)
+    unit=config/'systemd/user/please-hire-me-worker.service'
     unit.parent.mkdir(parents=True)
     unit.write_text('Environment="PATH=/synthetic/cli:/usr/bin"\nEnvironment="SENSITIVE_VALUE=not-forwarded"\n')
     monkeypatch.setattr(Path,'home',lambda:home)

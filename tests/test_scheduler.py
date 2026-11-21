@@ -10,6 +10,12 @@ from hireme.util import Blocked
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolate_scheduler_configuration(monkeypatch):
+    # Systemd fixtures use temporary homes unless they explicitly set an XDG path.
+    monkeypatch.delenv('XDG_CONFIG_HOME',raising=False)
+
+
 def systemd_fixture(args, home, *, disabled=False, change=None):
     if 'show' not in args:return SimpleNamespace(returncode=int(disabled),stdout='')
     unit=args[-1]
